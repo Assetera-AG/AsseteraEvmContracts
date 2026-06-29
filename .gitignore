@@ -1,0 +1,28 @@
+# Foundry build artifacts
+out/
+cache/
+lib/
+broadcast/
+deployments/
+abi/
+
+# Environment variables
+.env
+
+# Broadcast run artifacts (keep latest symlinks, ignore timestamped runs)
+broadcast/*/*/run-[0-9]*.json
+
+# Node / package managers
+node_modules/
+
+# Editor directories
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+
