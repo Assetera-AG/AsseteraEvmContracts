@@ -1,6 +1,6 @@
 # AsseteraExchange — Functional Specification
 
-**Version:** 2.9.1  
+**Version:** 3.1.0  
 **Solidity:** 0.8.28  
 **Network:** Polygon Amoy (testnet) → Polygon mainnet  
 **Proxy pattern:** UUPS (ERC-1967)  
@@ -25,7 +25,7 @@ Identity is resolved via `_msgSender()` (ERC-2771), so callers can be plain EOAs
 
 | Actor | Role constant | Capabilities |
 |---|---|---|
-| **Admin (multisig)** | `DEFAULT_ADMIN_ROLE` | Upgrade proxy, manage roles, force-cancel orders/offers, toggle KYC gating per action, update blacklist |
+| **Admin (multisig)** | `DEFAULT_ADMIN_ROLE` | Upgrade proxy, manage roles, force-cancel orders/offers, toggle KYC gating per action, update blacklist, manage fee collector allowlist |
 | **Operator** | `OPERATOR_ROLE` | Settle matched orders, settle accepted offers, refund orders, pause/unpause venue |
 | **KYC Backend** | `KYC_OPERATOR_ROLE` | Sign KYC attestations authorising user actions |
 | **Maker** | — | Place orders, place offers, cancel own orders/offers (KYC-gated or self-cancel) |
@@ -66,13 +66,16 @@ Every user-initiated state-changing action (except `cancelOrderSelf` and permiss
 
 ```solidity
 struct KycAttestation {
-    address account;    // the party being authorised; must equal _msgSender()
-    Action  action;     // which action this authorises (see Action enum)
-    uint256 orderId;    // bound order/offer ID (0 for Place / MakeOffer)
-    uint256 nonce;      // single-use random value; burned on consumption
-    uint256 deadline;   // unix timestamp after which the attestation is invalid
-    bytes32 paramsHash; // keccak256 of action-specific parameters (see below)
-    bytes   signature;  // EIP-712 signature over the above fields
+    address account;      // the party being authorised; must equal _msgSender()
+    Action  action;       // which action this authorises (see Action enum)
+    uint256 orderId;      // bound order/offer ID (0 for Place / MakeOffer)
+    uint256 nonce;        // single-use random value; burned on consumption
+    uint256 deadline;     // unix timestamp after which the attestation is invalid
+    bytes32 paramsHash;   // keccak256 of action-specific parameters (see below)
+    uint16  makerFeeBps;  // per-pair maker fee; backend-signed for Place/MakeOffer, zero for all other actions
+    uint16  takerFeeBps;  // per-pair taker fee; backend-signed for Place/MakeOffer, zero for all other actions
+    address feeCollector; // must be on the admin fee-collector allowlist when either fee bps is non-zero
+    bytes   signature;    // EIP-712 signature over the above fields
 }
 ```
 
@@ -88,7 +91,7 @@ verifyingContract: <proxy address>
 ### Type Hash
 
 ```
-KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint256 deadline,bytes32 paramsHash)
+KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector)
 ```
 
 ### Validation rules (enforced in `_verifyKyc`)
@@ -104,6 +107,18 @@ KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint25
 | Nonce already used | `KycNonceUsed` |
 | Recovered signer lacks `KYC_OPERATOR_ROLE` | `KycBadSigner` |
 | Non-zero `paramsHash` on a non-parameterised action | `ParamsHashMismatch` |
+
+### Fee validation (enforced by `placeOrder` / `placeOrderWithPermit` / `makeOffer`, before KYC consumption)
+
+Fee terms are set by the backend at signing time (`makerFeeBps`, `takerFeeBps`, `feeCollector` on the attestation) but re-validated on-chain so a compromised KYC signer cannot set extreme fees or redirect them to an arbitrary wallet:
+
+| Check | Error |
+|---|---|
+| `makerFeeBps > MAX_FEE_BPS` or `takerFeeBps > MAX_FEE_BPS` (`MAX_FEE_BPS = 10_000` = 100%) | `InvalidFee` |
+| Either fee bps non-zero and `feeCollector == address(0)` | `ZeroAddress` |
+| Either fee bps non-zero and `feeCollector` not on the admin-managed allowlist (`allowedCollectors`) | `FeeCollectorNotAllowed` |
+
+Validation runs before the KYC nonce is consumed, so a call that fails fee validation does not burn the attestation. The fee snapshot (`makerFeeBps`, `takerFeeBps`, `feeCollector`) is stored on the `Order`/`Offer` at creation and is immutable for that order's/offer's lifetime — `replaceOffer` renegotiates amounts but not fee terms.
 
 ### paramsHash per action
 
@@ -149,10 +164,10 @@ All terminal states are final — no transitions out.
 ### Functions
 
 #### `placeOrder(sellToken, sellAmount, buyToken, buyAmount, expireTs, att)`
-Maker escrows `sellAmount` of `sellToken`. Requires a `Place` attestation with `paramsHash` bound to the four order parameters. `expireTs = 0` means the order never expires.
+Maker escrows `sellAmount` of `sellToken`. Requires a `Place` attestation with `paramsHash` bound to the four order parameters. `expireTs = 0` means the order never expires. The attestation's `makerFeeBps`/`takerFeeBps`/`feeCollector` are validated (see [Fee validation](#fee-validation-enforced-by-placeorder--placeorderwithpermit--makeoffer-before-kyc-consumption)) and snapshotted onto the order.
 
 #### `placeOrderWithPermit(sellToken, sellAmount, buyToken, buyAmount, expireTs, permitDeadline, v, r, s, att)`
-Same as `placeOrder` but attempts an ERC-2612 `permit` call before the `transferFrom`, allowing the maker to approve and place in a single transaction. The permit failure is swallowed — if the approval is already in place or the token does not support permit, the `transferFrom` still proceeds normally.
+Same as `placeOrder` (including fee validation/snapshot) but attempts an ERC-2612 `permit` call before the `transferFrom`, allowing the maker to approve and place in a single transaction. The permit failure is swallowed — if the approval is already in place or the token does not support permit, the `transferFrom` still proceeds normally.
 
 #### `cancelOrder(id, att)`
 KYC-gated maker cancel. Requires a `Cancel` attestation bound to the specific `orderId`. The KYC backend will refuse to sign for suspended users, preventing them from self-cancelling. Use `cancelOrderForUser` to release frozen funds.
@@ -161,10 +176,17 @@ KYC-gated maker cancel. Requires a `Cancel` attestation bound to the specific `o
 Maker self-cancel with no KYC attestation required. Blocked only by the on-chain blacklist. Does not consume a KYC nonce, so it remains available even if the KYC backend is offline.
 
 #### `fillOrder(id, fillSellAmount, att)`
-Taker takes `fillSellAmount` of the order's `sellToken` and pays a proportional `buyToken` amount directly to the maker. Uses ceiling division to protect the maker from rounding loss. A partial fill leaves the order Open; a full fill transitions it to Filled. Requires a `Fill` attestation bound to the `orderId`.
+Taker takes `fillSellAmount` of the order's `sellToken` and pays a proportional `buyToken` amount (`buyAmountDue`) directly to the maker. Uses ceiling division on `buyAmountDue` to protect the maker from rounding loss. A partial fill leaves the order Open; a full fill transitions it to Filled. Requires a `Fill` attestation bound to the `orderId`.
+
+Fees are taken from the order's snapshotted `makerFeeBps`/`takerFeeBps` (floor division, benefiting the maker/taker over the collector):
+- `makerFeeAmount = buyAmountDue * makerFeeBps / 10_000` — deducted from what the maker receives (in `buyToken`); maker nets `buyAmountDue - makerFeeAmount`.
+- `takerFeeAmount = fillSellAmount * takerFeeBps / 10_000` — deducted from what the taker receives (in `sellToken`); taker nets `fillSellAmount - takerFeeAmount`.
+- Both fee legs are paid to the order's `feeCollector`.
 
 #### `settle(buyId, sellId, attBuy, attSell)`
 Operator-only. Settles two complementary open orders at their full remaining quantities. Verifies both KYC attestations before consuming either nonce — if the second attestation is invalid, the first nonce is not burned. Performs cross-multiplication price checks to ensure both makers receive at least their limit rate.
+
+Only each order's **maker fee** applies at settlement (taker fee is not charged here, since there is no taker in a settle — both sides are makers): `buyId`'s maker fee is deducted from what `sellId`'s maker receives (and vice versa), each paid to its own order's `feeCollector`.
 
 #### `refund(id, reason)`
 Operator-only. Returns an open order's remaining escrow to the maker. Emits `OrderRefunded` with a human-readable reason string for audit trail.
@@ -214,10 +236,10 @@ Any non-terminal state ──► cancelOfferForUser ──► FORCE-CANCELLED
 ### Functions
 
 #### `makeOffer(taker, makerToken, makerAmount, takerToken, takerAmount, expireTs, att)`
-Creates a targeted offer from `_msgSender()` (maker) to `taker`. Escrows `makerAmount` of `makerToken`. Requires a `MakeOffer` attestation with `paramsHash` binding all five offer parameters. The maker and taker must differ (`OfferSelfTarget`).
+Creates a targeted offer from `_msgSender()` (maker) to `taker`. Escrows `makerAmount` of `makerToken`. Requires a `MakeOffer` attestation with `paramsHash` binding all five offer parameters. The maker and taker must differ (`OfferSelfTarget`). The attestation's `makerFeeBps`/`takerFeeBps`/`feeCollector` are validated (see [Fee validation](#fee-validation-enforced-by-placeorder--placeorderwithpermit--makeoffer-before-kyc-consumption)) and snapshotted onto the offer for its lifetime.
 
 #### `replaceOffer(offerId, newMakerAmount, newTakerAmount, expireTs, att)`
-Either the maker or taker can counter-propose new amounts. The previous proposer's escrow is returned; the caller escrows their side at the new amounts. Status transitions to `Countered`. `proposedBy` is updated to the caller. Requires a `ReplaceOffer` attestation binding `offerId`, `newMakerAmount`, and `newTakerAmount`.
+Either the maker or taker can counter-propose new amounts. The previous proposer's escrow is returned; the caller escrows their side at the new amounts. Status transitions to `Countered`. `proposedBy` is updated to the caller. Requires a `ReplaceOffer` attestation binding `offerId`, `newMakerAmount`, and `newTakerAmount`. **Fee terms are not renegotiated** — `makerFeeBps`/`takerFeeBps`/`feeCollector` remain fixed from `makeOffer`.
 
 #### `acceptOffer(offerId, att)`
 The non-proposing party accepts current terms and escrows their side. If the taker accepts, `takerAmount` of `takerToken` is escrowed; if the maker accepts a counter, `makerAmount` of `makerToken` is escrowed. Status transitions to `Accepted`. Requires an `AcceptOffer` attestation with `paramsHash` bound to the current offer amounts — stale attestations signed before a counter-proposal will be rejected.
@@ -227,6 +249,10 @@ Either the maker or taker can cancel while the offer is `Open` or `Countered`. R
 
 #### `settleOffer(offerId, makerAtt, takerAtt)`
 Operator-only. Transfers escrowed tokens between parties: maker receives `takerAmount` of `takerToken`; taker receives `makerAmount` of `makerToken`. Both parties must provide a `SettleOffer` attestation with `paramsHash` bound to the current offer amounts. Both attestations are verified before either nonce is consumed.
+
+Fees use the offer's snapshotted `makerFeeBps`/`takerFeeBps` (floor division), both paid to the single offer-level `feeCollector`:
+- `makerFeeAmount = takerAmount * makerFeeBps / 10_000` — maker nets `takerAmount - makerFeeAmount`.
+- `takerFeeAmount = makerAmount * takerFeeBps / 10_000` — taker nets `makerAmount - takerFeeAmount`.
 
 #### `cancelOfferForUser(offerId, makerRecipient, takerRecipient)`
 Admin-only. Force-cancels any non-terminal offer and routes escrowed tokens to compliance-chosen recipients. If the offer is `Accepted` (both sides escrowed), both recipients receive their respective tokens. For `Open`/`Countered`, only the current proposer's tokens are held and returned to `makerRecipient` or `takerRecipient` as appropriate.
@@ -250,6 +276,10 @@ Accounts are stored pseudonymously as `keccak256(abi.encodePacked(account))`. A 
 
 `pause()` / `unpause()` (operator-only) block all new position-opening calls (`placeOrder`, `placeOrderWithPermit`, `makeOffer`, `fillOrder`, `acceptOffer`, `replaceOffer`). Admin and operator functions, self-cancel, and sweeps remain available while paused so that funds can always be returned.
 
+### Fee collector allowlist
+
+`setAllowedCollector(collector, allowed)` (admin-only) manages `allowedCollectors`, the set of addresses eligible to receive fee proceeds. A non-zero `makerFeeBps`/`takerFeeBps` on an attestation is only accepted if `feeCollector` is on this allowlist at the time of `placeOrder`/`placeOrderWithPermit`/`makeOffer` (see [Fee validation](#fee-validation-enforced-by-placeorder--placeorderwithpermit--makeoffer-before-kyc-consumption)). This bounds the blast radius of a compromised KYC signer: even a forged attestation cannot redirect fee proceeds to an arbitrary wallet, only to a collector the admin multisig has already approved. Emits `CollectorAllowed`.
+
 ---
 
 ## 8. Security Properties
@@ -267,6 +297,8 @@ Accounts are stored pseudonymously as `keccak256(abi.encodePacked(account))`. A 
 | Upgrade authority | `_authorizeUpgrade` restricted to `DEFAULT_ADMIN_ROLE` |
 | Self-trade | Rejected in `fillOrder` (`SelfTrade`) and `makeOffer` (`OfferSelfTarget`) |
 | Zero-address recipient | Rejected in `cancelOrderForUser` and `cancelOfferForUser` |
+| Fee bounds | `makerFeeBps`/`takerFeeBps` capped at `MAX_FEE_BPS` (10,000 = 100%); enforced on every attestation carrying non-zero fees |
+| Fee redirection | Non-zero-fee `feeCollector` must be on the admin-managed `allowedCollectors` allowlist — a compromised KYC signer cannot redirect fee proceeds |
 
 ---
 
@@ -292,6 +324,9 @@ Accounts are stored pseudonymously as `keccak256(abi.encodePacked(account))`. A 
 | `KycConsumed` | any KYC-gated action on attestation consumption |
 | `ComplianceRequiredSet` | `setComplianceRequired` |
 | `BlacklistUpdated` | `setBlacklisted` |
+| `CollectorAllowed` | `setAllowedCollector` |
+
+`OrderFilled`, `OrderPartiallyFilled`, `OrderSettled`, `OfferMade`, and `OfferSettled` carry fee amounts/collector fields for indexer and client cost disclosure. For exact event signatures, indexed-vs-data parameter layout, and `topic0` values, see [`docs/INDEXER_EVENT_SCHEMA.md`](./INDEXER_EVENT_SCHEMA.md).
 
 ---
 
@@ -299,7 +334,7 @@ Accounts are stored pseudonymously as `keccak256(abi.encodePacked(account))`. A 
 
 - The contract uses the UUPS proxy pattern. Only the admin (`DEFAULT_ADMIN_ROLE`) can call `upgradeToAndCall`.
 - The forwarder address is immutable in each implementation. If the forwarder must change, a new implementation is deployed and the proxy is upgraded.
-- Storage layout must be preserved across upgrades. The `__gap[43]` reserve leaves room for up to 43 additional storage slots in future versions of `AsseteraExchange` without colliding with inherited contract storage.
+- Storage layout must be preserved across upgrades. The `__gap[42]` reserve leaves room for up to 42 additional storage slots in future versions of `AsseteraExchange` without colliding with inherited contract storage. (Reduced from `[43]` when the `allowedCollectors` mapping was added, which consumed one reserved slot.)
 - If a future upgrade introduces new `complianceRequired` entries (new `Action` enum values), a `reinitializer` function must be included and called via `upgradeToAndCall` to initialise the new storage slots — they default to `false` and must be explicitly set.
 
 ---
@@ -307,6 +342,6 @@ Accounts are stored pseudonymously as `keccak256(abi.encodePacked(account))`. A 
 ## 11. Out of Scope
 
 - **On-chain price discovery / matching** — Matching is done off-chain by the operator.
-- **Fee collection** — No fee mechanism is present in this version.
+- **Dynamic/negotiated fees** — Fee terms (`makerFeeBps`/`takerFeeBps`/`feeCollector`) are snapshotted at `placeOrder`/`makeOffer` and are immutable for that order's/offer's lifetime; they cannot be renegotiated via `replaceOffer` or changed mid-life by the operator.
 - **ERC-4337 account abstraction** — Supported in principle via ERC-2771 but not tested.
 - **Multi-asset settlement** — Each order and offer is a simple two-token swap.

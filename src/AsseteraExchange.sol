@@ -104,6 +104,10 @@ contract AsseteraExchange is
         uint64 createdAt;
         uint256 remainingQuantity; // remaining sellAmount not yet filled/settled
         uint64 expireTs;           // unix expiry; 0 = never expires
+        // Fee snapshot — set at placement, immutable for the lifetime of the order.
+        uint16 makerFeeBps;        // fee deducted from what maker receives (in buyToken)
+        uint16 takerFeeBps;        // fee deducted from what taker receives (in sellToken)
+        address feeCollector;      // allowlisted recipient of collected fees
     }
 
     struct Offer {
@@ -117,27 +121,38 @@ contract AsseteraExchange is
         OfferStatus status;
         uint64 createdAt;
         uint64 expireTs;
-        address proposedBy; // who made the current round's proposal (their tokens are escrowed)
+        address proposedBy;   // who made the current round's proposal (their tokens are escrowed)
+        uint16 makerFeeBps;   // fee deducted from what maker receives at settlement
+        uint16 takerFeeBps;   // fee deducted from what taker receives at settlement
+        address feeCollector; // allowlisted recipient; address(0) when no fee
     }
 
     /// @notice A single-use KYC authorization. The first five fields are EIP-712
     ///         signed by a `KYC_OPERATOR_ROLE` holder; `signature` is that sig.
     struct KycAttestation {
-        address account; // the party being authorized; must equal the actor
-        Action action; // which action this authorizes
-        uint256 orderId; // bound order (0 for Place)
-        uint256 nonce; // single-use, per-account
-        uint256 deadline; // unix expiry (backend sets ~3 min)
+        address account;    // the party being authorized; must equal the actor
+        Action action;      // which action this authorizes
+        uint256 orderId;    // bound order (0 for Place)
+        uint256 nonce;      // single-use, per-account
+        uint256 deadline;   // unix expiry (backend sets ~3 min)
         bytes32 paramsHash; // keccak256(abi.encode(sellToken,sellAmount,buyToken,buyAmount)) for Place; bytes32(0) otherwise
-        bytes signature; // KYC operator's EIP-712 signature over the above
+        // Per-pair fee parameters — backend signs these for Place; zero for all other actions.
+        uint16 makerFeeBps;   // fee the maker pays from what they receive
+        uint16 takerFeeBps;   // fee the taker pays from what they receive
+        address feeCollector; // must be in the on-chain allowlist when non-zero fees
+        bytes signature;    // KYC operator's EIP-712 signature over the above
     }
 
     bytes32 public constant KYC_TYPEHASH =
-        keccak256("KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint256 deadline,bytes32 paramsHash)");
+        keccak256("KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector)");
 
     /// @notice Hard cap on attestation freshness; rejects over-long deadlines
     ///         even if a signer produced one. Backend uses ~3 min.
     uint256 public constant MAX_KYC_TTL = 15 minutes;
+
+    /// @notice Absolute upper bound on fee basis points (100 % = 10 000 bps).
+    ///         Practical configs will be well below this.
+    uint16 public constant MAX_FEE_BPS = 10_000;
 
     mapping(uint256 => Order) private _orders;
     uint256 public totalOrders;
@@ -156,7 +171,12 @@ contract AsseteraExchange is
     mapping(uint256 => Offer) private _offers;
     uint256 public totalOffers;
 
-    uint256[43] private __gap;
+    /// @notice Admin-managed allowlist of permitted fee collector addresses.
+    ///         A compromised KYC signer cannot route fees to an arbitrary wallet
+    ///         because the collector must be in this allowlist at placement time.
+    mapping(address => bool) public allowedCollectors;
+
+    uint256[42] private __gap; // reduced from [43]: allowedCollectors uses one slot
 
     // --------------------------------------------------------------------- //
     //                                Events                                  //
@@ -173,41 +193,56 @@ contract AsseteraExchange is
     );
     event OrderCancelled(uint256 indexed id, address indexed maker);
     /// @dev Emitted when an order is completely filled (remainingQuantity == 0).
+    ///      Includes fee amounts and collector for indexer/client cost disclosure.
     event OrderFilled(
         uint256 indexed id,
         address indexed maker,
         address indexed taker,
         uint256 filledSellAmount,
-        uint256 filledBuyAmount
+        uint256 filledBuyAmount,
+        uint256 makerFeeAmount,
+        uint256 takerFeeAmount,
+        address feeCollector
     );
     /// @dev Emitted on a partial fill (remainingQuantity > 0 after the fill).
+    ///      Includes fee amounts and collector for indexer/client cost disclosure.
     event OrderPartiallyFilled(
         uint256 indexed id,
         address indexed maker,
         address indexed taker,
         uint256 filledSellAmount,
-        uint256 remainingQuantity
+        uint256 remainingQuantity,
+        uint256 makerFeeAmount,
+        uint256 takerFeeAmount,
+        address feeCollector
     );
+    /// @dev settledSellAmount/settledBuyAmount are gross (pre-fee) quantities.
     event OrderSettled(
         uint256 indexed buyId,
         uint256 indexed sellId,
         address indexed operator,
         uint256 settledSellAmount,
-        uint256 settledBuyAmount
+        uint256 settledBuyAmount,
+        uint256 buyMakerFeeAmount,
+        uint256 sellMakerFeeAmount,
+        address buyFeeCollector,
+        address sellFeeCollector
     );
     event OrderRefunded(uint256 indexed id, address indexed maker, address indexed operator, string reason);
     event OrderForceCancelled(uint256 indexed id, address indexed maker, address recipient, address indexed admin);
     event OrderExpired(uint256 indexed id, address indexed maker, uint256 remainingQuantity);
+    /// @notice Emitted when the admin updates the fee collector allowlist.
+    event CollectorAllowed(address indexed collector, bool allowed);
     event KycConsumed(address indexed account, Action indexed action, uint256 indexed orderId, uint256 nonce);
     event ComplianceRequiredSet(Action indexed action, bool required);
     event BlacklistUpdated(bytes32 indexed hashedAccount, bool blocked);
-    event OfferMade(uint256 indexed id, address indexed maker, address indexed taker, address makerToken, uint256 makerAmount, address takerToken, uint256 takerAmount, uint64 expireTs);
+    event OfferMade(uint256 indexed id, address indexed maker, address indexed taker, address makerToken, uint256 makerAmount, address takerToken, uint256 takerAmount, uint64 expireTs, uint16 makerFeeBps, uint16 takerFeeBps, address feeCollector);
     event OfferReplaced(uint256 indexed id, address indexed by, uint256 newMakerAmount, uint256 newTakerAmount, uint64 expireTs);
     event OfferCancelled(uint256 indexed id, address indexed by, uint256 makerAmount, uint256 takerAmount);
     event OfferForceCancelled(uint256 indexed id, address indexed maker, address makerRecipient, address takerRecipient, address indexed admin);
     event OfferExpired(uint256 indexed id, address indexed proposedBy, uint256 amountReturned);
     event OfferAccepted(uint256 indexed id, address indexed by, uint256 makerAmount, uint256 takerAmount);
-    event OfferSettled(uint256 indexed id, address indexed operator, uint256 makerReceived, uint256 takerReceived);
+    event OfferSettled(uint256 indexed id, address indexed operator, uint256 makerReceived, uint256 takerReceived, uint256 makerFeeAmount, uint256 takerFeeAmount, address feeCollector);
 
     // --------------------------------------------------------------------- //
     //                                Errors                                  //
@@ -227,6 +262,8 @@ contract AsseteraExchange is
     error FillExceedsRemaining(uint256 id, uint256 remaining);
     error AccountBlacklisted();
     error ParamsHashMismatch();
+    error FeeCollectorNotAllowed(address collector);
+    error InvalidFee();
     // Offer
     error OfferNotFound(uint256 id);
     error OfferNotOpen(uint256 id);
@@ -312,7 +349,7 @@ contract AsseteraExchange is
         if (usedNonce[account][att.nonce]) revert KycNonceUsed();
 
         bytes32 structHash = keccak256(
-            abi.encode(KYC_TYPEHASH, att.account, uint8(att.action), att.orderId, att.nonce, att.deadline, att.paramsHash)
+            abi.encode(KYC_TYPEHASH, att.account, uint8(att.action), att.orderId, att.nonce, att.deadline, att.paramsHash, att.makerFeeBps, att.takerFeeBps, att.feeCollector)
         );
         address signer = ECDSA.recover(_hashTypedDataV4(structHash), att.signature);
         if (!hasRole(KYC_OPERATOR_ROLE, signer)) revert KycBadSigner();
@@ -350,8 +387,15 @@ contract AsseteraExchange is
         if (complianceRequired[Action.Place] &&
             att.paramsHash != keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount)))
             revert ParamsHashMismatch();
+        // Fee validation — always enforced so a compromised signer cannot
+        // set extreme fees or route to an unlisted collector.
+        if (att.makerFeeBps > MAX_FEE_BPS || att.takerFeeBps > MAX_FEE_BPS) revert InvalidFee();
+        if (att.makerFeeBps > 0 || att.takerFeeBps > 0) {
+            if (att.feeCollector == address(0)) revert ZeroAddress();
+            if (!allowedCollectors[att.feeCollector]) revert FeeCollectorNotAllowed(att.feeCollector);
+        }
         _consumeKyc(_msgSender(), Action.Place, 0, att);
-        return _placeOrder(sellToken, sellAmount, buyToken, buyAmount, expireTs);
+        return _placeOrder(sellToken, sellAmount, buyToken, buyAmount, expireTs, att.makerFeeBps, att.takerFeeBps, att.feeCollector);
     }
 
     /// @param expireTs Unix timestamp after which the order can be swept; 0 = no expiry.
@@ -376,9 +420,14 @@ contract AsseteraExchange is
         if (complianceRequired[Action.Place] &&
             att.paramsHash != keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount)))
             revert ParamsHashMismatch();
+        if (att.makerFeeBps > MAX_FEE_BPS || att.takerFeeBps > MAX_FEE_BPS) revert InvalidFee();
+        if (att.makerFeeBps > 0 || att.takerFeeBps > 0) {
+            if (att.feeCollector == address(0)) revert ZeroAddress();
+            if (!allowedCollectors[att.feeCollector]) revert FeeCollectorNotAllowed(att.feeCollector);
+        }
         _consumeKyc(_msgSender(), Action.Place, 0, att);
         _tryPermit(sellToken, sellAmount, permitDeadline, v, r, s);
-        return _placeOrder(sellToken, sellAmount, buyToken, buyAmount, expireTs);
+        return _placeOrder(sellToken, sellAmount, buyToken, buyAmount, expireTs, att.makerFeeBps, att.takerFeeBps, att.feeCollector);
     }
 
     function _tryPermit(address token, uint256 amount, uint256 deadline, uint8 v, bytes32 r, bytes32 s) private {
@@ -392,7 +441,10 @@ contract AsseteraExchange is
         uint256 sellAmount,
         address buyToken,
         uint256 buyAmount,
-        uint64 expireTs
+        uint64 expireTs,
+        uint16 makerFeeBps,
+        uint16 takerFeeBps,
+        address feeCollector
     ) private returns (uint256 id) {
         address maker = _msgSender();
         id = ++totalOrders;
@@ -406,7 +458,10 @@ contract AsseteraExchange is
             status: OrderStatus.Open,
             createdAt: uint64(block.timestamp),
             remainingQuantity: sellAmount,
-            expireTs: expireTs
+            expireTs: expireTs,
+            makerFeeBps: makerFeeBps,
+            takerFeeBps: takerFeeBps,
+            feeCollector: feeCollector
         });
 
         IERC20(sellToken).safeTransferFrom(maker, address(this), sellAmount);
@@ -479,15 +534,24 @@ contract AsseteraExchange is
         // This protects the maker from rounding loss on partial fills.
         uint256 buyAmountDue = (fillSellAmount * o.buyAmount + o.sellAmount - 1) / o.sellAmount;
 
+        // Compute fees. Floor division benefits maker/taker over the collector.
+        uint256 makerFeeAmount = (buyAmountDue  * o.makerFeeBps) / 10_000;
+        uint256 takerFeeAmount = (fillSellAmount * o.takerFeeBps) / 10_000;
+        address collector = o.feeCollector;
+
         o.remainingQuantity -= fillSellAmount;
         bool fullFill = (o.remainingQuantity == 0);
         if (fullFill) o.status = OrderStatus.Filled;
 
-        IERC20(o.buyToken).safeTransferFrom(taker, o.maker, buyAmountDue);
-        IERC20(o.sellToken).safeTransfer(taker, fillSellAmount);
+        // Taker pays buyAmountDue: (buyAmountDue - makerFeeAmount) to maker, remainder to collector.
+        IERC20(o.buyToken).safeTransferFrom(taker, o.maker, buyAmountDue - makerFeeAmount);
+        if (makerFeeAmount > 0) IERC20(o.buyToken).safeTransferFrom(taker, collector, makerFeeAmount);
+        // Taker receives fillSellAmount minus takerFeeAmount; takerFeeAmount goes to collector.
+        IERC20(o.sellToken).safeTransfer(taker, fillSellAmount - takerFeeAmount);
+        if (takerFeeAmount > 0) IERC20(o.sellToken).safeTransfer(collector, takerFeeAmount);
 
-        if (fullFill) emit OrderFilled(id, o.maker, taker, fillSellAmount, buyAmountDue);
-        else emit OrderPartiallyFilled(id, o.maker, taker, fillSellAmount, o.remainingQuantity);
+        if (fullFill) emit OrderFilled(id, o.maker, taker, fillSellAmount, buyAmountDue, makerFeeAmount, takerFeeAmount, collector);
+        else emit OrderPartiallyFilled(id, o.maker, taker, fillSellAmount, o.remainingQuantity, makerFeeAmount, takerFeeAmount, collector);
     }
 
     // --------------------------------------------------------------------- //
@@ -533,15 +597,22 @@ contract AsseteraExchange is
             emit KycConsumed(b.maker, Action.Settle, sellId, attSell.nonce);
         }
 
+        // Per-order maker fees applied to what each maker receives.
+        // settleB = what a.maker receives (b's sellToken); settleA = what b.maker receives (a's sellToken).
+        uint256 buyMakerFeeAmount  = (settleB * a.makerFeeBps) / 10_000;
+        uint256 sellMakerFeeAmount = (settleA * b.makerFeeBps) / 10_000;
+
         a.remainingQuantity = 0;
         b.remainingQuantity = 0;
         a.status = OrderStatus.Settled;
         b.status = OrderStatus.Settled;
 
-        IERC20(a.sellToken).safeTransfer(b.maker, settleA);
-        IERC20(b.sellToken).safeTransfer(a.maker, settleB);
+        IERC20(a.sellToken).safeTransfer(b.maker, settleA - sellMakerFeeAmount);
+        if (sellMakerFeeAmount > 0) IERC20(a.sellToken).safeTransfer(b.feeCollector, sellMakerFeeAmount);
+        IERC20(b.sellToken).safeTransfer(a.maker, settleB - buyMakerFeeAmount);
+        if (buyMakerFeeAmount > 0) IERC20(b.sellToken).safeTransfer(a.feeCollector, buyMakerFeeAmount);
 
-        emit OrderSettled(buyId, sellId, _msgSender(), settleA, settleB);
+        emit OrderSettled(buyId, sellId, _msgSender(), settleA, settleB, buyMakerFeeAmount, sellMakerFeeAmount, a.feeCollector, b.feeCollector);
     }
 
     /// @notice Operator returns an open order's remaining escrow to its maker.
@@ -653,25 +724,49 @@ contract AsseteraExchange is
         if (complianceRequired[Action.MakeOffer] &&
             att.paramsHash != keccak256(abi.encodePacked(taker, makerToken, makerAmount, takerToken, takerAmount)))
             revert ParamsHashMismatch();
+        _validateFees(att.makerFeeBps, att.takerFeeBps, att.feeCollector);
         _consumeKyc(maker, Action.MakeOffer, 0, att);
 
+        id = _storeOffer(maker, taker, makerToken, makerAmount, takerToken, takerAmount, expireTs, att);
+        IERC20(makerToken).safeTransferFrom(maker, address(this), makerAmount);
+        emit OfferMade(id, maker, taker, makerToken, makerAmount, takerToken, takerAmount, expireTs, att.makerFeeBps, att.takerFeeBps, att.feeCollector);
+    }
+
+    function _validateFees(uint16 makerFeeBps, uint16 takerFeeBps, address feeCollector) internal view {
+        if (makerFeeBps > MAX_FEE_BPS || takerFeeBps > MAX_FEE_BPS) revert InvalidFee();
+        if (makerFeeBps > 0 || takerFeeBps > 0) {
+            if (feeCollector == address(0)) revert ZeroAddress();
+            if (!allowedCollectors[feeCollector]) revert FeeCollectorNotAllowed(feeCollector);
+        }
+    }
+
+    function _storeOffer(
+        address maker,
+        address taker,
+        address makerToken,
+        uint256 makerAmount,
+        address takerToken,
+        uint256 takerAmount,
+        uint64  expireTs,
+        KycAttestation calldata att
+    ) internal returns (uint256 id) {
         id = ++totalOffers;
         _offers[id] = Offer({
-            id:          id,
-            maker:       maker,
-            taker:       taker,
-            makerToken:  makerToken,
-            makerAmount: makerAmount,
-            takerToken:  takerToken,
-            takerAmount: takerAmount,
-            status:      OfferStatus.Open,
-            createdAt:   uint64(block.timestamp),
-            expireTs:    expireTs,
-            proposedBy:  maker
+            id:           id,
+            maker:        maker,
+            taker:        taker,
+            makerToken:   makerToken,
+            makerAmount:  makerAmount,
+            takerToken:   takerToken,
+            takerAmount:  takerAmount,
+            status:       OfferStatus.Open,
+            createdAt:    uint64(block.timestamp),
+            expireTs:     expireTs,
+            proposedBy:   maker,
+            makerFeeBps:  att.makerFeeBps,
+            takerFeeBps:  att.takerFeeBps,
+            feeCollector: att.feeCollector
         });
-
-        IERC20(makerToken).safeTransferFrom(maker, address(this), makerAmount);
-        emit OfferMade(id, maker, taker, makerToken, makerAmount, takerToken, takerAmount, expireTs);
     }
 
     /// @notice Either party revises the offer terms. The previous proposer's
@@ -827,16 +922,22 @@ contract AsseteraExchange is
             emit KycConsumed(o.taker, Action.SettleOffer, offerId, takerAtt.nonce);
         }
 
-        uint256 makerReceived = o.takerAmount; // maker receives what taker escrowed
-        uint256 takerReceived = o.makerAmount; // taker receives what maker escrowed
+        // Fees deducted from what each party receives at settlement.
+        uint256 makerFeeAmount = (o.takerAmount * o.makerFeeBps) / 10_000;
+        uint256 takerFeeAmount = (o.makerAmount * o.takerFeeBps) / 10_000;
+        uint256 makerReceived  = o.takerAmount - makerFeeAmount;
+        uint256 takerReceived  = o.makerAmount - takerFeeAmount;
+        address collector      = o.feeCollector;
 
         // Effects before transfers (CEI).
         o.status = OfferStatus.Settled;
 
         IERC20(o.takerToken).safeTransfer(o.maker, makerReceived);
+        if (makerFeeAmount > 0) IERC20(o.takerToken).safeTransfer(collector, makerFeeAmount);
         IERC20(o.makerToken).safeTransfer(o.taker, takerReceived);
+        if (takerFeeAmount > 0) IERC20(o.makerToken).safeTransfer(collector, takerFeeAmount);
 
-        emit OfferSettled(offerId, _msgSender(), makerReceived, takerReceived);
+        emit OfferSettled(offerId, _msgSender(), makerReceived, takerReceived, makerFeeAmount, takerFeeAmount, collector);
     }
 
     /// @notice Admin (multisig) escape hatch: force-cancel any non-settled offer
@@ -881,6 +982,14 @@ contract AsseteraExchange is
         }
 
         emit OfferForceCancelled(offerId, o.maker, makerRecipient, takerRecipient, _msgSender());
+    }
+
+    /// @notice Add or remove an address from the fee collector allowlist.
+    ///         Only DEFAULT_ADMIN_ROLE (the Safe multisig in prod) can manage this,
+    ///         preventing a compromised KYC signer from redirecting fees arbitrarily.
+    function setAllowedCollector(address collector, bool allowed) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        allowedCollectors[collector] = allowed;
+        emit CollectorAllowed(collector, allowed);
     }
 
     function pause() external onlyRole(OPERATOR_ROLE) {
@@ -953,7 +1062,7 @@ contract AsseteraExchange is
     function _authorizeUpgrade(address) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     function version() external pure virtual returns (string memory) {
-        return "2.9.1";
+        return "3.1.0";
     }
 
     function _msgSender()

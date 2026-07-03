@@ -10,7 +10,7 @@ contract AsseteraExchangeV2 is AsseteraExchange {
     constructor(address trustedForwarder) AsseteraExchange(trustedForwarder) {}
 
     function version() external pure override returns (string memory) {
-        return "3.0.0";
+        return "4.0.0";
     }
 
     function isUpgraded() external pure returns (bool) {
