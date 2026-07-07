@@ -9,8 +9,8 @@ optimizer = true
 optimizer_runs = 200
 via_ir = true
 
-# Needed so deploy scripts can read/write the per-network deployment JSON files.
-fs_permissions = [{ access = "read-write", path = "./deployments" }]
+# Deploy scripts write the per-network deployment artifact into the SDK (its source of truth, ADR-0026 D4).
+fs_permissions = [{ access = "read-write", path = "../packages/sdk/src/deployments" }]
 
 # Deterministic-ish bytecode (nice for diffing deployments)
 bytecode_hash = "none"
@@ -19,6 +19,7 @@ remappings = [
     "forge-std/=lib/forge-std/src/",
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
     "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",
+    "createx-forge/=lib/createx-forge/",
 ]
 
 [profile.ci]

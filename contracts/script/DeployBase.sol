@@ -1,28 +1,37 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Script, console2} from "forge-std/Script.sol";
-import {stdJson} from "forge-std/StdJson.sol";
+import {CreateXScript} from "createx-forge/script/CreateXScript.sol";
+import {console2} from "forge-std/Script.sol";
 
 /// @title DeployBase
-/// @notice Per-network deployment bookkeeping. Each network's addresses are
-///         persisted to `deployments/<chainId>.json` with the shape:
+/// @notice Deterministic-deploy bookkeeping (ADR-0026). Contracts are deployed through the **CreateX**
+///         factory (`0xba5Ed0…`, present on every live chain; etched locally on anvil by `withCreateX`).
+///         The exchange proxy and forwarder use **CREATE3**, so their address depends only on
+///         `(deployer, salt)` — never on the initcode — giving **one stable address on every chain**
+///         (for a given deployer) that survives implementation upgrades and constructor-arg changes.
+///
+///         The deployment record is the SDK's source of truth and is written to
+///         `packages/sdk/src/deployments/<chainId>.json`:
 ///
 ///         {
-///           "contracts":        { "AsseteraExchange": "0x..(proxy)..", "MockUSDC": "0x..", "MockRWA": "0x.." },
-///           "implementations":  { "AsseteraExchange": "0x..(impl).." },
-///           "metadata":         { "chainId": 31337, "deployTimestamp": 0, "deployer": "0x.." }
+///           "chainId": 31337, "caip2": "eip155:31337", "namespace": "eip155",
+///           "contracts":       { "AsseteraExchange": "0x..(proxy)..", "Forwarder": "0x..", "MockUSDC": "0x..", "MockRWA": "0x.." },
+///           "implementations": { "AsseteraExchange": "0x..(impl).." },
+///           "metadata":        { "deployer": "0x..", "admin": "0x..", "operator": "0x..", "kycSigner": "0x..",
+///                                "relayer": "0x..", "deployBlock": 0, "deployTimestamp": 0 }
 ///         }
 ///
-///         `contracts` holds the addresses integrators/frontends use (proxy for
-///         the exchange). `implementations` holds UUPS impls for upgrade diffing.
-abstract contract DeployBase is Script {
-    using stdJson for string;
+///         The numeric `chainId` key serves the viem/wagmi client; `caip2` + `namespace` let the CAIP-2-keyed
+///         indexer/API (ADR-0006) consume the same file directly.
+abstract contract DeployBase is CreateXScript {
+    /// @dev Bump to intentionally rotate every deterministic address to a fresh deployment.
+    string internal constant SALT_VERSION = "v1";
 
     uint256 internal chainId;
     string internal deploymentPath;
 
-    // Resolved on read; written back on save.
+    // Resolved during the run; written on save.
     address internal exchangeProxy;
     address internal exchangeImpl;
     address internal forwarder;
@@ -35,36 +44,39 @@ abstract contract DeployBase is Script {
 
     function _initPaths() internal {
         chainId = block.chainid;
-        deploymentPath = string.concat("deployments/", vm.toString(chainId), ".json");
+        // Written relative to the Foundry root (contracts/); the SDK owns the file.
+        deploymentPath = string.concat("../packages/sdk/src/deployments/", vm.toString(chainId), ".json");
     }
 
-    /// @dev Load any previously-recorded addresses so re-runs can reuse tokens
-    ///      and upgrade the proxy in place. Missing file/keys resolve to 0x0.
-    function _loadExisting() internal {
-        if (!vm.isFile(deploymentPath)) return;
-        string memory json = vm.readFile(deploymentPath);
-        exchangeProxy = _readAddr(json, ".contracts.AsseteraExchange");
-        exchangeImpl = _readAddr(json, ".implementations.AsseteraExchange");
-        forwarder = _readAddr(json, ".contracts.Forwarder");
-        usdc = _readAddr(json, ".contracts.MockUSDC");
-        rwa = _readAddr(json, ".contracts.MockRWA");
-        admin = _readAddr(json, ".metadata.admin");
-        operator = _readAddr(json, ".metadata.operator");
+    /// @dev CreateX guarded salt: [ deployer (20 bytes) | 0x00 no-cross-chain flag | entropy (11 bytes) ].
+    ///      Permissioned to `deployer` (only it can deploy to the address — grief-proof) and NOT cross-chain
+    ///      protected (same address on every chain for the same deployer). This layout matches what
+    ///      `CreateXScript.computeCreate3Address(salt, deployer)` expects.
+    function _salt(address deployer, string memory name) internal pure returns (bytes32) {
+        bytes11 entropy = bytes11(keccak256(abi.encodePacked("assetera.evm.", name, ".", SALT_VERSION)));
+        return bytes32(abi.encodePacked(bytes20(deployer), bytes1(0x00), entropy));
     }
 
-    function _readAddr(string memory json, string memory key) private view returns (address) {
-        if (!vm.keyExistsJson(json, key)) return address(0);
-        return json.readAddress(key);
-    }
-
-    /// @dev True if `a` is a deployed contract (has code) — used to decide
-    ///      whether a recorded address can be reused.
+    /// @dev True if `a` is a deployed contract (has code).
     function _hasCode(address a) internal view returns (bool) {
         return a != address(0) && a.code.length > 0;
     }
 
-    /// @dev Serialize and write the full deployment file.
-    function _save(address deployer, address adminAddr) internal {
+    /// @dev CREATE3-deploy `initCode` at its stable, deployer-permissioned address; reuse if already there.
+    function _deploy3(address deployer, string memory name, bytes memory initCode)
+        internal
+        returns (address addr, bool created)
+    {
+        bytes32 salt = _salt(deployer, name);
+        addr = computeCreate3Address(salt, deployer);
+        if (_hasCode(addr)) return (addr, false);
+        address deployed = create3(salt, initCode);
+        require(deployed == addr, "create3 address mismatch");
+        return (deployed, true);
+    }
+
+    /// @dev Serialize and write the full deployment file (chainId/CAIP-2 at the top level).
+    function _save(address deployer) internal {
         string memory c = "contracts";
         vm.serializeAddress(c, "MockUSDC", usdc);
         vm.serializeAddress(c, "MockRWA", rwa);
@@ -75,15 +87,18 @@ abstract contract DeployBase is Script {
         string memory imJson = vm.serializeAddress(im, "AsseteraExchange", exchangeImpl);
 
         string memory m = "metadata";
-        vm.serializeUint(m, "chainId", chainId);
-        vm.serializeUint(m, "deployTimestamp", block.timestamp);
-        vm.serializeAddress(m, "admin", adminAddr);
+        vm.serializeAddress(m, "deployer", deployer);
+        vm.serializeAddress(m, "admin", admin);
         vm.serializeAddress(m, "operator", operator);
         vm.serializeAddress(m, "kycSigner", kycSigner);
         vm.serializeAddress(m, "relayer", relayer);
-        string memory mJson = vm.serializeAddress(m, "deployer", deployer);
+        vm.serializeUint(m, "deployBlock", block.number);
+        string memory mJson = vm.serializeUint(m, "deployTimestamp", block.timestamp);
 
         string memory root = "root";
+        vm.serializeUint(root, "chainId", chainId);
+        vm.serializeString(root, "caip2", string.concat("eip155:", vm.toString(chainId)));
+        vm.serializeString(root, "namespace", "eip155");
         vm.serializeString(root, "contracts", cJson);
         vm.serializeString(root, "implementations", imJson);
         string memory rootJson = vm.serializeString(root, "metadata", mJson);

@@ -8,6 +8,9 @@
   ],
   "scripts": {
     "build": "npm run build -w @asseteragmbh/evm-contracts",
-    "typecheck": "npm run typecheck -w @asseteragmbh/evm-contracts"
+    "typecheck": "npm run typecheck -w @asseteragmbh/evm-contracts",
+    "anvil": "anvil",
+    "deploy:local": "bash scripts/deploy-local.sh",
+    "deploy:amoy": "cd contracts && forge script script/Deploy.s.sol:Deploy --rpc-url amoy --broadcast --verify"
   }
 }

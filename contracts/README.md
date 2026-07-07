@@ -63,26 +63,29 @@ These four commands are exactly what CI runs on every PR — see
 
 ## Deploy
 
-Copy [`.env.sample`](.env.sample) → `.env` and fill in the RPC URLs, deployer key, and role addresses.
-**Never commit `.env`.** Deployment state per network is written to `deployments/<chainId>.json`; the
-deploy script is idempotent — re-running **upgrades the exchange proxy in place** and reuses
-already-deployed tokens/forwarder.
+Deployment is **deterministic** (ADR-0026): contracts are deployed through the **CreateX** factory, and the
+exchange proxy + forwarder use **CREATE3** — so they get the **same address on every chain** for a given
+deployer, an address that survives implementation upgrades. The per-network record is written to
+[`../packages/sdk/src/deployments/<chainId>.json`](../packages/sdk/src/deployments) (the SDK's source of
+truth), keyed by numeric `chainId` and carrying the `caip2` id + `namespace` for the indexer/API. Re-running
+is idempotent — it reuses existing contracts and **upgrades the proxy in place** (address unchanged).
 
 ```bash
-# Local (anvil)
-anvil &
-forge script script/Deploy.s.sol --rpc-url local --broadcast
+# Local (anvil) — one command; auto-etches CreateX onto the node, then broadcasts
+npm run anvil          # in another terminal
+npm run deploy:local
 
-# Polygon Amoy testnet
-forge script script/Deploy.s.sol --rpc-url amoy --broadcast --verify
+# Polygon Amoy testnet (CreateX is already deployed there)
+npm run deploy:amoy    # reads RPC + PRIVATE_KEY from .env / the environment
 ```
 
-Supported RPC aliases (`foundry.toml`): `local`, `sepolia`, `amoy`. Target network is Polygon Amoy
-(testnet) → Polygon mainnet.
+Copy [`.env.sample`](.env.sample) → `.env` for testnet RPC URLs, the deployer key, and role addresses
+(`ADMIN_ADDRESS` = the Safe multisig in prod). **Never commit `.env`.** Supported RPC aliases
+(`foundry.toml`): `local`, `sepolia`, `amoy`. Target network is Polygon Amoy (testnet) → Polygon mainnet.
 
 | Script | Purpose |
 |---|---|
-| [`script/Deploy.s.sol`](script/Deploy.s.sol) | Deploy tokens + ERC-2771 forwarder + exchange impl + proxy, or upgrade the proxy in place. |
+| [`script/Deploy.s.sol`](script/Deploy.s.sol) | Deterministic deploy of forwarder + tokens + exchange impl + CREATE3 proxy (atomic init), or upgrade the proxy in place. |
 | [`script/UpgradeCalldata.s.sol`](script/UpgradeCalldata.s.sol) | Print the `upgradeToAndCall` calldata for a Safe multisig to propose (prod upgrades). |
 | [`script/Verify.s.sol`](script/Verify.s.sol) | Verify deployed bytecode against a block explorer. |
 
