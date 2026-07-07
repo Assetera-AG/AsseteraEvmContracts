@@ -63,6 +63,8 @@ abstract contract DeployBase is CreateXScript {
     }
 
     /// @dev CREATE3-deploy `initCode` at its stable, deployer-permissioned address; reuse if already there.
+    ///      Address depends only on (deployer, salt) — use for contracts whose address must be constant
+    ///      across chains AND across initcode/bytecode changes (the proxy, the forwarder).
     function _deploy3(address deployer, string memory name, bytes memory initCode)
         internal
         returns (address addr, bool created)
@@ -72,6 +74,24 @@ abstract contract DeployBase is CreateXScript {
         if (_hasCode(addr)) return (addr, false);
         address deployed = create3(salt, initCode);
         require(deployed == addr, "create3 address mismatch");
+        return (deployed, true);
+    }
+
+    /// @dev CREATE2-deploy `initCode` at a deployer-permissioned address that depends on the initcode —
+    ///      i.e. the **same bytecode maps to the same address**, so a re-run with unchanged bytecode is a
+    ///      true no-op, while changed bytecode yields a new address (→ the proxy upgrade path). Use for the
+    ///      implementation, whose address is not consumer-facing but should be stable per bytecode version.
+    function _deploy2(address deployer, string memory name, bytes memory initCode)
+        internal
+        returns (address addr, bool created)
+    {
+        bytes32 salt = _salt(deployer, name);
+        // CreateX guards a permissioned salt as keccak256(deployer, salt) — mirror it to predict the address.
+        bytes32 guardedSalt = keccak256(abi.encodePacked(uint256(uint160(deployer)), salt));
+        addr = CreateX.computeCreate2Address(guardedSalt, keccak256(initCode), address(CreateX));
+        if (_hasCode(addr)) return (addr, false);
+        address deployed = CreateX.deployCreate2(salt, initCode);
+        require(deployed == addr, "create2 address mismatch");
         return (deployed, true);
     }
 

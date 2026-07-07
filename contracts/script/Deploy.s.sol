@@ -71,10 +71,15 @@ contract Deploy is DeployBase {
         );
         console2.log(created ? "MockRWA deployed:" : "MockRWA reused: ", rwa);
 
-        // 3. Exchange implementation — plain CREATE. Its address is not consumer-facing (only the proxy is)
-        //    and a new impl is expected on each release; the forwarder is baked in as an immutable.
-        exchangeImpl = address(new AsseteraExchange(forwarder));
-        console2.log("AsseteraExchange impl:", exchangeImpl);
+        // 3. Exchange implementation — CREATE2 keyed on the initcode, so unchanged bytecode maps to the same
+        //    address (re-run is a true no-op) and changed bytecode yields a new impl (→ the upgrade path
+        //    below). The forwarder is baked in as an immutable; the impl address is not consumer-facing.
+        (exchangeImpl, created) = _deploy2(
+            deployer,
+            "AsseteraExchange.impl",
+            abi.encodePacked(type(AsseteraExchange).creationCode, abi.encode(forwarder))
+        );
+        console2.log(created ? "AsseteraExchange impl deployed:" : "AsseteraExchange impl reused: ", exchangeImpl);
 
         // 4. Exchange proxy — CREATE3 stable address, initialized atomically in the constructor (initData is
         //    part of the initcode, but CREATE3 makes the address initcode-independent, so there is no
