@@ -39,11 +39,12 @@ contract Deploy is DeployBase {
         // ADMIN_ADDRESS should be the Safe multisig on production networks.
         // Defaults to the deployer EOA so local / CI runs work without extra config.
         address admin = vm.envOr("ADMIN_ADDRESS", deployer);
-        operator  = vm.envOr("OPERATOR_ADDRESS",   deployer);
+        operator = vm.envOr("OPERATOR_ADDRESS", deployer);
         kycSigner = vm.envOr("KYC_SIGNER_ADDRESS", deployer);
-        relayer   = vm.envOr("RELAYER_ADDRESS",    deployer);
+        relayer = vm.envOr("RELAYER_ADDRESS", deployer);
 
-        if (pk != 0) vm.startBroadcast(pk); else vm.startBroadcast();
+        if (pk != 0) vm.startBroadcast(pk);
+        else vm.startBroadcast();
 
         // 1. Test tokens — reuse if already deployed on this network.
         if (!_hasCode(usdc)) {
@@ -79,8 +80,7 @@ contract Deploy is DeployBase {
         //    old proxy address on a freshly-deployed non-proxy contract.
         bool isProxy = _hasCode(exchangeProxy) && _currentImpl(exchangeProxy) != address(0);
         if (!isProxy) {
-            bytes memory initData =
-                abi.encodeCall(AsseteraExchange.initialize, (admin, operator, kycSigner));
+            bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, operator, kycSigner));
             exchangeProxy = address(new ERC1967Proxy(newImpl, initData));
             console2.log("AsseteraExchange proxy deployed:", exchangeProxy);
             console2.log("  admin (DEFAULT_ADMIN_ROLE):", admin);

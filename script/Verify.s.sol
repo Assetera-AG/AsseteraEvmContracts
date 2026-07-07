@@ -25,11 +25,11 @@ contract Verify is Script {
 
         string memory json = vm.readFile(path);
 
-        address proxy     = json.readAddress(".contracts.AsseteraExchange");
-        address impl      = json.readAddress(".implementations.AsseteraExchange");
+        address proxy = json.readAddress(".contracts.AsseteraExchange");
+        address impl = json.readAddress(".implementations.AsseteraExchange");
         address adminAddr = json.readAddress(".metadata.admin");
-        address opAddr    = json.readAddress(".metadata.operator");
-        address kycAddr   = json.readAddress(".metadata.kycSigner");
+        address opAddr = json.readAddress(".metadata.operator");
+        address kycAddr = json.readAddress(".metadata.kycSigner");
 
         AsseteraExchange exchange = AsseteraExchange(proxy);
 
@@ -42,8 +42,7 @@ contract Verify is Script {
         // 1. Implementation slot matches recorded impl.
         bytes32 raw = vm.load(proxy, ERC1967Utils.IMPLEMENTATION_SLOT);
         address liveImpl = address(uint160(uint256(raw)));
-        _check("impl slot == recorded impl", liveImpl == impl,
-            string.concat("  got ", vm.toString(liveImpl)));
+        _check("impl slot == recorded impl", liveImpl == impl, string.concat("  got ", vm.toString(liveImpl)));
 
         // 2. Version readable (proxy is live).
         string memory ver = exchange.version();
@@ -52,36 +51,46 @@ contract Verify is Script {
 
         // 3. Admin role is held by the Safe (ADMIN_ADDRESS).
         bytes32 adminRole = exchange.DEFAULT_ADMIN_ROLE();
-        _check("Safe holds DEFAULT_ADMIN_ROLE",
+        _check(
+            "Safe holds DEFAULT_ADMIN_ROLE",
             exchange.hasRole(adminRole, adminAddr),
-            string.concat("  ", vm.toString(adminAddr), " does NOT hold DEFAULT_ADMIN_ROLE"));
+            string.concat("  ", vm.toString(adminAddr), " does NOT hold DEFAULT_ADMIN_ROLE")
+        );
 
         // 4. Deployer EOA does NOT hold admin role (if admin != deployer).
         address deployer = json.readAddress(".metadata.deployer");
         if (deployer != adminAddr) {
-            _check("Deployer EOA does NOT hold DEFAULT_ADMIN_ROLE",
+            _check(
+                "Deployer EOA does NOT hold DEFAULT_ADMIN_ROLE",
                 !exchange.hasRole(adminRole, deployer),
-                "  deployer still holds DEFAULT_ADMIN_ROLE - revoke it from the Safe");
+                "  deployer still holds DEFAULT_ADMIN_ROLE - revoke it from the Safe"
+            );
         }
 
         // 5. Operator holds OPERATOR_ROLE.
-        _check("operator holds OPERATOR_ROLE",
+        _check(
+            "operator holds OPERATOR_ROLE",
             exchange.hasRole(exchange.OPERATOR_ROLE(), opAddr),
-            string.concat("  ", vm.toString(opAddr), " does NOT hold OPERATOR_ROLE"));
+            string.concat("  ", vm.toString(opAddr), " does NOT hold OPERATOR_ROLE")
+        );
 
         // 6. KYC signer holds KYC_OPERATOR_ROLE.
-        _check("kycSigner holds KYC_OPERATOR_ROLE",
+        _check(
+            "kycSigner holds KYC_OPERATOR_ROLE",
             exchange.hasRole(exchange.KYC_OPERATOR_ROLE(), kycAddr),
-            string.concat("  ", vm.toString(kycAddr), " does NOT hold KYC_OPERATOR_ROLE"));
+            string.concat("  ", vm.toString(kycAddr), " does NOT hold KYC_OPERATOR_ROLE")
+        );
 
         // 7. Compliance gating is on for all actions by default.
-        bool placeGated  = exchange.complianceRequired(AsseteraExchange.Action.Place);
-        bool fillGated   = exchange.complianceRequired(AsseteraExchange.Action.Fill);
+        bool placeGated = exchange.complianceRequired(AsseteraExchange.Action.Place);
+        bool fillGated = exchange.complianceRequired(AsseteraExchange.Action.Fill);
         bool settleGated = exchange.complianceRequired(AsseteraExchange.Action.Settle);
         bool cancelGated = exchange.complianceRequired(AsseteraExchange.Action.Cancel);
-        _check("all actions KYC-gated by default",
+        _check(
+            "all actions KYC-gated by default",
             placeGated && fillGated && settleGated && cancelGated,
-            "  one or more actions not gated");
+            "  one or more actions not gated"
+        );
 
         // 8. Contract is not paused after deploy.
         _check("contract not paused", !exchange.paused(), "  contract is paused");

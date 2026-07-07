@@ -15,10 +15,7 @@ contract FaucetToken is ERC20, ERC20Permit {
     /// @param name_     Token name (e.g. "Mock USD Coin")
     /// @param symbol_   Token symbol (e.g. "mUSDC")
     /// @param decimals_ Decimal precision (6 for USDC-like, 18 for RWA-like)
-    constructor(string memory name_, string memory symbol_, uint8 decimals_)
-        ERC20(name_, symbol_)
-        ERC20Permit(name_)
-    {
+    constructor(string memory name_, string memory symbol_, uint8 decimals_) ERC20(name_, symbol_) ERC20Permit(name_) {
         _decimals = decimals_;
     }
 
