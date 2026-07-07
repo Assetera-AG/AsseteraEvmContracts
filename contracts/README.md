@@ -69,6 +69,9 @@ deployer, an address that survives implementation upgrades. The per-network reco
 [`../packages/sdk/src/deployments/<chainId>.json`](../packages/sdk/src/deployments) (the SDK's source of
 truth), keyed by numeric `chainId` and carrying the `caip2` id + `namespace` for the indexer/API. Re-running
 is idempotent — it reuses existing contracts and **upgrades the proxy in place** (address unchanged).
+Local-chain records (anvil `31337`) are **git-ignored** — they're deterministic and deployer-specific, so
+just regenerate them with `npm run deploy:local`; only **real-network** deployments (Amoy/mainnet/…) are
+committed.
 
 ```bash
 # Local (anvil) — one command; auto-etches CreateX onto the node, then broadcasts

@@ -7,6 +7,11 @@ dist/
 .env
 .env.local
 
+# Local-chain deployment artifacts are ephemeral + deployer-specific — regenerate with
+# `npm run deploy:local`. Only real-network deployments (Amoy/mainnet/…) are committed.
+packages/sdk/src/deployments/31337.json
+packages/sdk/src/deployments/1337.json
+
 # Editor directories
 .vscode/
 .idea/
