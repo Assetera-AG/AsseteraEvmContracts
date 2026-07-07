@@ -46,9 +46,7 @@ contract UpgradeCalldata is Script {
         }
 
         // 3. Build the upgradeToAndCall calldata (Safe will call this on the proxy).
-        bytes memory upgradeCalldata = abi.encodeWithSignature(
-            "upgradeToAndCall(address,bytes)", newImpl, bytes("")
-        );
+        bytes memory upgradeCalldata = abi.encodeWithSignature("upgradeToAndCall(address,bytes)", newImpl, bytes(""));
 
         console2.log("");
         console2.log("=== Safe transaction to propose ===");

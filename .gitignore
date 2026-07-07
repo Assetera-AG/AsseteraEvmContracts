@@ -1,7 +1,8 @@
 # Foundry build artifacts
+# NOTE: lib/ is intentionally NOT ignored — dependencies are tracked as git submodules
+# (pinned in foundry.lock) so a fresh clone + CI can build deterministically.
 out/
 cache/
-lib/
 broadcast/
 deployments/
 abi/

@@ -1,1 +1,12 @@
-{"extends": ["solhint:recommended"]}
+{
+  "extends": ["solhint:recommended"],
+  "rules": {
+    "no-console": "off",
+    "func-name-mixedcase": "off",
+    "import-path-check": "off",
+    "gas-custom-errors": "warn",
+    "reason-string": "warn",
+    "var-name-mixedcase": "warn",
+    "func-visibility": ["warn", { "ignoreConstructors": true }]
+  }
+}

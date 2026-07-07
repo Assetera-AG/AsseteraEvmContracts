@@ -48,7 +48,7 @@ abstract contract DeployBase is Script {
         forwarder = _readAddr(json, ".contracts.Forwarder");
         usdc = _readAddr(json, ".contracts.MockUSDC");
         rwa = _readAddr(json, ".contracts.MockRWA");
-        admin    = _readAddr(json, ".metadata.admin");
+        admin = _readAddr(json, ".metadata.admin");
         operator = _readAddr(json, ".metadata.operator");
     }
 

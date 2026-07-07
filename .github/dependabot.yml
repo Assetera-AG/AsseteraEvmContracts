@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # Bump pinned action versions in .github/workflows/
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+
+  # Bump the lib/ dependency submodules (forge-std, OpenZeppelin) pinned in foundry.lock
+  - package-ecosystem: "gitsubmodule"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "deps"
