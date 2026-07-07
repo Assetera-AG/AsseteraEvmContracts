@@ -1,0 +1,43 @@
+name: ci
+
+# Required PR gate for AsseteraEvmContracts (ADR-0004 engineering workflow / ADR-0013 github-config-as-code).
+# The `build` job is the required status check wired into the protect-main ruleset, codified in
+# AsseteraInfrastructure/github/repo-baseline.tf. Keep the job name in sync with that ruleset's context.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive # deps are pinned git submodules under lib/
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Format check
+        run: forge fmt --check
+
+      - name: Solhint
+        run: npx --yes solhint@5.2.0 'src/**/*.sol' 'script/**/*.sol' 'test/**/*.sol'
+
+      - name: Build
+        run: forge build --sizes
+
+      - name: Test
+        run: forge test -vvv
+        env:
+          FOUNDRY_PROFILE: ci # heavier fuzzing (see foundry.toml [profile.ci])
