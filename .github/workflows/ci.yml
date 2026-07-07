@@ -18,10 +18,13 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts # the Foundry project lives here (monorepo; SDK is in packages/sdk)
     steps:
       - uses: actions/checkout@v5
         with:
-          submodules: recursive # deps are pinned git submodules under lib/
+          submodules: recursive # deps are pinned git submodules under contracts/lib/
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1

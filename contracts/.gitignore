@@ -1,0 +1,17 @@
+# Foundry build artifacts
+# NOTE: lib/ is intentionally NOT ignored — dependencies are tracked as git submodules
+# (pinned in foundry.lock) so a fresh clone + CI can build deterministically.
+out/
+cache/
+broadcast/
+
+# Broadcast run artifacts (keep latest symlinks, ignore timestamped runs)
+broadcast/*/*/run-[0-9]*.json
+
+# Environment — real keys are never committed; .env.sample is the template
+.env
+.env.*
+!.env.sample
+
+# Deploy artifacts are the SDK's source of truth and live in packages/sdk/src/deployments/
+# (committed there), so nothing under contracts/ writes committed addresses.

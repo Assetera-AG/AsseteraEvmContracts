@@ -1,0 +1,13 @@
+{
+  "name": "evm-contracts-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Workspace root for the Assetera EVM contracts + generated SDK (ADR-0026).",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @asseteragmbh/evm-contracts",
+    "typecheck": "npm run typecheck -w @asseteragmbh/evm-contracts"
+  }
+}
