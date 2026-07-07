@@ -26,28 +26,28 @@ Regenerate after any contract change with `forge build` (emits `out/AsseteraExch
 
 ## 2. Public interface reference
 
-All state-changing functions accept a `KycAttestation calldata att` (or two, for two-party actions) unless noted. See [§4 KycAttestation](#kycattestation-off-chain-struct) for its shape.
+All state-changing functions accept a `KycAttestation calldata att` (or two, for two-party actions) unless noted. The three fee-setting actions (`placeOrder`, `placeOrderWithPermit`, `makeOffer`) additionally require a `FeeAttestation calldata feeAtt` from the separate fee service — fees are no longer carried inside `KycAttestation`. See [§4](#kycattestation-off-chain-struct) for both structs' shapes.
 
 ### Maker actions
 
 | Function | Access | Notes |
 |---|---|---|
-| `placeOrder(address sellToken, uint256 sellAmount, address buyToken, uint256 buyAmount, uint64 expireTs, KycAttestation calldata att) → uint256 id` | KYC-gated (`Action.Place`) | Escrows `sellAmount` of `sellToken`. Emits `OrderPlaced`. |
-| `placeOrderWithPermit(address sellToken, uint256 sellAmount, address buyToken, uint256 buyAmount, uint64 expireTs, uint256 permitDeadline, uint8 v, bytes32 r, bytes32 s, KycAttestation calldata att) → uint256 id` | KYC-gated (`Action.Place`) | Same as `placeOrder`; attempts ERC-2612 `permit` first (best-effort, swallowed on failure). |
+| `placeOrder(address sellToken, uint256 sellAmount, address buyToken, uint256 buyAmount, uint64 expireTs, KycAttestation calldata att, FeeAttestation calldata feeAtt) → uint256 id` | KYC-gated (`Action.Place`) + fee-gated | Escrows `sellAmount` of `sellToken`. `att`/`feeAtt` are bound together (same account/action/paramsHash). Emits `OrderPlaced`. |
+| `placeOrderWithPermit(address sellToken, uint256 sellAmount, address buyToken, uint256 buyAmount, uint64 expireTs, uint256 permitDeadline, uint8 v, bytes32 r, bytes32 s, KycAttestation calldata att, FeeAttestation calldata feeAtt) → uint256 id` | KYC-gated (`Action.Place`) + fee-gated | Same as `placeOrder`; attempts ERC-2612 `permit` first (best-effort, swallowed on failure). |
 | `cancelOrder(uint256 id)` | maker only, no attestation required | A maker can always cancel their own open order and reclaim escrow, regardless of KYC/blacklist status. Emits `OrderCancelled`. |
 
 ### Taker actions
 
 | Function | Access | Notes |
 |---|---|---|
-| `fillOrder(uint256 id, uint256 fillSellAmount, KycAttestation calldata att)` | KYC-gated (`Action.Fill`) | Emits `OrderFilled` (full) or `OrderPartiallyFilled` (partial). |
+| `fillOrder(uint256 id, uint256 fillSellAmount, KycAttestation calldata att)` | KYC-gated (`Action.Fill`) | No fee attestation — fee terms are read from the order's snapshot. Emits `OrderFilled` (full) or `OrderPartiallyFilled` (partial). |
 
 ### Offer lifecycle (maker/taker, party-restricted)
 
 | Function | Access | Notes |
 |---|---|---|
-| `makeOffer(address taker, address makerToken, uint256 makerAmount, address takerToken, uint256 takerAmount, uint64 expireTs, KycAttestation calldata att) → uint256 id` | KYC-gated (`Action.MakeOffer`) | Targeted at a specific `taker`. Emits `OfferMade`. |
-| `replaceOffer(uint256 offerId, uint256 newMakerAmount, uint256 newTakerAmount, uint64 expireTs, KycAttestation calldata att)` | maker or taker, KYC-gated (`Action.ReplaceOffer`) | Counter-proposal; flips `proposedBy`. Emits `OfferReplaced`. |
+| `makeOffer(address taker, address makerToken, uint256 makerAmount, address takerToken, uint256 takerAmount, uint64 expireTs, KycAttestation calldata att, FeeAttestation calldata feeAtt) → uint256 id` | KYC-gated (`Action.MakeOffer`) + fee-gated | Targeted at a specific `taker`. `att`/`feeAtt` are bound together. Emits `OfferMade`. |
+| `replaceOffer(uint256 offerId, uint256 newMakerAmount, uint256 newTakerAmount, uint64 expireTs, KycAttestation calldata att)` | maker or taker, KYC-gated (`Action.ReplaceOffer`) | No fee attestation — fee terms are fixed from `makeOffer`, not renegotiated. Counter-proposal; flips `proposedBy`. Emits `OfferReplaced`. |
 | `cancelOffer(uint256 offerId, KycAttestation calldata att)` | maker or taker, KYC-gated (`Action.CancelOffer`) | Only while `Open`/`Countered`. Emits `OfferCancelled`. |
 | `acceptOffer(uint256 offerId, KycAttestation calldata att)` | non-proposing party, KYC-gated (`Action.AcceptOffer`) | Escrows the accepting side. Emits `OfferAccepted`. |
 
@@ -86,6 +86,7 @@ All state-changing functions accept a `KycAttestation calldata att` (or two, for
 | `getOffer(uint256 id)` | `Offer` struct |
 | `totalOrders()` / `totalOffers()` | `uint256` — highest assigned id (ids are `1..total`) |
 | `usedNonce(address account, uint256 nonce)` | `bool` — KYC nonce consumption state |
+| `usedFeeNonce(address account, uint256 nonce)` | `bool` — fee attestation nonce consumption state (separate namespace from `usedNonce`) |
 | `complianceRequired(Action action)` | `bool` — whether that action currently requires an attestation |
 | `allowedCollectors(address)` | `bool` |
 | `version()` | `string` |
@@ -179,7 +180,7 @@ There is no order-level `Cancel` action — `cancelOrder` never requires (or con
 
 ### `KycAttestation` (off-chain struct)
 
-Not stored on-chain; passed as calldata to state-changing calls and reflected into `KycConsumed`.
+Not stored on-chain; passed as calldata to state-changing calls and reflected into `KycConsumed`. Carries **no fee terms** — see `FeeAttestation` below.
 
 | Field | Type |
 |---|---|
@@ -189,13 +190,33 @@ Not stored on-chain; passed as calldata to state-changing calls and reflected in
 | `nonce` | `uint256` |
 | `deadline` | `uint256` |
 | `paramsHash` | `bytes32` |
+| `signature` | `bytes` |
+
+`KYC_TYPEHASH = 0x9d47d5391d5fdceebb227638b24f6b391e7e39fd6671f3b7478c9767dd1ba835`
+(`keccak256("KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint256 deadline,bytes32 paramsHash)")`)
+
+### `FeeAttestation` (off-chain struct)
+
+Not stored on-chain; required alongside a `KycAttestation` on `placeOrder`, `placeOrderWithPermit`, and `makeOffer` (the fee-setting actions), and reflected into `FeeConsumed`. Signed by a `FEE_OPERATOR_ROLE` holder (the fee service) — a separate signer from KYC. Has its own nonce namespace (`usedFeeNonce`, distinct from `usedNonce`). No `orderId` field: fee attestations only ever authorise Place/MakeOffer, both of which are bound via `orderId == 0`.
+
+The contract binds `feeAtt` to the paired `kycAtt` by checking both against the *same* `account`/`action`, and both `paramsHash` fields against the *same* on-chain-computed hash — so a fee attestation cannot be replayed against a different order/offer or paired with a mismatched KYC attestation.
+
+| Field | Type |
+|---|---|
+| `account` | `address` |
+| `action` | `Action` (`uint8`) — `Place` or `MakeOffer` |
+| `nonce` | `uint256` |
+| `deadline` | `uint256` |
+| `paramsHash` | `bytes32` — must equal the paired `KycAttestation.paramsHash` |
 | `makerFeeBps` | `uint16` |
 | `takerFeeBps` | `uint16` |
 | `feeCollector` | `address` |
 | `signature` | `bytes` |
 
-`KYC_TYPEHASH = 0x2bc2d563768338fb74d89d51a723dffab422263d3ac6a8caf9e0d41de82235d9`
-(`keccak256("KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector)")`)
+`FEE_TYPEHASH = 0xf16e0cd6fda16a8c595f563a1b6429cd3f4afc445eadd7aa847cee6a22c843ce`
+(`keccak256("FeeAttestation(address account,uint8 action,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector)")`)
+
+On-chain bounds (`MAX_FEE_BPS` cap, `allowedCollectors` allowlist check) are re-checked unconditionally on every fee-setting call regardless of `complianceRequired` gating — defence in depth against a compromised fee signer.
 
 ### Role constants (for decoding inherited `RoleGranted`/`RoleRevoked` events)
 
@@ -204,6 +225,7 @@ Not stored on-chain; passed as calldata to state-changing calls and reflected in
 | `DEFAULT_ADMIN_ROLE` | `0x0000000000000000000000000000000000000000000000000000000000000000` |
 | `OPERATOR_ROLE` | `0x97667070c54ef182b0f5858b034beac1b6f3089aa2d3188bb1e8929f4fa9b929` |
 | `KYC_OPERATOR_ROLE` | `0xdf54a8fce50b9de7187b8b9daaa3b95e6ef1bf1df5fe0a03ddea8faa73de2a10` |
+| `FEE_OPERATOR_ROLE` | `0x8efbb70a6b43a0e337cb93750666361f6a0fe46a0aee356063f13c9b68520bb7` |
 
 ---
 
@@ -223,6 +245,7 @@ Event summary:
 | `OrderExpired` | `sweepExpired` (once per swept id) |
 | `CollectorAllowed` | `setAllowedCollector` |
 | `KycConsumed` | any KYC-gated action, on attestation consumption |
+| `FeeConsumed` | `placeOrder`, `placeOrderWithPermit`, `makeOffer`, on fee attestation consumption |
 | `ComplianceRequiredSet` | `setComplianceRequired` |
 | `BlacklistUpdated` | `setBlacklisted` |
 | `OfferMade` | `makeOffer` |
@@ -392,6 +415,19 @@ Emitted **only** when `complianceRequired[action]` is `true` at call time (see `
 
 ---
 
+### `FeeConsumed`
+
+```solidity
+event FeeConsumed(address indexed account, Action indexed action, uint256 nonce);
+```
+- **topic0:** `0xeaf112abadbe52fe1bec7bd8a3ce534907a37f5af958abdd0e957c64a11ddd27`
+- **Indexed:** `account`, `action`
+- **Data:** `nonce`
+
+Emitted alongside `KycConsumed` on `placeOrder`/`placeOrderWithPermit` (`action = Place`) and `makeOffer` (`action = MakeOffer`), same gating rule as `KycConsumed` (only emitted when `complianceRequired[action]` is `true`). No `orderId` field — fee attestations are only ever bound to `orderId == 0` (Place/MakeOffer). `nonce` is drawn from the separate `usedFeeNonce` namespace, not `usedNonce`.
+
+---
+
 ### `ComplianceRequiredSet`
 
 ```solidity
@@ -525,6 +561,21 @@ Action items for indexer/API teams:
 
 All other events (`OrderPlaced`, `OrderFilled`, `OrderPartiallyFilled`, `OrderSettled`, etc.) are unchanged between the committed ABI and current source.
 
+### Fee decoupling (⚠️ off-chain-breaking, coordinated release)
+
+`makerFeeBps`/`takerFeeBps`/`feeCollector` were removed from `KycAttestation` and now travel in a separate `FeeAttestation`, signed by a new `FEE_OPERATOR_ROLE` holder (the fee service) instead of the KYC signer. This changes both the KYC EIP-712 typehash and the calldata shape of every fee-setting call — **backend signing code and this doc must deploy in lockstep**:
+
+| Item | Before | After |
+|---|---|---|
+| `KYC_TYPEHASH` | `keccak256("KycAttestation(...,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector)")`, 9 fields | `0x9d47d5391d5fdceebb227638b24f6b391e7e39fd6671f3b7478c9767dd1ba835`, 6 fields (fee fields removed) |
+| `FEE_TYPEHASH` | *(did not exist)* | `0xf16e0cd6fda16a8c595f563a1b6429cd3f4afc445eadd7aa847cee6a22c843ce` — new, signed by `FEE_OPERATOR_ROLE` |
+| `placeOrder` selector | `0x3a0bd1ce` | `0x1c17a0b2` — now takes `(KycAttestation, FeeAttestation)` |
+| `placeOrderWithPermit` selector | `0xfc71b24e` | `0xd6f26c85` — now takes `(..., KycAttestation, FeeAttestation)` |
+| `makeOffer` selector | `0x3e6f6a3a` | `0xc1155711` — now takes `(KycAttestation, FeeAttestation)` |
+| `initialize` selector | `0xc0c53b8b` (`admin,operator,kycSigner`) | `0xf8c8765e` — new required `feeSigner` param |
+
+Downstream actions (`fillOrder`, `cancelOrder`, `settle`, `acceptOffer`, `replaceOffer`, `cancelOffer`, `settleOffer`) are unaffected — they still take only `KycAttestation` and read fee terms already snapshotted on the `Order`/`Offer` at placement/offer-creation time. See [§3](#feeattestation-off-chain-struct) for the new struct and [§4](#feeconsumed) for the new `FeeConsumed` event.
+
 ---
 
 ## 6. Actor resolution (ERC-2771 meta-tx)
@@ -571,6 +622,12 @@ All reverts are custom errors (no revert strings). 4-byte selectors, for API lay
 | `KycTtlTooLong()` | `0x95b88c37` |
 | `KycNonceUsed()` | `0x6ad0f3dd` |
 | `KycBadSigner()` | `0x36c9d94d` |
+| `FeeAccountMismatch()` | `0x97e73bff` |
+| `FeeActionMismatch()` | `0x0e61c26a` |
+| `FeeExpired()` | `0x77fe4a46` |
+| `FeeTtlTooLong()` | `0x1a2d6586` |
+| `FeeNonceUsed()` | `0xd77d3a82` |
+| `FeeBadSigner()` | `0x26aa3fdd` |
 
 ---
 

@@ -14,6 +14,7 @@ AsseteraExchange is an escrow-based, off-chain-matched limit-order venue for reg
 
 - **Positive gate** — every user-initiated trade action requires a fresh, single-use EIP-712 *KYC attestation* signed by the platform's compliance backend. The backend refuses to sign for unverified or suspended users, effectively freezing them without on-chain writes.
 - **Negative / escape hatch** — admin functions (`cancelOrderForUser`, `cancelOfferForUser`) allow the multisig to force-return escrowed funds to a compliance-chosen recipient, bypassing the KYC gate.
+- **Fee gate (separate from KYC)** — the three fee-setting actions (`placeOrder`, `placeOrderWithPermit`, `makeOffer`) additionally require a *fee attestation* signed by a distinct fee service (`FEE_OPERATOR_ROLE`), not the KYC backend. Fee terms never ride inside the KYC attestation. See [§5](#5-fee-attestation).
 
 There is **no on-chain matching engine**. Orders and offers are matched off-chain by the operator, who then drives the settlement call. This keeps gas costs low and lets the operator apply compliance logic before any settlement.
 
@@ -28,6 +29,7 @@ Identity is resolved via `_msgSender()` (ERC-2771), so callers can be plain EOAs
 | **Admin (multisig)** | `DEFAULT_ADMIN_ROLE` | Upgrade proxy, manage roles, force-cancel orders/offers, toggle KYC gating per action, update blacklist, manage fee collector allowlist |
 | **Operator** | `OPERATOR_ROLE` | Settle matched orders, settle accepted offers, refund orders, pause/unpause venue |
 | **KYC Backend** | `KYC_OPERATOR_ROLE` | Sign KYC attestations authorising user actions |
+| **Fee Service** | `FEE_OPERATOR_ROLE` | Sign fee attestations authorising per-pair fee terms on `placeOrder`/`placeOrderWithPermit`/`makeOffer` — a distinct signer from the KYC backend |
 | **Maker** | — | Place orders, place offers, cancel own orders (always unattested), cancel own offers (KYC-gated) |
 | **Taker** | — | Fill orders (KYC-gated), accept/counter/cancel offers (KYC-gated) |
 | **Anyone** | — | Sweep expired orders (`sweepExpired`) and offers (`sweepExpiredOffers`) |
@@ -60,7 +62,7 @@ User EOA  ──► ERC2771Forwarder ──► AsseteraExchange (proxy)
 
 ## 4. KYC Attestation
 
-Every user-initiated state-changing action (except `cancelOrder` and permissionless sweeps) requires a `KycAttestation` signed by a `KYC_OPERATOR_ROLE` holder.
+Every user-initiated state-changing action (except `cancelOrder` and permissionless sweeps) requires a `KycAttestation` signed by a `KYC_OPERATOR_ROLE` holder. It carries **no fee terms** — see [§5](#5-fee-attestation) for the separate fee-service attestation required alongside it on fee-setting actions.
 
 ### Struct
 
@@ -72,9 +74,6 @@ struct KycAttestation {
     uint256 nonce;        // single-use random value; burned on consumption
     uint256 deadline;     // unix timestamp after which the attestation is invalid
     bytes32 paramsHash;   // keccak256 of action-specific parameters (see below)
-    uint16  makerFeeBps;  // per-pair maker fee; backend-signed for Place/MakeOffer, zero for all other actions
-    uint16  takerFeeBps;  // per-pair taker fee; backend-signed for Place/MakeOffer, zero for all other actions
-    address feeCollector; // must be on the admin fee-collector allowlist when either fee bps is non-zero
     bytes   signature;    // EIP-712 signature over the above fields
 }
 ```
@@ -91,7 +90,7 @@ verifyingContract: <proxy address>
 ### Type Hash
 
 ```
-KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector)
+KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint256 deadline,bytes32 paramsHash)
 ```
 
 ### Validation rules (enforced in `_verifyKyc`)
@@ -107,18 +106,6 @@ KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint25
 | Nonce already used | `KycNonceUsed` |
 | Recovered signer lacks `KYC_OPERATOR_ROLE` | `KycBadSigner` |
 | Non-zero `paramsHash` on a non-parameterised action | `ParamsHashMismatch` |
-
-### Fee validation (enforced by `placeOrder` / `placeOrderWithPermit` / `makeOffer`, before KYC consumption)
-
-Fee terms are set by the backend at signing time (`makerFeeBps`, `takerFeeBps`, `feeCollector` on the attestation) but re-validated on-chain so a compromised KYC signer cannot set extreme fees or redirect them to an arbitrary wallet:
-
-| Check | Error |
-|---|---|
-| `makerFeeBps > MAX_FEE_BPS` or `takerFeeBps > MAX_FEE_BPS` (`MAX_FEE_BPS = 10_000` = 100%) | `InvalidFee` |
-| Either fee bps non-zero and `feeCollector == address(0)` | `ZeroAddress` |
-| Either fee bps non-zero and `feeCollector` not on the admin-managed allowlist (`allowedCollectors`) | `FeeCollectorNotAllowed` |
-
-Validation runs before the KYC nonce is consumed, so a call that fails fee validation does not burn the attestation. The fee snapshot (`makerFeeBps`, `takerFeeBps`, `feeCollector`) is stored on the `Order`/`Offer` at creation and is immutable for that order's/offer's lifetime — `replaceOffer` renegotiates amounts but not fee terms.
 
 ### paramsHash per action
 
@@ -141,7 +128,71 @@ Orders support partial fills, meaning `remainingQuantity` can change between the
 
 ---
 
-## 5. Order Lifecycle
+## 5. Fee Attestation
+
+The three fee-setting actions (`placeOrder`, `placeOrderWithPermit`, `makeOffer`) require a **second**, independent attestation — `FeeAttestation` — signed by a `FEE_OPERATOR_ROLE` holder (the fee service), not the KYC backend. This mirrors the KYC-gate pattern (`_verifyFee`, own EIP-712 typehash, own single-use nonce namespace; both attestations are consumed together via `_consumeKycAndFee`) but is a fully separate trust boundary: a compromised KYC signer can no longer set fees, and vice versa.
+
+### Struct
+
+```solidity
+struct FeeAttestation {
+    address account;      // the party being authorised; must equal _msgSender()
+    Action  action;       // which action this authorises: Place or MakeOffer only
+    uint256 nonce;        // single-use random value; burned on consumption (own namespace, usedFeeNonce)
+    uint256 deadline;     // unix timestamp after which the attestation is invalid
+    bytes32 paramsHash;   // must equal the paired KycAttestation's paramsHash
+    uint16  makerFeeBps;  // per-pair maker fee
+    uint16  takerFeeBps;  // per-pair taker fee
+    address feeCollector; // must be on the admin fee-collector allowlist when either fee bps is non-zero
+    bytes   signature;    // EIP-712 signature over the above fields
+}
+```
+
+No `orderId` field — fee attestations only ever authorise `Place`/`MakeOffer`, both of which are always bound to `orderId == 0`.
+
+### Type Hash
+
+```
+FeeAttestation(address account,uint8 action,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector)
+```
+
+### Binding to the paired KycAttestation
+
+`placeOrder`/`placeOrderWithPermit`/`makeOffer` take both `att` (KYC) and `feeAtt` (fee) and bind them together:
+
+- Both are verified against the **same** `account` (`_msgSender()`) and the **same** `action` — so `feeAtt.account == att.account == _msgSender()` and `feeAtt.action == att.action` hold transitively, without an explicit cross-field check.
+- Both `att.paramsHash` and `feeAtt.paramsHash` are checked against the **same** on-chain-computed hash (the four `placeOrder` params, or the five `makeOffer` params) — so `feeAtt.paramsHash == att.paramsHash` holds transitively.
+- Both attestations are verified (pure/view) **before** either nonce is burned — an invalid fee attestation does not consume the KYC nonce, and vice versa.
+
+A fee attestation therefore cannot be replayed against a different order/offer, paired with a mismatched KYC attestation, or reused by a different account.
+
+### Validation rules (enforced in `_verifyFee`)
+
+| Check | Error |
+|---|---|
+| Account on blacklist | `AccountBlacklisted` |
+| `feeAtt.account != _msgSender()` | `FeeAccountMismatch` |
+| `feeAtt.action != expectedAction` | `FeeActionMismatch` |
+| `block.timestamp > feeAtt.deadline` | `FeeExpired` |
+| `feeAtt.deadline > block.timestamp + 15 min` (`MAX_FEE_TTL`) | `FeeTtlTooLong` |
+| Nonce already used (`usedFeeNonce`) | `FeeNonceUsed` |
+| Recovered signer lacks `FEE_OPERATOR_ROLE` | `FeeBadSigner` |
+
+### Fee bounds (enforced unconditionally by `placeOrder` / `placeOrderWithPermit` / `makeOffer`, defence in depth)
+
+Unlike attestation *verification* above (which is skipped when `complianceRequired[action]` is `false`, same toggle as KYC gating for that action), these bounds are **always** enforced regardless of gating, so a compromised fee signer — or a test run with gating disabled — cannot set extreme fees or redirect them to an arbitrary wallet:
+
+| Check | Error |
+|---|---|
+| `makerFeeBps > MAX_FEE_BPS` or `takerFeeBps > MAX_FEE_BPS` (`MAX_FEE_BPS = 10_000` = 100%) | `InvalidFee` |
+| Either fee bps non-zero and `feeCollector == address(0)` | `ZeroAddress` |
+| Either fee bps non-zero and `feeCollector` not on the admin-managed allowlist (`allowedCollectors`) | `FeeCollectorNotAllowed` |
+
+Validation runs before either nonce is consumed, so a call that fails fee validation does not burn either attestation. The fee snapshot (`makerFeeBps`, `takerFeeBps`, `feeCollector`) is stored on the `Order`/`Offer` at creation and is immutable for that order's/offer's lifetime — `replaceOffer` renegotiates amounts but not fee terms, and downstream actions (`fillOrder`, `settle`, `acceptOffer`, `settleOffer`, …) read the snapshot rather than requiring a fresh fee attestation.
+
+---
+
+## 6. Order Lifecycle
 
 ### State machine
 
@@ -163,10 +214,10 @@ All terminal states are final — no transitions out.
 
 ### Functions
 
-#### `placeOrder(sellToken, sellAmount, buyToken, buyAmount, expireTs, att)`
-Maker escrows `sellAmount` of `sellToken`. Requires a `Place` attestation with `paramsHash` bound to the four order parameters. `expireTs = 0` means the order never expires. The attestation's `makerFeeBps`/`takerFeeBps`/`feeCollector` are validated (see [Fee validation](#fee-validation-enforced-by-placeorder--placeorderwithpermit--makeoffer-before-kyc-consumption)) and snapshotted onto the order.
+#### `placeOrder(sellToken, sellAmount, buyToken, buyAmount, expireTs, att, feeAtt)`
+Maker escrows `sellAmount` of `sellToken`. Requires a `Place` `KycAttestation` (`att`) and a `Place` `FeeAttestation` (`feeAtt`), both with `paramsHash` bound to the four order parameters — see [§5](#5-fee-attestation) for how the two are bound together. `expireTs = 0` means the order never expires. `feeAtt`'s `makerFeeBps`/`takerFeeBps`/`feeCollector` are validated (see [Fee bounds](#fee-bounds-enforced-unconditionally-by-placeorder--placeorderwithpermit--makeoffer-defence-in-depth)) and snapshotted onto the order.
 
-#### `placeOrderWithPermit(sellToken, sellAmount, buyToken, buyAmount, expireTs, permitDeadline, v, r, s, att)`
+#### `placeOrderWithPermit(sellToken, sellAmount, buyToken, buyAmount, expireTs, permitDeadline, v, r, s, att, feeAtt)`
 Same as `placeOrder` (including fee validation/snapshot) but attempts an ERC-2612 `permit` call before the `transferFrom`, allowing the maker to approve and place in a single transaction. The permit failure is swallowed — if the approval is already in place or the token does not support permit, the `transferFrom` still proceeds normally.
 
 #### `cancelOrder(id)`
@@ -196,7 +247,7 @@ Permissionless. Returns escrowed tokens to makers of expired open orders. Skips 
 
 ---
 
-## 6. Offer Lifecycle
+## 7. Offer Lifecycle
 
 Offers are targeted bilateral negotiations between a specific maker and taker. Either party can propose, counter-propose, accept, or cancel. The operator settles once both sides have committed.
 
@@ -232,8 +283,8 @@ Any non-terminal state ──► cancelOfferForUser ──► FORCE-CANCELLED
 
 ### Functions
 
-#### `makeOffer(taker, makerToken, makerAmount, takerToken, takerAmount, expireTs, att)`
-Creates a targeted offer from `_msgSender()` (maker) to `taker`. Escrows `makerAmount` of `makerToken`. Requires a `MakeOffer` attestation with `paramsHash` binding all five offer parameters. The maker and taker must differ (`OfferSelfTarget`). The attestation's `makerFeeBps`/`takerFeeBps`/`feeCollector` are validated (see [Fee validation](#fee-validation-enforced-by-placeorder--placeorderwithpermit--makeoffer-before-kyc-consumption)) and snapshotted onto the offer for its lifetime.
+#### `makeOffer(taker, makerToken, makerAmount, takerToken, takerAmount, expireTs, att, feeAtt)`
+Creates a targeted offer from `_msgSender()` (maker) to `taker`. Escrows `makerAmount` of `makerToken`. Requires a `MakeOffer` `KycAttestation` (`att`) and a `MakeOffer` `FeeAttestation` (`feeAtt`), both with `paramsHash` binding all five offer parameters — see [§5](#5-fee-attestation) for how the two are bound together. The maker and taker must differ (`OfferSelfTarget`). `feeAtt`'s `makerFeeBps`/`takerFeeBps`/`feeCollector` are validated (see [Fee bounds](#fee-bounds-enforced-unconditionally-by-placeorder--placeorderwithpermit--makeoffer-defence-in-depth)) and snapshotted onto the offer for its lifetime.
 
 #### `replaceOffer(offerId, newMakerAmount, newTakerAmount, expireTs, att)`
 Either the maker or taker can counter-propose new amounts. The previous proposer's escrow is returned; the caller escrows their side at the new amounts. Status transitions to `Countered`. `proposedBy` is updated to the caller. Requires a `ReplaceOffer` attestation binding `offerId`, `newMakerAmount`, and `newTakerAmount`. **Fee terms are not renegotiated** — `makerFeeBps`/`takerFeeBps`/`feeCollector` remain fixed from `makeOffer`.
@@ -259,7 +310,7 @@ Permissionless. Returns the current proposer's escrowed tokens for expired `Open
 
 ---
 
-## 7. Compliance Features
+## 8. Compliance Features
 
 ### KYC gating per action (`complianceRequired`)
 
@@ -275,31 +326,34 @@ Accounts are stored pseudonymously as `keccak256(abi.encodePacked(account))`. A 
 
 ### Fee collector allowlist
 
-`setAllowedCollector(collector, allowed)` (admin-only) manages `allowedCollectors`, the set of addresses eligible to receive fee proceeds. A non-zero `makerFeeBps`/`takerFeeBps` on an attestation is only accepted if `feeCollector` is on this allowlist at the time of `placeOrder`/`placeOrderWithPermit`/`makeOffer` (see [Fee validation](#fee-validation-enforced-by-placeorder--placeorderwithpermit--makeoffer-before-kyc-consumption)). This bounds the blast radius of a compromised KYC signer: even a forged attestation cannot redirect fee proceeds to an arbitrary wallet, only to a collector the admin multisig has already approved. Emits `CollectorAllowed`.
+`setAllowedCollector(collector, allowed)` (admin-only) manages `allowedCollectors`, the set of addresses eligible to receive fee proceeds. A non-zero `makerFeeBps`/`takerFeeBps` on a fee attestation is only accepted if `feeCollector` is on this allowlist at the time of `placeOrder`/`placeOrderWithPermit`/`makeOffer` (see [Fee bounds](#fee-bounds-enforced-unconditionally-by-placeorder--placeorderwithpermit--makeoffer-defence-in-depth)). This bounds the blast radius of a compromised fee signer: even a forged fee attestation cannot redirect fee proceeds to an arbitrary wallet, only to a collector the admin multisig has already approved. Emits `CollectorAllowed`.
 
 ---
 
-## 8. Security Properties
+## 9. Security Properties
 
 | Property | Mechanism |
 |---|---|
 | Reentrancy | `nonReentrant` on all state-changing external functions; CEI pattern throughout |
 | Overflow / underflow | Solidity 0.8.28 built-in checks |
 | Safe transfers | `SafeERC20` for all token operations |
-| KYC replay | Per-account single-use nonce burned on consumption |
+| KYC replay | Per-account single-use nonce (`usedNonce`) burned on consumption |
+| Fee-attestation replay | Separate per-account single-use nonce namespace (`usedFeeNonce`), independent of `usedNonce` |
 | Cross-function replay | Separate `Action` enum values for order-level vs offer-level operations |
-| Stale attestation | 15-minute hard cap on KYC TTL (`MAX_KYC_TTL`); `KycExpired` revert after deadline |
-| Partial attestation burn | `settle` and `settleOffer` verify both attestations before consuming either nonce |
+| KYC/fee cross-pairing | `feeAtt`/`att` bound to the same account, action, and on-chain-computed `paramsHash` on every fee-setting call — a fee attestation cannot be paired with a mismatched KYC attestation or a different order/offer |
+| Stale attestation | 15-minute hard cap on KYC TTL (`MAX_KYC_TTL`) and fee TTL (`MAX_FEE_TTL`); `KycExpired`/`FeeExpired` revert after deadline |
+| Partial attestation burn | `settle`, `settleOffer`, and `placeOrder`/`placeOrderWithPermit`/`makeOffer` (KYC + fee) verify all required attestations before consuming any nonce |
 | Price integrity | Cross-multiplication price check in `settle`; ceiling division in `fillOrder` |
 | Upgrade authority | `_authorizeUpgrade` restricted to `DEFAULT_ADMIN_ROLE` |
 | Self-trade | Rejected in `fillOrder` (`SelfTrade`) and `makeOffer` (`OfferSelfTarget`) |
 | Zero-address recipient | Rejected in `cancelOrderForUser` and `cancelOfferForUser` |
-| Fee bounds | `makerFeeBps`/`takerFeeBps` capped at `MAX_FEE_BPS` (10,000 = 100%); enforced on every attestation carrying non-zero fees |
-| Fee redirection | Non-zero-fee `feeCollector` must be on the admin-managed `allowedCollectors` allowlist — a compromised KYC signer cannot redirect fee proceeds |
+| Fee-signer isolation | Fee terms are authorised by a distinct `FEE_OPERATOR_ROLE` signer, separate from `KYC_OPERATOR_ROLE` — a compromised KYC signer can no longer set or redirect fees, and vice versa |
+| Fee bounds | `makerFeeBps`/`takerFeeBps` capped at `MAX_FEE_BPS` (10,000 = 100%); enforced unconditionally on every fee-setting call regardless of gating |
+| Fee redirection | Non-zero-fee `feeCollector` must be on the admin-managed `allowedCollectors` allowlist — a compromised fee signer cannot redirect fee proceeds |
 
 ---
 
-## 9. Events
+## 10. Events
 
 | Event | Emitted by |
 |---|---|
@@ -319,6 +373,7 @@ Accounts are stored pseudonymously as `keccak256(abi.encodePacked(account))`. A 
 | `OfferForceCancelled` | `cancelOfferForUser` |
 | `OfferExpired` | `sweepExpiredOffers` |
 | `KycConsumed` | any KYC-gated action on attestation consumption |
+| `FeeConsumed` | `placeOrder`, `placeOrderWithPermit`, `makeOffer` on fee attestation consumption |
 | `ComplianceRequiredSet` | `setComplianceRequired` |
 | `BlacklistUpdated` | `setBlacklisted` |
 | `CollectorAllowed` | `setAllowedCollector` |
@@ -327,16 +382,17 @@ Accounts are stored pseudonymously as `keccak256(abi.encodePacked(account))`. A 
 
 ---
 
-## 10. Upgrade Considerations
+## 11. Upgrade Considerations
 
 - The contract uses the UUPS proxy pattern. Only the admin (`DEFAULT_ADMIN_ROLE`) can call `upgradeToAndCall`.
 - The forwarder address is immutable in each implementation. If the forwarder must change, a new implementation is deployed and the proxy is upgraded.
-- Storage layout must be preserved across upgrades. The `__gap[42]` reserve leaves room for up to 42 additional storage slots in future versions of `AsseteraExchange` without colliding with inherited contract storage. (Reduced from `[43]` when the `allowedCollectors` mapping was added, which consumed one reserved slot.)
+- Storage layout must be preserved across upgrades. The `__gap[41]` reserve leaves room for up to 41 additional storage slots in future versions of `AsseteraExchange` without colliding with inherited contract storage. (Reduced from `[42]` when the `usedFeeNonce` mapping was added, which consumed one reserved slot.)
+- `initialize` now takes a required `feeSigner` param (granted `FEE_OPERATOR_ROLE`) in addition to `admin`/`operator`/`kycSigner`; this is a breaking change to the initializer signature, coordinated with a fresh deploy rather than an in-place upgrade of an already-initialized proxy.
 - If a future upgrade introduces new `complianceRequired` entries (new `Action` enum values), a `reinitializer` function must be included and called via `upgradeToAndCall` to initialise the new storage slots — they default to `false` and must be explicitly set.
 
 ---
 
-## 11. Out of Scope
+## 12. Out of Scope
 
 - **On-chain price discovery / matching** — Matching is done off-chain by the operator.
 - **Dynamic/negotiated fees** — Fee terms (`makerFeeBps`/`takerFeeBps`/`feeCollector`) are snapshotted at `placeOrder`/`makeOffer` and are immutable for that order's/offer's lifetime; they cannot be renegotiated via `replaceOffer` or changed mid-life by the operator.

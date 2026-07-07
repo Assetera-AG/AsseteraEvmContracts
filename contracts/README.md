@@ -22,6 +22,7 @@ ERC-2771 meta-transactions. The contract is **UUPS-upgradeable** (ERC-1967) and 
 - `DEFAULT_ADMIN_ROLE` — upgrade the proxy, manage roles, force-cancel positions. **Safe multisig in prod.**
 - `OPERATOR_ROLE` — settle matched orders/offers, refund, pause.
 - `KYC_OPERATOR_ROLE` — the address whose signature authorises KYC-gated actions (the compliance backend).
+- `FEE_OPERATOR_ROLE` — the address whose signature authorises per-pair fee terms on `placeOrder`/`placeOrderWithPermit`/`makeOffer` (a separate fee service, not the KYC backend).
 
 ## Layout
 

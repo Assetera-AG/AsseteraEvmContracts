@@ -30,6 +30,7 @@ contract Verify is Script {
         address adminAddr = json.readAddress(".metadata.admin");
         address opAddr = json.readAddress(".metadata.operator");
         address kycAddr = json.readAddress(".metadata.kycSigner");
+        address feeAddr = json.readAddress(".metadata.feeSigner");
 
         AsseteraExchange exchange = AsseteraExchange(proxy);
 
@@ -79,6 +80,13 @@ contract Verify is Script {
             "kycSigner holds KYC_OPERATOR_ROLE",
             exchange.hasRole(exchange.KYC_OPERATOR_ROLE(), kycAddr),
             string.concat("  ", vm.toString(kycAddr), " does NOT hold KYC_OPERATOR_ROLE")
+        );
+
+        // 6b. Fee signer holds FEE_OPERATOR_ROLE.
+        _check(
+            "feeSigner holds FEE_OPERATOR_ROLE",
+            exchange.hasRole(exchange.FEE_OPERATOR_ROLE(), feeAddr),
+            string.concat("  ", vm.toString(feeAddr), " does NOT hold FEE_OPERATOR_ROLE")
         );
 
         // 7. Compliance gating is on for all actions by default.
