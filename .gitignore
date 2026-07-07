@@ -1,20 +1,11 @@
-# Foundry build artifacts
-# NOTE: lib/ is intentionally NOT ignored — dependencies are tracked as git submodules
-# (pinned in foundry.lock) so a fresh clone + CI can build deterministically.
-out/
-cache/
-broadcast/
-deployments/
-abi/
-
-# Environment variables
-.env
-
-# Broadcast run artifacts (keep latest symlinks, ignore timestamped runs)
-broadcast/*/*/run-[0-9]*.json
-
-# Node / package managers
+# Node / npm workspace
 node_modules/
+dist/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
 
 # Editor directories
 .vscode/
@@ -25,5 +16,3 @@ node_modules/
 # OS artifacts
 .DS_Store
 Thumbs.db
-
-
