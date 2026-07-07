@@ -28,7 +28,7 @@ Identity is resolved via `_msgSender()` (ERC-2771), so callers can be plain EOAs
 | **Admin (multisig)** | `DEFAULT_ADMIN_ROLE` | Upgrade proxy, manage roles, force-cancel orders/offers, toggle KYC gating per action, update blacklist, manage fee collector allowlist |
 | **Operator** | `OPERATOR_ROLE` | Settle matched orders, settle accepted offers, refund orders, pause/unpause venue |
 | **KYC Backend** | `KYC_OPERATOR_ROLE` | Sign KYC attestations authorising user actions |
-| **Maker** | — | Place orders, place offers, cancel own orders/offers (KYC-gated or self-cancel) |
+| **Maker** | — | Place orders, place offers, cancel own orders (always unattested), cancel own offers (KYC-gated) |
 | **Taker** | — | Fill orders (KYC-gated), accept/counter/cancel offers (KYC-gated) |
 | **Anyone** | — | Sweep expired orders (`sweepExpired`) and offers (`sweepExpiredOffers`) |
 | **Relayer** | — | Submit gasless meta-transactions via the ERC-2771 forwarder |
@@ -60,7 +60,7 @@ User EOA  ──► ERC2771Forwarder ──► AsseteraExchange (proxy)
 
 ## 4. KYC Attestation
 
-Every user-initiated state-changing action (except `cancelOrderSelf` and permissionless sweeps) requires a `KycAttestation` signed by a `KYC_OPERATOR_ROLE` holder.
+Every user-initiated state-changing action (except `cancelOrder` and permissionless sweeps) requires a `KycAttestation` signed by a `KYC_OPERATOR_ROLE` holder.
 
 ### Struct
 
@@ -125,7 +125,7 @@ Validation runs before the KYC nonce is consumed, so a call that fails fee valid
 | Action | paramsHash encoding |
 |---|---|
 | `Place` | `keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount))` |
-| `Fill`, `Cancel`, `Settle` | `bytes32(0)` (no params hash — see rationale below) |
+| `Fill`, `Settle` | `bytes32(0)` (no params hash — see rationale below) |
 | `MakeOffer` | `keccak256(abi.encodePacked(taker, makerToken, makerAmount, takerToken, takerAmount))` |
 | `ReplaceOffer` | `keccak256(abi.encodePacked(offerId, newMakerAmount, newTakerAmount))` |
 | `AcceptOffer` | `keccak256(abi.encodePacked(offerId, makerAmount, takerAmount))` |
@@ -134,7 +134,7 @@ Validation runs before the KYC nonce is consumed, so a call that fails fee valid
 
 `AcceptOffer`, `CancelOffer`, and `SettleOffer` bind to the **current** `makerAmount` / `takerAmount` stored in the offer at call time, so a stale attestation signed before a `replaceOffer` counter-proposal will be rejected with `ParamsHashMismatch`.
 
-`CancelOffer` (action 8) and `SettleOffer` (action 9) are intentionally distinct from `Cancel` (action 4) and `Settle` (action 3) to prevent cross-function attestation replay between order-level and offer-level operations.
+`SettleOffer` (action 8) is intentionally distinct from `Settle` (action 3) to prevent cross-function attestation replay between order-level and offer-level operations. There is no order-level `Cancel` action — `cancelOrder` never requires (or consumes) a KYC attestation, so no such replay is possible for cancellation.
 
 **Rationale — why `Fill` does not bind the fill amount:**
 Orders support partial fills, meaning `remainingQuantity` can change between the moment the KYC backend signs the attestation and the moment the taker submits the transaction (another taker may have partially filled the order in between). Binding `fillSellAmount` into `paramsHash` would invalidate the attestation whenever the remaining quantity changed, forcing the taker into a retry loop of requesting new signatures. The compliance intent is fully preserved without amount binding: the backend controls *who* may fill *which specific order* (via `orderId` binding); the order's price terms are fixed at placement and enforced by the contract for any fill amount; and the taker cannot redirect the attestation to a different order or act as a different account. Binding the amount would add friction with no additional compliance benefit given the partial-fill model.
@@ -169,11 +169,8 @@ Maker escrows `sellAmount` of `sellToken`. Requires a `Place` attestation with `
 #### `placeOrderWithPermit(sellToken, sellAmount, buyToken, buyAmount, expireTs, permitDeadline, v, r, s, att)`
 Same as `placeOrder` (including fee validation/snapshot) but attempts an ERC-2612 `permit` call before the `transferFrom`, allowing the maker to approve and place in a single transaction. The permit failure is swallowed — if the approval is already in place or the token does not support permit, the `transferFrom` still proceeds normally.
 
-#### `cancelOrder(id, att)`
-KYC-gated maker cancel. Requires a `Cancel` attestation bound to the specific `orderId`. The KYC backend will refuse to sign for suspended users, preventing them from self-cancelling. Use `cancelOrderForUser` to release frozen funds.
-
-#### `cancelOrderSelf(id)`
-Maker self-cancel with no KYC attestation required. Blocked only by the on-chain blacklist. Does not consume a KYC nonce, so it remains available even if the KYC backend is offline.
+#### `cancelOrder(id)`
+Maker self-cancel. Never requires a KYC attestation and is not blocked by the blacklist — a user must always be able to cancel their own open order and reclaim escrow, even if the KYC backend refuses to sign for them or is offline. Use `cancelOrderForUser` for compliance-routed release to a non-maker recipient.
 
 #### `fillOrder(id, fillSellAmount, att)`
 Taker takes `fillSellAmount` of the order's `sellToken` and pays a proportional `buyToken` amount (`buyAmountDue`) directly to the maker. Uses ceiling division on `buyAmountDue` to protect the maker from rounding loss. A partial fill leaves the order Open; a full fill transitions it to Filled. Requires a `Fill` attestation bound to the `orderId`.
@@ -245,7 +242,7 @@ Either the maker or taker can counter-propose new amounts. The previous proposer
 The non-proposing party accepts current terms and escrows their side. If the taker accepts, `takerAmount` of `takerToken` is escrowed; if the maker accepts a counter, `makerAmount` of `makerToken` is escrowed. Status transitions to `Accepted`. Requires an `AcceptOffer` attestation with `paramsHash` bound to the current offer amounts — stale attestations signed before a counter-proposal will be rejected.
 
 #### `cancelOffer(offerId, att)`
-Either the maker or taker can cancel while the offer is `Open` or `Countered`. Returns the current proposer's escrowed tokens. Cannot cancel an `Accepted` offer — use `cancelOfferForUser` (admin). Requires a `CancelOffer` attestation (action 8, distinct from order-level `Cancel`) to prevent cross-function replay.
+Either the maker or taker can cancel while the offer is `Open` or `Countered`. Returns the current proposer's escrowed tokens. Cannot cancel an `Accepted` offer — use `cancelOfferForUser` (admin). Requires a `CancelOffer` attestation (action 7) to prevent cross-function replay with other offer-level actions.
 
 #### `settleOffer(offerId, makerAtt, takerAtt)`
 Operator-only. Transfers escrowed tokens between parties: maker receives `takerAmount` of `takerToken`; taker receives `makerAmount` of `makerToken`. Both parties must provide a `SettleOffer` attestation with `paramsHash` bound to the current offer amounts. Both attestations are verified before either nonce is consumed.
@@ -270,7 +267,7 @@ Each `Action` enum value maps to a boolean in `complianceRequired`. When `false`
 
 ### Blacklist
 
-Accounts are stored pseudonymously as `keccak256(abi.encodePacked(account))`. A blacklisted account is blocked from all KYC-gated actions and from `cancelOrderSelf`. Expired orders and offers belonging to blacklisted makers/proposers are skipped by the sweep functions — their funds can only be released via `cancelOrderForUser` / `cancelOfferForUser` to a compliance-chosen recipient.
+Accounts are stored pseudonymously as `keccak256(abi.encodePacked(account))`. A blacklisted account is blocked from all KYC-gated actions. `cancelOrder` is exempt — a maker can always cancel their own open order regardless of blacklist status. Expired orders and offers belonging to blacklisted makers/proposers are skipped by the sweep functions — their funds can only be released via `cancelOrderForUser` / `cancelOfferForUser` to a compliance-chosen recipient.
 
 ### Pause
 
@@ -307,7 +304,7 @@ Accounts are stored pseudonymously as `keccak256(abi.encodePacked(account))`. A 
 | Event | Emitted by |
 |---|---|
 | `OrderPlaced` | `placeOrder`, `placeOrderWithPermit` |
-| `OrderCancelled` | `cancelOrder`, `cancelOrderSelf` |
+| `OrderCancelled` | `cancelOrder` |
 | `OrderPartiallyFilled` | `fillOrder` (partial) |
 | `OrderFilled` | `fillOrder` (full) |
 | `OrderSettled` | `settle` |

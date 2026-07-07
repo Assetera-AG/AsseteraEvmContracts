@@ -85,10 +85,9 @@ contract Verify is Script {
         bool placeGated = exchange.complianceRequired(AsseteraExchange.Action.Place);
         bool fillGated = exchange.complianceRequired(AsseteraExchange.Action.Fill);
         bool settleGated = exchange.complianceRequired(AsseteraExchange.Action.Settle);
-        bool cancelGated = exchange.complianceRequired(AsseteraExchange.Action.Cancel);
         _check(
             "all actions KYC-gated by default",
-            placeGated && fillGated && settleGated && cancelGated,
+            placeGated && fillGated && settleGated,
             "  one or more actions not gated"
         );
 

@@ -225,7 +225,6 @@ contract AsseteraExchangeTest is Test {
         assertTrue(exchange.complianceRequired(AsseteraExchange.Action.Place));
         assertTrue(exchange.complianceRequired(AsseteraExchange.Action.Fill));
         assertTrue(exchange.complianceRequired(AsseteraExchange.Action.Settle));
-        assertTrue(exchange.complianceRequired(AsseteraExchange.Action.Cancel));
         assertEq(exchange.trustedForwarder(), address(forwarder));
     }
 
@@ -434,57 +433,15 @@ contract AsseteraExchangeTest is Test {
     function test_CancelOrder_HappyPath() public {
         uint256 id = _placeRwaForUsdc(alice);
         uint256 bal = rwa.balanceOf(alice);
-        AsseteraExchange.KycAttestation memory att = _attest(alice, AsseteraExchange.Action.Cancel, id);
-        vm.prank(alice);
-        exchange.cancelOrder(id, att);
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Cancelled));
-        assertEq(rwa.balanceOf(alice), bal + SELL_RWA);
-    }
-
-    function test_CancelOrder_FrozenUserCannotCancel() public {
-        // "Frozen" = backend won't sign. Simulate with a non-KYC signer.
-        uint256 id = _placeRwaForUsdc(alice);
-        AsseteraExchange.KycAttestation memory att = _signAtt(
-            0xBAD,
-            alice,
-            AsseteraExchange.Action.Cancel,
-            id,
-            _freshNonce(),
-            block.timestamp + 3 minutes,
-            bytes32(0),
-            0,
-            0,
-            address(0)
-        );
-        vm.prank(alice);
-        vm.expectRevert(AsseteraExchange.KycBadSigner.selector);
-        exchange.cancelOrder(id, att);
-    }
-
-    function test_CancelOrder_RevertsIfNotMaker() public {
-        uint256 id = _placeRwaForUsdc(alice);
-        AsseteraExchange.KycAttestation memory att = _attest(bob, AsseteraExchange.Action.Cancel, id);
-        vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.NotMaker.selector, id));
-        exchange.cancelOrder(id, att);
-    }
-
-    // ===================================================================== //
-    //               cancelOrderSelf — maker self-cancel                     //
-    // ===================================================================== //
-
-    function test_CancelOrderSelf_HappyPath() public {
-        uint256 id = _placeRwaForUsdc(alice);
-        uint256 bal = rwa.balanceOf(alice);
 
         vm.prank(alice);
-        exchange.cancelOrderSelf(id);
+        exchange.cancelOrder(id);
 
         assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Cancelled));
         assertEq(rwa.balanceOf(alice), bal + SELL_RWA);
     }
 
-    function test_CancelOrderSelf_ReturnsRemainingAfterPartialFill() public {
+    function test_CancelOrder_ReturnsRemainingAfterPartialFill() public {
         uint256 id = _placeRwaForUsdc(alice);
 
         // Bob partially fills half
@@ -515,25 +472,25 @@ contract AsseteraExchangeTest is Test {
         // Alice cancels with remaining half
         uint256 aliceRwa = rwa.balanceOf(alice);
         vm.prank(alice);
-        exchange.cancelOrderSelf(id);
+        exchange.cancelOrder(id);
 
         assertEq(rwa.balanceOf(alice), aliceRwa + halfRwa);
     }
 
-    function test_CancelOrderSelf_RevertsIfNotMaker() public {
+    function test_CancelOrder_RevertsIfNotMaker() public {
         uint256 id = _placeRwaForUsdc(alice);
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.NotMaker.selector, id));
-        exchange.cancelOrderSelf(id);
+        exchange.cancelOrder(id);
     }
 
-    function test_CancelOrderSelf_RevertsIfNotOpen() public {
+    function test_CancelOrder_RevertsIfNotOpen() public {
         uint256 id = _placeRwaForUsdc(alice);
         vm.prank(alice);
-        exchange.cancelOrderSelf(id);
+        exchange.cancelOrder(id);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OrderNotOpen.selector, id));
-        exchange.cancelOrderSelf(id);
+        exchange.cancelOrder(id);
     }
 
     // ===================================================================== //
@@ -1017,31 +974,6 @@ contract AsseteraExchangeTest is Test {
         assertEq(rwa.balanceOf(carol), carolBal + SELL_RWA);
     }
 
-    function test_CancelOrderForUser_FrozenUserFlow() public {
-        // Frozen user can't self-cancel (bad signer), admin releases funds to them.
-        uint256 id = _placeRwaForUsdc(alice);
-        AsseteraExchange.KycAttestation memory bad = _signAtt(
-            0xBAD,
-            alice,
-            AsseteraExchange.Action.Cancel,
-            id,
-            _freshNonce(),
-            block.timestamp + 3 minutes,
-            bytes32(0),
-            0,
-            0,
-            address(0)
-        );
-        vm.prank(alice);
-        vm.expectRevert(AsseteraExchange.KycBadSigner.selector);
-        exchange.cancelOrder(id, bad);
-
-        uint256 bal = rwa.balanceOf(alice);
-        vm.prank(admin);
-        exchange.cancelOrderForUser(id, alice);
-        assertEq(rwa.balanceOf(alice), bal + SELL_RWA);
-    }
-
     function test_CancelOrderForUser_RevertsIfNotAdmin() public {
         uint256 id = _placeRwaForUsdc(alice);
         vm.prank(operator);
@@ -1292,22 +1224,10 @@ contract AsseteraExchangeTest is Test {
         vm.stopPrank();
     }
 
-    function test_CancelOrder_RevertsIfNotOpen() public {
-        uint256 id = _placeRwaForUsdc(alice);
-        AsseteraExchange.KycAttestation memory a1 = _attest(alice, AsseteraExchange.Action.Cancel, id);
-        vm.prank(alice);
-        exchange.cancelOrder(id, a1);
-        AsseteraExchange.KycAttestation memory a2 = _attest(alice, AsseteraExchange.Action.Cancel, id);
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OrderNotOpen.selector, id));
-        exchange.cancelOrder(id, a2);
-    }
-
     function test_FillOrder_RevertsIfNotOpen() public {
         uint256 id = _placeRwaForUsdc(alice);
-        AsseteraExchange.KycAttestation memory c = _attest(alice, AsseteraExchange.Action.Cancel, id);
         vm.prank(alice);
-        exchange.cancelOrder(id, c);
+        exchange.cancelOrder(id);
         AsseteraExchange.KycAttestation memory f = _attest(bob, AsseteraExchange.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
@@ -1377,9 +1297,8 @@ contract AsseteraExchangeTest is Test {
     function test_Settle_RevertsIfFirstNotOpen() public {
         uint256 a = _placeRwaForUsdc(alice);
         uint256 b = _placeUsdcForRwa(bob, WANT_USDC, SELL_RWA);
-        AsseteraExchange.KycAttestation memory c = _attest(alice, AsseteraExchange.Action.Cancel, a);
         vm.prank(alice);
-        exchange.cancelOrder(a, c);
+        exchange.cancelOrder(a);
         AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
         AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
         vm.prank(operator);
@@ -1390,9 +1309,8 @@ contract AsseteraExchangeTest is Test {
     function test_Settle_RevertsIfSecondNotOpen() public {
         uint256 a = _placeRwaForUsdc(alice);
         uint256 b = _placeUsdcForRwa(bob, WANT_USDC, SELL_RWA);
-        AsseteraExchange.KycAttestation memory c = _attest(bob, AsseteraExchange.Action.Cancel, b);
         vm.prank(bob);
-        exchange.cancelOrder(b, c);
+        exchange.cancelOrder(b);
         AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
         AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
         vm.prank(operator);
@@ -1452,16 +1370,19 @@ contract AsseteraExchangeTest is Test {
         vm.stopPrank();
     }
 
-    function test_Blacklist_BlocksCancelOrderSelf() public {
+    function test_Blacklist_DoesNotBlockCancelOrder() public {
         uint256 id = _placeRwaForUsdc(alice);
+        uint256 bal = rwa.balanceOf(alice);
 
         bytes32 h = keccak256(abi.encodePacked(alice));
         vm.prank(admin);
         exchange.setBlacklisted(h, true);
 
         vm.prank(alice);
-        vm.expectRevert(AsseteraExchange.AccountBlacklisted.selector);
-        exchange.cancelOrderSelf(id);
+        exchange.cancelOrder(id);
+
+        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Cancelled));
+        assertEq(rwa.balanceOf(alice), bal + SELL_RWA);
     }
 
     function test_Blacklist_CancelOrderForUser_ReleasesBlacklistedFunds() public {
@@ -1585,9 +1506,9 @@ contract AsseteraExchangeTest is Test {
         assertEq(exchange.getOrder(id).maker, alice);
     }
 
-    // --- cancelOrderSelf has no whenNotPaused modifier ------------------- //
+    // --- cancelOrder has no whenNotPaused modifier ----------------------- //
 
-    function test_CancelOrderSelf_WorksWhenPaused() public {
+    function test_CancelOrder_WorksWhenPaused() public {
         uint256 id = _placeRwaForUsdc(alice);
         uint256 bal = rwa.balanceOf(alice);
 
@@ -1596,7 +1517,7 @@ contract AsseteraExchangeTest is Test {
         assertTrue(exchange.paused());
 
         vm.prank(alice);
-        exchange.cancelOrderSelf(id);
+        exchange.cancelOrder(id);
 
         assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Cancelled));
         assertEq(rwa.balanceOf(alice), bal + SELL_RWA);
@@ -2142,7 +2063,7 @@ contract AsseteraExchangeTest is Test {
         exchange.acceptOffer(id, acceptAtt);
         vm.stopPrank();
 
-        AsseteraExchange.KycAttestation memory cancelAtt = _attest(alice, AsseteraExchange.Action.Cancel, id);
+        AsseteraExchange.KycAttestation memory cancelAtt = _attest(alice, AsseteraExchange.Action.CancelOffer, id);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OfferNotOpen.selector, id));
         exchange.cancelOffer(id, cancelAtt);
@@ -2305,29 +2226,6 @@ contract AsseteraExchangeTest is Test {
         exchange.settleOffer(id, badMakerAtt, takerAtt);
     }
 
-    function test_Offer_CancelOffer_RejectsOrderCancelAttestation() public {
-        // Cross-function replay guard: an Action.Cancel (order-level) attestation must not
-        // authenticate cancelOffer even when offerId == orderId numerically.
-        uint256 id = _makeOffer(alice, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
-        // Sign with Action.Cancel (4) instead of Action.CancelOffer (8).
-        AsseteraExchange.KycAttestation memory orderCancelAtt = _signAtt(
-            kycSignerPk,
-            alice,
-            AsseteraExchange.Action.Cancel,
-            id,
-            _freshNonce(),
-            block.timestamp + 3 minutes,
-            bytes32(0),
-            0,
-            0,
-            address(0)
-        );
-        vm.prank(alice);
-        // paramsHash content check fires first (hash=0 != expected); still proves isolation.
-        vm.expectRevert(AsseteraExchange.ParamsHashMismatch.selector);
-        exchange.cancelOffer(id, orderCancelAtt);
-    }
-
     function test_Offer_SettleOffer_RejectsOrderSettleAttestation() public {
         // Cross-function replay guard: Action.Settle (order-level) attestations must not
         // authenticate settleOffer even when offerId == orderId numerically.
@@ -2405,7 +2303,7 @@ contract AsseteraExchangeTest is Test {
     }
 
     function test_Offer_RevertsOnNonExistentOffer() public {
-        AsseteraExchange.KycAttestation memory att = _attest(alice, AsseteraExchange.Action.Cancel, 999);
+        AsseteraExchange.KycAttestation memory att = _attest(alice, AsseteraExchange.Action.CancelOffer, 999);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OfferNotFound.selector, 999));
         exchange.cancelOffer(999, att);

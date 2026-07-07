@@ -62,7 +62,7 @@ contract AsseteraExchange is
         Open, // 1
         Filled, // 2 — fully filled by taker
         Settled, // 3 — operator-settled (fully or final partial)
-        Cancelled, // 4 — by maker (KYC-gated or self-cancel)
+        Cancelled, // 4 — by maker (unattested self-cancel)
         Refunded, // 5 — by operator
         ForceCancelled, // 6 — by admin (cancelOrderForUser)
         Expired // 7 — swept after expireTs
@@ -79,18 +79,18 @@ contract AsseteraExchange is
         Expired // 7 — swept after expireTs via sweepExpiredOffers
     }
 
-    /// @notice Trade actions that can be KYC-gated.
+    /// @notice Trade actions that can be KYC-gated. Order-level cancel is intentionally
+    ///         absent — `cancelOrder` never requires an attestation.
     enum Action {
         None, // 0
         Place, // 1
         Fill, // 2
         Settle, // 3 — order-level settle only
-        Cancel, // 4 — order-level cancel only
-        MakeOffer, // 5
-        ReplaceOffer, // 6
-        AcceptOffer, // 7
-        CancelOffer, // 8 — offer-level cancel (distinct from Cancel to prevent cross-function replay)
-        SettleOffer // 9 — offer-level settle (distinct from Settle for the same reason)
+        MakeOffer, // 4
+        ReplaceOffer, // 5
+        AcceptOffer, // 6
+        CancelOffer, // 7 — offer-level cancel
+        SettleOffer // 8 — offer-level settle (distinct from Settle to prevent cross-function replay)
     }
 
     struct Order {
@@ -337,7 +337,6 @@ contract AsseteraExchange is
         complianceRequired[Action.Place] = true;
         complianceRequired[Action.Fill] = true;
         complianceRequired[Action.Settle] = true;
-        complianceRequired[Action.Cancel] = true;
         complianceRequired[Action.MakeOffer] = true;
         complianceRequired[Action.ReplaceOffer] = true;
         complianceRequired[Action.AcceptOffer] = true;
@@ -510,29 +509,11 @@ contract AsseteraExchange is
         emit OrderPlaced(id, maker, sellToken, sellAmount, buyToken, buyAmount, expireTs);
     }
 
-    /// @notice KYC-gated maker cancel. Backend-frozen users cannot cancel here —
-    ///         the backend will not sign for them. Use cancelOrderSelf for an
-    ///         unattested self-cancel, or cancelOrderForUser (admin) to release
-    ///         a frozen user's funds to a compliance-chosen address.
-    function cancelOrder(uint256 id, KycAttestation calldata att) external nonReentrant {
-        Order storage o = _orders[id];
-        if (o.status != OrderStatus.Open) revert OrderNotOpen(id);
-
-        address maker = _msgSender();
-        if (o.maker != maker) revert NotMaker(id);
-
-        _consumeKyc(maker, Action.Cancel, id, att);
-
-        o.status = OrderStatus.Cancelled;
-        IERC20(o.sellToken).safeTransfer(o.maker, o.remainingQuantity);
-        emit OrderCancelled(id, o.maker);
-    }
-
-    /// @notice Maker self-cancel without KYC attestation. Blocked for accounts
-    ///         on the on-chain compliance blacklist; use cancelOrderForUser (admin)
-    ///         to release a blacklisted maker's escrowed funds to a compliance-chosen address.
-    function cancelOrderSelf(uint256 id) external nonReentrant {
-        if (_blacklist[keccak256(abi.encodePacked(_msgSender()))]) revert AccountBlacklisted();
+    /// @notice Maker self-cancel. Never requires a KYC attestation — a user must
+    ///         always be able to cancel their own open order and reclaim escrow.
+    ///         Use cancelOrderForUser (admin) to release a frozen/blacklisted
+    ///         maker's funds to a compliance-chosen address.
+    function cancelOrder(uint256 id) external nonReentrant {
         Order storage o = _orders[id];
         if (o.status != OrderStatus.Open) revert OrderNotOpen(id);
         if (o.maker != _msgSender()) revert NotMaker(id);
@@ -1091,8 +1072,9 @@ contract AsseteraExchange is
     /// @notice Add or remove an address from the on-chain compliance blacklist.
     ///         Pass keccak256(abi.encodePacked(account)) — the address is never
     ///         stored in plaintext (pseudonymisation for GDPR). Blacklisted accounts
-    ///         are blocked from all user-initiated actions, including cancelOrderSelf.
-    ///         Use cancelOrderForUser to release escrowed funds to a compliance-chosen recipient.
+    ///         are blocked from all KYC-gated user-initiated actions. cancelOrder is
+    ///         exempt (a user must always be able to reclaim their own escrow); use
+    ///         cancelOrderForUser to release escrowed funds to a compliance-chosen recipient.
     function setBlacklisted(bytes32 hashedAccount, bool blocked) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _blacklist[hashedAccount] = blocked;
         emit BlacklistUpdated(hashedAccount, blocked);

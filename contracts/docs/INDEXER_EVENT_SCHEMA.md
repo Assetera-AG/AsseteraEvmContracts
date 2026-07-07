@@ -34,8 +34,7 @@ All state-changing functions accept a `KycAttestation calldata att` (or two, for
 |---|---|---|
 | `placeOrder(address sellToken, uint256 sellAmount, address buyToken, uint256 buyAmount, uint64 expireTs, KycAttestation calldata att) → uint256 id` | KYC-gated (`Action.Place`) | Escrows `sellAmount` of `sellToken`. Emits `OrderPlaced`. |
 | `placeOrderWithPermit(address sellToken, uint256 sellAmount, address buyToken, uint256 buyAmount, uint64 expireTs, uint256 permitDeadline, uint8 v, bytes32 r, bytes32 s, KycAttestation calldata att) → uint256 id` | KYC-gated (`Action.Place`) | Same as `placeOrder`; attempts ERC-2612 `permit` first (best-effort, swallowed on failure). |
-| `cancelOrder(uint256 id, KycAttestation calldata att)` | maker only, KYC-gated (`Action.Cancel`) | Emits `OrderCancelled`. |
-| `cancelOrderSelf(uint256 id)` | maker only, no attestation, blocked if blacklisted | Emits `OrderCancelled`. |
+| `cancelOrder(uint256 id)` | maker only, no attestation required | A maker can always cancel their own open order and reclaim escrow, regardless of KYC/blacklist status. Emits `OrderCancelled`. |
 
 ### Taker actions
 
@@ -133,14 +132,13 @@ All state-changing functions accept a `KycAttestation calldata att` (or two, for
 | 1 | `Place` |
 | 2 | `Fill` |
 | 3 | `Settle` |
-| 4 | `Cancel` |
-| 5 | `MakeOffer` |
-| 6 | `ReplaceOffer` |
-| 7 | `AcceptOffer` |
-| 8 | `CancelOffer` |
-| 9 | `SettleOffer` |
+| 4 | `MakeOffer` |
+| 5 | `ReplaceOffer` |
+| 6 | `AcceptOffer` |
+| 7 | `CancelOffer` |
+| 8 | `SettleOffer` |
 
-`CancelOffer`/`SettleOffer` are deliberately distinct from `Cancel`/`Settle` — an attestation for one cannot be replayed against the other.
+There is no order-level `Cancel` action — `cancelOrder` never requires (or consumes) a KYC attestation. `CancelOffer`/`SettleOffer` are deliberately distinct from `Settle` — an attestation for one cannot be replayed against the other.
 
 ### `Order` struct
 
@@ -216,7 +214,7 @@ Event summary:
 | Event | Emitted by |
 |---|---|
 | `OrderPlaced` | `placeOrder`, `placeOrderWithPermit` |
-| `OrderCancelled` | `cancelOrder`, `cancelOrderSelf` |
+| `OrderCancelled` | `cancelOrder` |
 | `OrderFilled` | `fillOrder` (full fill) |
 | `OrderPartiallyFilled` | `fillOrder` (partial fill) |
 | `OrderSettled` | `settle` |
@@ -267,7 +265,7 @@ event OrderCancelled(uint256 indexed id, address indexed maker);
 - **Indexed:** `id`, `maker`
 - **Data:** *(none)*
 
-Shared between `cancelOrder` (KYC-gated) and `cancelOrderSelf` (unattested) — the two are **not** distinguishable from this event alone. Distinguish by correlating with a `KycConsumed(account, action=Cancel, orderId=id, ...)` event in the same transaction: present ⇒ `cancelOrder`; absent ⇒ `cancelOrderSelf`.
+Always unattested — `cancelOrder` never requires a KYC attestation, so no `KycConsumed` event accompanies it.
 
 ---
 
