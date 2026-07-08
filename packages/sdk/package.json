@@ -1,7 +1,7 @@
 {
   "name": "@asseteragmbh/evm-contracts",
-  "version": "0.0.0",
-  "description": "TypeScript SDK for the Assetera EVM contracts — ABIs, per-chain addresses, and a viem client.",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the Assetera EVM contracts — ABIs, per-chain addresses, a viem client, and wagmi hooks.",
   "license": "UNLICENSED",
   "type": "module",
   "publishConfig": {
@@ -20,26 +20,45 @@
       "types": "./dist/contracts/index.d.ts",
       "import": "./dist/contracts/index.js",
       "require": "./dist/contracts/index.cjs"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.js",
+      "require": "./dist/react/index.cjs"
     }
   },
   "files": [
-    "dist",
-    "src/contracts/abi/*.json",
-    "src/deployments/*.json"
+    "dist"
   ],
   "sideEffects": false,
   "scripts": {
+    "generate": "wagmi generate && node scripts/gen-deployments.mjs",
+    "prebuild": "npm run generate",
     "build": "tsup",
+    "postbuild": "node scripts/copy-deployments.mjs",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
   "peerDependencies": {
-    "viem": "^2.0.0"
+    "@tanstack/react-query": "^5.0.0",
+    "react": "^18.0.0 || ^19.0.0",
+    "viem": "^2.0.0",
+    "wagmi": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@tanstack/react-query": { "optional": true },
+    "react": { "optional": true },
+    "wagmi": { "optional": true }
   },
   "devDependencies": {
+    "@tanstack/react-query": "^5.59.0",
+    "@types/react": "^18.3.0",
+    "@wagmi/cli": "^2.1.0",
+    "react": "^18.3.0",
     "tsup": "^8.3.0",
     "typescript": "^5.4.0",
-    "viem": "^2.21.0"
+    "viem": "^2.21.0",
+    "wagmi": "^2.12.0"
   }
 }
