@@ -1,6 +1,6 @@
 {
   "name": "@asseteragmbh/evm-contracts",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "TypeScript SDK for the Assetera EVM contracts — ABIs, per-chain addresses, a viem client, and wagmi hooks.",
   "license": "UNLICENSED",
   "type": "module",
@@ -28,14 +28,14 @@
     }
   },
   "files": [
-    "dist",
-    "src/deployments/*.json"
+    "dist"
   ],
   "sideEffects": false,
   "scripts": {
     "generate": "wagmi generate && node scripts/gen-deployments.mjs",
     "prebuild": "npm run generate",
     "build": "tsup",
+    "postbuild": "node scripts/copy-deployments.mjs",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
