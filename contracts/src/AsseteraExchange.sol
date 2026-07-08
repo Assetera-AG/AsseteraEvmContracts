@@ -1110,33 +1110,6 @@ contract AsseteraExchange is
         return _orders[id];
     }
 
-    function getOrders(uint256 start, uint256 count) external view returns (Order[] memory page) {
-        if (start == 0) start = 1;
-        uint256 end = start + count;
-        if (end > totalOrders + 1) end = totalOrders + 1;
-        if (end <= start) return new Order[](0);
-        uint256 n = end - start;
-        page = new Order[](n);
-        for (uint256 i = 0; i < n; i++) {
-            page[i] = _orders[start + i];
-        }
-    }
-
-    /// @notice Returns all currently Open orders.
-    /// @dev    O(n) over all orders ever placed — gas cost grows unboundedly as the book fills.
-    ///         Use `getOrders(start, count)` for paginated off-chain access when totalOrders is large.
-    function getOpenOrders() external view returns (Order[] memory open) {
-        uint256 openCount;
-        for (uint256 i = 1; i <= totalOrders; i++) {
-            if (_orders[i].status == OrderStatus.Open) openCount++;
-        }
-        open = new Order[](openCount);
-        uint256 j;
-        for (uint256 i = 1; i <= totalOrders; i++) {
-            if (_orders[i].status == OrderStatus.Open) open[j++] = _orders[i];
-        }
-    }
-
     // --------------------------------------------------------------------- //
     //                       UUPS + ERC-2771 plumbing                         //
     // --------------------------------------------------------------------- //

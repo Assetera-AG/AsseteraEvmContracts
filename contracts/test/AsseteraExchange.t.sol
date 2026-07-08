@@ -1167,21 +1167,6 @@ contract AsseteraExchangeTest is Test {
     }
 
     // ===================================================================== //
-    //                                views                                  //
-    // ===================================================================== //
-
-    function test_GetOpenOrders_FiltersClosed() public {
-        uint256 id1 = _placeRwaForUsdc(alice);
-        _placeRwaForUsdc(alice); // id2 open
-        AsseteraExchange.KycAttestation memory att = _attest(alice, AsseteraExchange.Action.Cancel, id1);
-        vm.prank(alice);
-        exchange.cancelOrder(id1, att);
-        AsseteraExchange.Order[] memory open = exchange.getOpenOrders();
-        assertEq(open.length, 1);
-        assertEq(open[0].id, 2);
-    }
-
-    // ===================================================================== //
     //                              reentrancy                               //
     // ===================================================================== //
 
@@ -1447,20 +1432,6 @@ contract AsseteraExchangeTest is Test {
         exchange.fillOrder(id, SELL_RWA, empty);
         vm.stopPrank();
         assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Filled));
-    }
-
-    function test_GetOrders_Pagination() public {
-        _placeRwaForUsdc(alice);
-        _placeRwaForUsdc(alice);
-        _placeRwaForUsdc(alice);
-        AsseteraExchange.Order[] memory page = exchange.getOrders(1, 2);
-        assertEq(page.length, 2);
-        assertEq(page[0].id, 1);
-        AsseteraExchange.Order[] memory tail = exchange.getOrders(2, 100);
-        assertEq(tail.length, 2);
-        assertEq(tail[0].id, 2);
-        AsseteraExchange.Order[] memory z = exchange.getOrders(0, 1);
-        assertEq(z[0].id, 1);
     }
 
     // ===================================================================== //

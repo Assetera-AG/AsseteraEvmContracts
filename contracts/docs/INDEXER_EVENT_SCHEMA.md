@@ -83,9 +83,7 @@ All state-changing functions accept a `KycAttestation calldata att` (or two, for
 
 | Function | Returns |
 |---|---|
-| `getOrder(uint256 id)` | `Order` struct (see [§4](#order-struct)) |
-| `getOrders(uint256 start, uint256 count)` | `Order[]` page, 1-indexed, `start=0` treated as `1` |
-| `getOpenOrders()` | `Order[]` of all currently `Open` orders — **O(n) over all orders ever placed; do not use for large books, prefer `getOrders` pagination for backfill** |
+| `getOrder(uint256 id)` | `Order` struct (see [§4](#order-struct)) — point read only; enumeration/pagination is served off-chain by the indexer |
 | `getOffer(uint256 id)` | `Offer` struct |
 | `totalOrders()` / `totalOffers()` | `uint256` — highest assigned id (ids are `1..total`) |
 | `usedNonce(address account, uint256 nonce)` | `bool` — KYC nonce consumption state |
@@ -580,6 +578,6 @@ All reverts are custom errors (no revert strings). 4-byte selectors, for API lay
 
 ## 8. Backfill / reconciliation notes
 
-- Orders and offers are 1-indexed; `totalOrders()`/`totalOffers()` give the current high-water mark. `getOrders(start, count)` paginates safely; `getOpenOrders()` is O(n) over all-time order count and should not be used once the book is large.
+- Orders and offers are 1-indexed; `totalOrders()`/`totalOffers()` give the current high-water mark. Enumeration/pagination (e.g. "all open orders") is served off-chain by the indexer / Marketplace API — the contract only exposes point reads (`getOrder`/`getOffer`).
 - Every state-changing path emits exactly one primary lifecycle event per order/offer per call, so a correct read model can be built purely from events without ever calling `getOrder`/`getOffer` — the view functions are for point-in-time reconciliation/debugging, not required for the primary indexing path.
 - `OrderRefunded`, `OrderForceCancelled`, and both `sweep*` events are the only ways escrow leaves the contract without a matching `Fill`/`Settle` — make sure these are included in any balance-reconciliation job, or on-chain token balance will not match the sum of indexed fills/settlements.
