@@ -5,6 +5,7 @@ import {Script, console2} from "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {AsseteraExchange} from "../src/AsseteraExchange.sol";
+import {ExchangeTypes} from "../src/types/ExchangeTypes.sol";
 
 /// @notice Read-only post-deployment verification. Checks every governance
 ///         invariant: proxy wiring, role assignments, Safe as admin.
@@ -90,9 +91,9 @@ contract Verify is Script {
         );
 
         // 7. Compliance gating is on for all actions by default.
-        bool placeGated = exchange.complianceRequired(AsseteraExchange.Action.Place);
-        bool fillGated = exchange.complianceRequired(AsseteraExchange.Action.Fill);
-        bool settleGated = exchange.complianceRequired(AsseteraExchange.Action.Settle);
+        bool placeGated = exchange.complianceRequired(ExchangeTypes.Action.Place);
+        bool fillGated = exchange.complianceRequired(ExchangeTypes.Action.Fill);
+        bool settleGated = exchange.complianceRequired(ExchangeTypes.Action.Settle);
         _check(
             "all actions KYC-gated by default",
             placeGated && fillGated && settleGated,
