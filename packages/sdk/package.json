@@ -1,6 +1,6 @@
 {
   "name": "@asseteragmbh/evm-contracts",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TypeScript SDK for the Assetera EVM contracts — ABIs, per-chain addresses, a viem client, and wagmi hooks.",
   "license": "UNLICENSED",
   "type": "module",
@@ -47,9 +47,15 @@
     "wagmi": "^2.0.0"
   },
   "peerDependenciesMeta": {
-    "@tanstack/react-query": { "optional": true },
-    "react": { "optional": true },
-    "wagmi": { "optional": true }
+    "@tanstack/react-query": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "wagmi": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@tanstack/react-query": "^5.59.0",
