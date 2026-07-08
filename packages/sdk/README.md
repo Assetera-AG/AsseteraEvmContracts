@@ -16,7 +16,8 @@ npm i wagmi @tanstack/react-query
 ```
 
 `viem` is a peer dependency; `wagmi` / `@tanstack/react-query` / `react` are optional peers (only for `/react`).
-Published **restricted** to the `@asseteragmbh` scope via release-please + npm OIDC (ADR-0007 / ADR-0016).
+Published **restricted** (private) on the `@asseteragmbh` scope via release-please + npm OIDC — flips to
+public at launch (ADR-0007 / ADR-0016).
 
 ## Entry points
 

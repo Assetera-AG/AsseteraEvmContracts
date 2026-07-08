@@ -30,11 +30,14 @@ Then on npmjs.com → **`@asseteragmbh/evm-contracts` → Settings → Trusted P
 
 After that, delete any local publish token; all future releases go through the workflow, token-free.
 
-> **Visibility:** `publishConfig.access` is `restricted` (private, per ADR-0007) — this needs the
-> `@asseteragmbh` org on a **paid** npm plan. To publish publicly instead (like `@asseteragmbh/metakyc`),
-> change it to `public`.
+> **Visibility:** `publishConfig.access` is `restricted` (private, ADR-0007 default). The `@asseteragmbh`
+> org is on a paid npm plan, so we keep it private **while the contracts are still churning** — no pre-launch
+> interface exposure. **Flip to `public` at launch** once the contracts are finalized (a one-line
+> `publishConfig` change), like `@asseteragmbh/metakyc`. Either way the package ships only compiled SDK +
+> ABIs + addresses — **no Solidity source**.
 >
-> **Provenance:** omitted while the repo is private (ADR-0016 D4). Enable `--provenance` if the repo goes public.
+> **Provenance:** omitted while the repo is private (ADR-0016 D4). Enable `--provenance` only if the repo
+> itself goes public.
 >
 > **Addresses:** the package ships whatever real-network deployment JSON is committed under
 > `packages/sdk/src/deployments/` — deploy to a network and commit its `<chainId>.json` before releasing so
