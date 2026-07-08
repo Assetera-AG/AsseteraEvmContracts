@@ -34,7 +34,7 @@ All state-changing functions accept a `KycAttestation calldata att` (or two, for
 |---|---|---|
 | `placeOrder(address sellToken, uint256 sellAmount, address buyToken, uint256 buyAmount, uint64 expireTs, KycAttestation calldata att, FeeAttestation calldata feeAtt) → uint256 id` | KYC-gated (`Action.Place`) + fee-gated | Escrows `sellAmount` of `sellToken`. `att`/`feeAtt` are bound together (same account/action/paramsHash). Emits `OrderPlaced`. |
 | `placeOrderWithPermit(address sellToken, uint256 sellAmount, address buyToken, uint256 buyAmount, uint64 expireTs, uint256 permitDeadline, uint8 v, bytes32 r, bytes32 s, KycAttestation calldata att, FeeAttestation calldata feeAtt) → uint256 id` | KYC-gated (`Action.Place`) + fee-gated | Same as `placeOrder`; attempts ERC-2612 `permit` first (best-effort, swallowed on failure). |
-| `cancelOrder(uint256 id)` | maker only, no attestation required | A maker can always cancel their own open order and reclaim escrow, regardless of KYC/blacklist status. Emits `OrderCancelled`. |
+| `cancelOrder(uint256 id)` | maker only, no attestation required | A maker can always cancel their own open order and reclaim escrow, regardless of KYC status. Emits `OrderCancelled`. |
 
 ### Taker actions
 
@@ -64,18 +64,17 @@ All state-changing functions accept a `KycAttestation calldata att` (or two, for
 
 | Function | Notes |
 |---|---|
-| `cancelOrderForUser(uint256 id, address recipient)` | Escape hatch for frozen/blacklisted makers. Emits `OrderForceCancelled`. |
+| `cancelOrderForUser(uint256 id, address recipient)` | Escape hatch for frozen makers. Emits `OrderForceCancelled`. |
 | `cancelOfferForUser(uint256 offerId, address makerRecipient, address takerRecipient)` | Works in any non-terminal state incl. `Accepted`. Emits `OfferForceCancelled`. |
 | `setAllowedCollector(address collector, bool allowed)` | Fee collector allowlist. Emits `CollectorAllowed`. |
 | `setComplianceRequired(Action action, bool required)` | Per-action KYC gating toggle. Emits `ComplianceRequiredSet`. |
-| `setBlacklisted(bytes32 hashedAccount, bool blocked)` | `hashedAccount = keccak256(abi.encodePacked(account))`, pseudonymised. Emits `BlacklistUpdated`. |
 | `upgradeToAndCall(address newImplementation, bytes data)` | Inherited UUPS; gated via `_authorizeUpgrade`. Emits standard `Upgraded(address)`. |
 
 ### Permissionless (anyone may call)
 
 | Function | Notes |
 |---|---|
-| `sweepExpired(uint256[] calldata ids)` | Batch-sweeps expired `Open` orders back to maker. Silently skips non-matching/blacklisted entries. Batch ids in chunks of ≤100. Emits `OrderExpired` per swept id. |
+| `sweepExpired(uint256[] calldata ids)` | Batch-sweeps expired `Open` orders back to maker. Silently skips non-matching entries. Batch ids in chunks of ≤100. Emits `OrderExpired` per swept id. |
 | `sweepExpiredOffers(uint256[] calldata ids)` | Same, for offers. Emits `OfferExpired` per swept id. |
 
 ### Views
@@ -247,7 +246,6 @@ Event summary:
 | `KycConsumed` | any KYC-gated action, on attestation consumption |
 | `FeeConsumed` | `placeOrder`, `placeOrderWithPermit`, `makeOffer`, on fee attestation consumption |
 | `ComplianceRequiredSet` | `setComplianceRequired` |
-| `BlacklistUpdated` | `setBlacklisted` |
 | `OfferMade` | `makeOffer` |
 | `OfferReplaced` | `replaceOffer` |
 | `OfferCancelled` | `cancelOffer` |
@@ -372,7 +370,7 @@ event OrderForceCancelled(uint256 indexed id, address indexed maker, address rec
 - **Indexed:** `id`, `maker`, `admin`
 - **Data:** `recipient` — **note the non-indexed field sits between two indexed fields in declaration order**; decode by ABI position, not topic order.
 
-`recipient` may differ from `maker` (compliance-directed payout for a frozen/blacklisted account).
+`recipient` may differ from `maker` (compliance-directed payout for a frozen account).
 
 ---
 
@@ -411,7 +409,7 @@ event KycConsumed(address indexed account, Action indexed action, uint256 indexe
 - **Indexed:** `account`, `action`, `orderId`
 - **Data:** `nonce`
 
-Emitted **only** when `complianceRequired[action]` is `true` at call time (see `ComplianceRequiredSet`) — its absence in a trade tx means gating was disabled for that action, not that verification was skipped (blacklist checks are unconditional and still enforced). `orderId` is `0` for actions not bound to an existing order/offer id (e.g. `Place`, `MakeOffer`). Useful as the canonical "attestation was consumed" audit trail, and to disambiguate `OrderCancelled` as described above.
+Emitted **only** when `complianceRequired[action]` is `true` at call time (see `ComplianceRequiredSet`) — its absence in a trade tx means gating was disabled for that action, not that verification was skipped. `orderId` is `0` for actions not bound to an existing order/offer id (e.g. `Place`, `MakeOffer`). Useful as the canonical "attestation was consumed" audit trail, and to disambiguate `OrderCancelled` as described above.
 
 ---
 
@@ -436,19 +434,6 @@ event ComplianceRequiredSet(Action indexed action, bool required);
 - **topic0:** `0x9e21c2e33dd513cd0d70dfe567833a0857ea2998e4a82582cd046d9aa1ca8e41`
 - **Indexed:** `action`
 - **Data:** `required`
-
----
-
-### `BlacklistUpdated`
-
-```solidity
-event BlacklistUpdated(bytes32 indexed hashedAccount, bool blocked);
-```
-- **topic0:** `0xdcf7bb788a4c8c91f85b15fa04797101b624ce86f804c2ccc49d8474adeb90ba`
-- **Indexed:** `hashedAccount`
-- **Data:** `blocked`
-
-`hashedAccount = keccak256(abi.encodePacked(account))` — the plaintext address is **never** on-chain (pseudonymisation). An indexer cannot reverse this to an address; it can only confirm/deny membership for a specific address it already suspects, by hashing it client-side and comparing.
 
 ---
 
@@ -576,6 +561,15 @@ All other events (`OrderPlaced`, `OrderFilled`, `OrderPartiallyFilled`, `OrderSe
 
 Downstream actions (`fillOrder`, `cancelOrder`, `settle`, `acceptOffer`, `replaceOffer`, `cancelOffer`, `settleOffer`) are unaffected — they still take only `KycAttestation` and read fee terms already snapshotted on the `Order`/`Offer` at placement/offer-creation time. See [§3](#feeattestation-off-chain-struct) for the new struct and [§4](#feeconsumed) for the new `FeeConsumed` event.
 
+### Blacklist removal (⚠️ behavioral change — sweep now always refunds)
+
+The on-chain compliance blacklist (`setBlacklisted`, `BlacklistUpdated`, `AccountBlacklisted`) has been removed entirely. Freezing a user is now purely a backend decision (the KYC signer declines to sign); there is no on-chain enumerable/pseudonymised blocklist to index.
+
+- `setBlacklisted(bytes32,bool)` no longer exists — calling it reverts (function selector unrecognized).
+- `BlacklistUpdated(bytes32 indexed hashedAccount, bool blocked)` is no longer emitted.
+- `AccountBlacklisted()` is no longer a possible revert reason for any function.
+- **`sweepExpired`/`sweepExpiredOffers` behavior changed**: previously, expired orders/offers belonging to a blacklisted maker/proposer were silently skipped (funds stayed locked until `cancelOrderForUser`/`cancelOfferForUser`). Now expired orders/offers **always** sweep back to the maker/proposer once expired, regardless of KYC status. `cancelOrderForUser`/`cancelOfferForUser` remain available as an admin escape hatch to redirect funds to a compliance-chosen recipient while an order/offer is still `Open`/`Accepted` (before expiry).
+
 ---
 
 ## 6. Actor resolution (ERC-2771 meta-tx)
@@ -604,7 +598,6 @@ All reverts are custom errors (no revert strings). 4-byte selectors, for API lay
 | `InvalidExpiry()` | `0xd36c8500` |
 | `FillAmountZero()` | `0x7e3e9917` |
 | `FillExceedsRemaining(uint256,uint256)` | `0xbb86b38c` |
-| `AccountBlacklisted()` | `0x7d28af3f` |
 | `ParamsHashMismatch()` | `0xb1561fdb` |
 | `FeeCollectorNotAllowed(address)` | `0x4eda3f1b` |
 | `InvalidFee()` | `0x58d620b3` |

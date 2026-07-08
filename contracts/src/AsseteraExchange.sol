@@ -201,10 +201,6 @@ contract AsseteraExchange is
     ///         Composable: turn gating on/off per action (admin). Defaults to all-on.
     mapping(Action => bool) public complianceRequired;
 
-    /// @notice On-chain compliance fallback. Keyed by keccak256(abi.encodePacked(account))
-    ///         so the list is pseudonymised and not enumerable from chain data.
-    mapping(bytes32 => bool) private _blacklist;
-
     mapping(uint256 => Offer) private _offers;
     uint256 public totalOffers;
 
@@ -213,7 +209,7 @@ contract AsseteraExchange is
     ///         because the collector must be in this allowlist at placement time.
     mapping(address => bool) public allowedCollectors;
 
-    uint256[41] private __gap; // reduced from [42]: usedFeeNonce uses one slot
+    uint256[42] private __gap; // restored from [41]: freed by removing _blacklist (usedFeeNonce still consumes one slot from the original [42])
 
     // --------------------------------------------------------------------- //
     //                                Events                                  //
@@ -273,7 +269,6 @@ contract AsseteraExchange is
     event KycConsumed(address indexed account, Action indexed action, uint256 indexed orderId, uint256 nonce);
     event FeeConsumed(address indexed account, Action indexed action, uint256 nonce);
     event ComplianceRequiredSet(Action indexed action, bool required);
-    event BlacklistUpdated(bytes32 indexed hashedAccount, bool blocked);
     event OfferMade(
         uint256 indexed id,
         address indexed maker,
@@ -322,7 +317,6 @@ contract AsseteraExchange is
     error InvalidExpiry();
     error FillAmountZero();
     error FillExceedsRemaining(uint256 id, uint256 remaining);
-    error AccountBlacklisted();
     error ParamsHashMismatch();
     error FeeCollectorNotAllowed(address collector);
     error InvalidFee();
@@ -400,8 +394,6 @@ contract AsseteraExchange is
     ///      no state writes. Used by _consumeKyc and directly by settle() so both
     ///      attestations can be verified before either nonce is burned.
     function _verifyKyc(address account, Action action, uint256 orderId, KycAttestation calldata att) private view {
-        // Blacklist is unconditional — applies even when attestation gating is disabled.
-        if (_blacklist[keccak256(abi.encodePacked(account))]) revert AccountBlacklisted();
         if (!complianceRequired[action]) return;
         if (att.account != account) revert KycAccountMismatch();
         if (att.action != action) revert KycActionMismatch();
@@ -426,7 +418,7 @@ contract AsseteraExchange is
     }
 
     /// @dev Verify + consume a single-use KYC attestation for `account`/`action`.
-    ///      No-op (after blacklist check) if gating for `action` is disabled.
+    ///      No-op if gating for `action` is disabled.
     function _consumeKyc(address account, Action action, uint256 orderId, KycAttestation calldata att) private {
         _verifyKyc(account, action, orderId, att);
         if (complianceRequired[action]) {
@@ -446,8 +438,6 @@ contract AsseteraExchange is
     ///      paired KycAttestation against — that transitively enforces
     ///      `fee.paramsHash == kyc.paramsHash` without a separate cross-check here.
     function _verifyFee(address account, Action action, FeeAttestation calldata att) private view {
-        // Blacklist is unconditional — applies even when attestation gating is disabled.
-        if (_blacklist[keccak256(abi.encodePacked(account))]) revert AccountBlacklisted();
         if (!complianceRequired[action]) return;
         if (att.account != account) revert FeeAccountMismatch();
         if (att.action != action) revert FeeActionMismatch();
@@ -624,8 +614,8 @@ contract AsseteraExchange is
 
     /// @notice Maker self-cancel. Never requires a KYC attestation — a user must
     ///         always be able to cancel their own open order and reclaim escrow.
-    ///         Use cancelOrderForUser (admin) to release a frozen/blacklisted
-    ///         maker's funds to a compliance-chosen address.
+    ///         Use cancelOrderForUser (admin) to release a frozen maker's funds
+    ///         to a compliance-chosen address.
     function cancelOrder(uint256 id) external nonReentrant {
         Order storage o = _orders[id];
         if (o.status != OrderStatus.Open) revert OrderNotOpen(id);
@@ -789,17 +779,13 @@ contract AsseteraExchange is
 
     /// @notice Anyone can sweep a batch of expired orders, returning each order's
     ///         remaining escrow to the maker. Orders that are not Open, lack an
-    ///         expireTs, have not yet expired, or belong to a blacklisted maker
-    ///         are silently skipped. Blacklisted makers' expired orders must be
-    ///         released via cancelOrderForUser (admin) to route funds to a
-    ///         compliance-chosen recipient.
+    ///         expireTs, or have not yet expired are silently skipped.
     ///         Callers should batch `ids` in chunks of at most 100 to avoid out-of-gas reverts.
     function sweepExpired(uint256[] calldata ids) external nonReentrant {
         for (uint256 i = 0; i < ids.length; i++) {
             Order storage o = _orders[ids[i]];
             if (o.status != OrderStatus.Open) continue;
             if (o.expireTs == 0 || block.timestamp <= o.expireTs) continue;
-            if (_blacklist[keccak256(abi.encodePacked(o.maker))]) continue;
 
             uint256 remaining = o.remainingQuantity;
             address maker = o.maker;
@@ -815,17 +801,15 @@ contract AsseteraExchange is
     /// @notice Anyone can sweep a batch of expired offers, returning the current
     ///         proposer's escrowed tokens to them. Only Open/Countered offers with
     ///         a non-zero expireTs that has passed are swept; all other states are
-    ///         silently skipped. Blacklisted proposers are skipped — their funds
-    ///         must be released via cancelOfferForUser (admin).
+    ///         silently skipped.
     ///         Callers should batch `ids` in chunks of at most 100 to avoid out-of-gas reverts.
-    /// @param ids Offer IDs to sweep. Non-expired, non-Open/Countered, and blacklisted entries
+    /// @param ids Offer IDs to sweep. Non-expired and non-Open/Countered entries
     ///            are silently skipped without reverting.
     function sweepExpiredOffers(uint256[] calldata ids) external nonReentrant {
         for (uint256 i = 0; i < ids.length; i++) {
             Offer storage o = _offers[ids[i]];
             if (o.status != OfferStatus.Open && o.status != OfferStatus.Countered) continue;
             if (o.expireTs == 0 || block.timestamp <= o.expireTs) continue;
-            if (_blacklist[keccak256(abi.encodePacked(o.proposedBy))]) continue;
 
             address proposedBy = o.proposedBy;
             address token;
@@ -1073,7 +1057,7 @@ contract AsseteraExchange is
     }
 
     /// @notice Operator settles an Accepted offer. Both parties must provide a
-    ///         fresh Settle attestation. Blacklist is enforced on both sides.
+    ///         fresh Settle attestation.
     function settleOffer(uint256 offerId, KycAttestation calldata makerAtt, KycAttestation calldata takerAtt)
         external
         onlyRole(OPERATOR_ROLE)
@@ -1120,7 +1104,7 @@ contract AsseteraExchange is
     ///         and route each party's escrowed tokens to compliance-chosen recipients.
     ///         Works in all non-terminal states including Accepted (both sides escrowed).
     ///         Mirrors cancelOrderForUser for regular orders — needed when a party is
-    ///         blacklisted after acceptOffer, which otherwise permanently locks both escrows.
+    ///         frozen after acceptOffer, which otherwise permanently locks both escrows.
     /// @param offerId         The offer to force-cancel.
     /// @param makerRecipient  Address to receive the maker's escrowed tokens.
     /// @param takerRecipient  Address to receive the taker's escrowed tokens (only used when Accepted).
@@ -1183,17 +1167,6 @@ contract AsseteraExchange is
     function setComplianceRequired(Action action, bool required) external onlyRole(DEFAULT_ADMIN_ROLE) {
         complianceRequired[action] = required;
         emit ComplianceRequiredSet(action, required);
-    }
-
-    /// @notice Add or remove an address from the on-chain compliance blacklist.
-    ///         Pass keccak256(abi.encodePacked(account)) — the address is never
-    ///         stored in plaintext (pseudonymisation for GDPR). Blacklisted accounts
-    ///         are blocked from all KYC-gated user-initiated actions. cancelOrder is
-    ///         exempt (a user must always be able to reclaim their own escrow); use
-    ///         cancelOrderForUser to release escrowed funds to a compliance-chosen recipient.
-    function setBlacklisted(bytes32 hashedAccount, bool blocked) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _blacklist[hashedAccount] = blocked;
-        emit BlacklistUpdated(hashedAccount, blocked);
     }
 
     // --------------------------------------------------------------------- //

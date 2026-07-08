@@ -26,7 +26,7 @@ Identity is resolved via `_msgSender()` (ERC-2771), so callers can be plain EOAs
 
 | Actor | Role constant | Capabilities |
 |---|---|---|
-| **Admin (multisig)** | `DEFAULT_ADMIN_ROLE` | Upgrade proxy, manage roles, force-cancel orders/offers, toggle KYC gating per action, update blacklist, manage fee collector allowlist |
+| **Admin (multisig)** | `DEFAULT_ADMIN_ROLE` | Upgrade proxy, manage roles, force-cancel orders/offers, toggle KYC gating per action, manage fee collector allowlist |
 | **Operator** | `OPERATOR_ROLE` | Settle matched orders, settle accepted offers, refund orders, pause/unpause venue |
 | **KYC Backend** | `KYC_OPERATOR_ROLE` | Sign KYC attestations authorising user actions |
 | **Fee Service** | `FEE_OPERATOR_ROLE` | Sign fee attestations authorising per-pair fee terms on `placeOrder`/`placeOrderWithPermit`/`makeOffer` — a distinct signer from the KYC backend |
@@ -97,7 +97,6 @@ KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint25
 
 | Check | Error |
 |---|---|
-| Account on blacklist | `AccountBlacklisted` |
 | `att.account != _msgSender()` | `KycAccountMismatch` |
 | `att.action != expectedAction` | `KycActionMismatch` |
 | `att.orderId != expectedId` | `KycOrderMismatch` |
@@ -170,7 +169,6 @@ A fee attestation therefore cannot be replayed against a different order/offer, 
 
 | Check | Error |
 |---|---|
-| Account on blacklist | `AccountBlacklisted` |
 | `feeAtt.account != _msgSender()` | `FeeAccountMismatch` |
 | `feeAtt.action != expectedAction` | `FeeActionMismatch` |
 | `block.timestamp > feeAtt.deadline` | `FeeExpired` |
@@ -221,7 +219,7 @@ Maker escrows `sellAmount` of `sellToken`. Requires a `Place` `KycAttestation` (
 Same as `placeOrder` (including fee validation/snapshot) but attempts an ERC-2612 `permit` call before the `transferFrom`, allowing the maker to approve and place in a single transaction. The permit failure is swallowed — if the approval is already in place or the token does not support permit, the `transferFrom` still proceeds normally.
 
 #### `cancelOrder(id)`
-Maker self-cancel. Never requires a KYC attestation and is not blocked by the blacklist — a user must always be able to cancel their own open order and reclaim escrow, even if the KYC backend refuses to sign for them or is offline. Use `cancelOrderForUser` for compliance-routed release to a non-maker recipient.
+Maker self-cancel. Never requires a KYC attestation — a user must always be able to cancel their own open order and reclaim escrow, even if the KYC backend refuses to sign for them or is offline. Use `cancelOrderForUser` for compliance-routed release to a non-maker recipient.
 
 #### `fillOrder(id, fillSellAmount, att)`
 Taker takes `fillSellAmount` of the order's `sellToken` and pays a proportional `buyToken` amount (`buyAmountDue`) directly to the maker. Uses ceiling division on `buyAmountDue` to protect the maker from rounding loss. A partial fill leaves the order Open; a full fill transitions it to Filled. Requires a `Fill` attestation bound to the `orderId`.
@@ -243,7 +241,7 @@ Operator-only. Returns an open order's remaining escrow to the maker. Emits `Ord
 Admin-only. Force-cancels any open order and routes escrow to `recipient` (may differ from the maker for compliance routing). Emits `OrderForceCancelled`.
 
 #### `sweepExpired(ids[])`
-Permissionless. Returns escrowed tokens to makers of expired open orders. Skips non-open, non-expired, zero-expiry, and blacklisted-maker orders silently. Callers should batch at most 100 IDs per call to avoid out-of-gas. Emits `OrderExpired` for each swept order.
+Permissionless. Returns escrowed tokens to makers of expired open orders. Skips non-open, non-expired, and zero-expiry orders silently. Callers should batch at most 100 IDs per call to avoid out-of-gas. Emits `OrderExpired` for each swept order.
 
 ---
 
@@ -306,7 +304,7 @@ Fees use the offer's snapshotted `makerFeeBps`/`takerFeeBps` (floor division), b
 Admin-only. Force-cancels any non-terminal offer and routes escrowed tokens to compliance-chosen recipients. If the offer is `Accepted` (both sides escrowed), both recipients receive their respective tokens. For `Open`/`Countered`, only the current proposer's tokens are held and returned to `makerRecipient` or `takerRecipient` as appropriate.
 
 #### `sweepExpiredOffers(ids[])`
-Permissionless. Returns the current proposer's escrowed tokens for expired `Open`/`Countered` offers. `Accepted` offers are not swept (both sides are locked; use `cancelOfferForUser` to release). Silently skips non-eligible and blacklisted-proposer entries.
+Permissionless. Returns the current proposer's escrowed tokens for expired `Open`/`Countered` offers. `Accepted` offers are not swept (both sides are locked; use `cancelOfferForUser` to release). Silently skips non-eligible entries.
 
 ---
 
@@ -314,11 +312,7 @@ Permissionless. Returns the current proposer's escrowed tokens for expired `Open
 
 ### KYC gating per action (`complianceRequired`)
 
-Each `Action` enum value maps to a boolean in `complianceRequired`. When `false` for an action, `_verifyKyc` returns immediately after the blacklist check, skipping all attestation validation for that action. This allows the admin to turn gating off per-action for testing or phased rollout. All actions default to `true` on deployment.
-
-### Blacklist
-
-Accounts are stored pseudonymously as `keccak256(abi.encodePacked(account))`. A blacklisted account is blocked from all KYC-gated actions. `cancelOrder` is exempt — a maker can always cancel their own open order regardless of blacklist status. Expired orders and offers belonging to blacklisted makers/proposers are skipped by the sweep functions — their funds can only be released via `cancelOrderForUser` / `cancelOfferForUser` to a compliance-chosen recipient.
+Each `Action` enum value maps to a boolean in `complianceRequired`. When `false` for an action, `_verifyKyc` returns immediately, skipping all attestation validation for that action. This allows the admin to turn gating off per-action for testing or phased rollout. All actions default to `true` on deployment. "Freezing" a user is simply the KYC backend declining to sign for them — there is no on-chain blocklist; `cancelOrderForUser` / `cancelOfferForUser` are the compliance escape hatches for releasing a frozen user's escrowed funds.
 
 ### Pause
 
@@ -375,7 +369,6 @@ Accounts are stored pseudonymously as `keccak256(abi.encodePacked(account))`. A 
 | `KycConsumed` | any KYC-gated action on attestation consumption |
 | `FeeConsumed` | `placeOrder`, `placeOrderWithPermit`, `makeOffer` on fee attestation consumption |
 | `ComplianceRequiredSet` | `setComplianceRequired` |
-| `BlacklistUpdated` | `setBlacklisted` |
 | `CollectorAllowed` | `setAllowedCollector` |
 
 `OrderFilled`, `OrderPartiallyFilled`, `OrderSettled`, `OfferMade`, and `OfferSettled` carry fee amounts/collector fields for indexer and client cost disclosure. For exact event signatures, indexed-vs-data parameter layout, and `topic0` values, see [`docs/INDEXER_EVENT_SCHEMA.md`](./INDEXER_EVENT_SCHEMA.md).
@@ -386,7 +379,7 @@ Accounts are stored pseudonymously as `keccak256(abi.encodePacked(account))`. A 
 
 - The contract uses the UUPS proxy pattern. Only the admin (`DEFAULT_ADMIN_ROLE`) can call `upgradeToAndCall`.
 - The forwarder address is immutable in each implementation. If the forwarder must change, a new implementation is deployed and the proxy is upgraded.
-- Storage layout must be preserved across upgrades. The `__gap[41]` reserve leaves room for up to 41 additional storage slots in future versions of `AsseteraExchange` without colliding with inherited contract storage. (Reduced from `[42]` when the `usedFeeNonce` mapping was added, which consumed one reserved slot.)
+- Storage layout must be preserved across upgrades. The `__gap[42]` reserve leaves room for up to 42 additional storage slots in future versions of `AsseteraExchange` without colliding with inherited contract storage. (Restored from `[41]` after removing the `_blacklist` mapping freed one slot; `usedFeeNonce` still consumes one slot from the original `[42]` reserve.)
 - `initialize` now takes a required `feeSigner` param (granted `FEE_OPERATOR_ROLE`) in addition to `admin`/`operator`/`kycSigner`; this is a breaking change to the initializer signature, coordinated with a fresh deploy rather than an in-place upgrade of an already-initialized proxy.
 - If a future upgrade introduces new `complianceRequired` entries (new `Action` enum values), a `reinitializer` function must be included and called via `upgradeToAndCall` to initialise the new storage slots — they default to `false` and must be explicitly set.
 
