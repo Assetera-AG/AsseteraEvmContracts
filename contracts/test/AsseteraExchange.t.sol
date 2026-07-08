@@ -931,39 +931,6 @@ contract AsseteraExchangeTest is Test {
         assertEq(rwa.balanceOf(alice), bal); // no double-refund
     }
 
-    function test_SweepExpired_SkipsBlacklistedMaker() public {
-        // Alice places an order with expiry, then gets blacklisted.
-        uint64 expireTs = uint64(block.timestamp + 1 hours);
-        AsseteraExchange.KycAttestation memory att =
-            _attestPlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
-        AsseteraExchange.FeeAttestation memory feeAtt =
-            _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
-        vm.startPrank(alice);
-        rwa.approve(address(exchange), SELL_RWA);
-        uint256 id = exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, expireTs, att, feeAtt);
-        vm.stopPrank();
-
-        bytes32 h = keccak256(abi.encodePacked(alice));
-        vm.prank(admin);
-        exchange.setBlacklisted(h, true);
-
-        vm.warp(block.timestamp + 2 hours); // order has expired
-
-        uint256[] memory ids = new uint256[](1);
-        ids[0] = id;
-        exchange.sweepExpired(ids); // should silently skip — alice is blacklisted
-
-        // Order remains Open so admin can route funds via cancelOrderForUser.
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Open));
-        assertEq(rwa.balanceOf(alice), 1_000e18 - SELL_RWA); // escrow not returned
-
-        // Admin releases funds to compliance recipient.
-        uint256 carolBal = rwa.balanceOf(carol);
-        vm.prank(admin);
-        exchange.cancelOrderForUser(id, carol);
-        assertEq(rwa.balanceOf(carol), carolBal + SELL_RWA);
-    }
-
     // ===================================================================== //
     //                       refund / cancelOrderForUser                     //
     // ===================================================================== //
@@ -1374,62 +1341,8 @@ contract AsseteraExchangeTest is Test {
     }
 
     // ===================================================================== //
-    //              blacklist  &  paramsHash binding                         //
+    //                         paramsHash binding                            //
     // ===================================================================== //
-
-    function test_Blacklist_BlocksAllKycActions() public {
-        bytes32 h = keccak256(abi.encodePacked(alice));
-        vm.prank(admin);
-        exchange.setBlacklisted(h, true);
-
-        AsseteraExchange.KycAttestation memory att =
-            _attestPlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
-        AsseteraExchange.FeeAttestation memory feeAtt =
-            _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
-        vm.startPrank(alice);
-        rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(AsseteraExchange.AccountBlacklisted.selector);
-        exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
-        vm.stopPrank();
-    }
-
-    function test_Blacklist_DoesNotBlockCancelOrder() public {
-        uint256 id = _placeRwaForUsdc(alice);
-        uint256 bal = rwa.balanceOf(alice);
-
-        bytes32 h = keccak256(abi.encodePacked(alice));
-        vm.prank(admin);
-        exchange.setBlacklisted(h, true);
-
-        vm.prank(alice);
-        exchange.cancelOrder(id);
-
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Cancelled));
-        assertEq(rwa.balanceOf(alice), bal + SELL_RWA);
-    }
-
-    function test_Blacklist_CancelOrderForUser_ReleasesBlacklistedFunds() public {
-        uint256 id = _placeRwaForUsdc(alice);
-
-        bytes32 h = keccak256(abi.encodePacked(alice));
-        vm.prank(admin);
-        exchange.setBlacklisted(h, true);
-
-        // alice cannot self-cancel; admin releases funds to a compliance recipient
-        uint256 bal = rwa.balanceOf(carol);
-        vm.prank(admin);
-        exchange.cancelOrderForUser(id, carol);
-        assertEq(rwa.balanceOf(carol), bal + SELL_RWA);
-    }
-
-    function test_Blacklist_OnlyAdminCanSet() public {
-        bytes32 h = keccak256(abi.encodePacked(alice));
-        vm.prank(operator);
-        vm.expectRevert(
-            abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", operator, ADMIN_ROLE)
-        );
-        exchange.setBlacklisted(h, true);
-    }
 
     function test_PlaceOrder_RevertsOnParamsHashMismatch() public {
         // Sign attestation for (rwa, SELL_RWA, usdc, WANT_USDC) but call with different buyAmount.
@@ -1467,71 +1380,6 @@ contract AsseteraExchangeTest is Test {
 
         // Same attestations (same nonces) succeed on retry with a valid expiry.
         uint256 id = exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
-        vm.stopPrank();
-
-        assertEq(exchange.getOrder(id).maker, alice);
-    }
-
-    // --- blacklist: taker and settle legs -------------------------------- //
-
-    function test_Blacklist_BlocksFillOrder() public {
-        uint256 id = _placeRwaForUsdc(alice);
-
-        bytes32 h = keccak256(abi.encodePacked(bob));
-        vm.prank(admin);
-        exchange.setBlacklisted(h, true);
-
-        AsseteraExchange.KycAttestation memory att = _attest(bob, AsseteraExchange.Action.Fill, id);
-        vm.startPrank(bob);
-        usdc.approve(address(exchange), WANT_USDC);
-        vm.expectRevert(AsseteraExchange.AccountBlacklisted.selector);
-        exchange.fillOrder(id, SELL_RWA, att);
-        vm.stopPrank();
-    }
-
-    function test_Blacklist_BlocksSettle_WhenMakerBlacklisted() public {
-        uint256 a = _placeRwaForUsdc(alice);
-        uint256 b = _placeUsdcForRwa(bob, WANT_USDC, SELL_RWA);
-
-        bytes32 h = keccak256(abi.encodePacked(alice));
-        vm.prank(admin);
-        exchange.setBlacklisted(h, true);
-
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
-        vm.prank(operator);
-        vm.expectRevert(AsseteraExchange.AccountBlacklisted.selector);
-        exchange.settle(a, b, attA, attB);
-    }
-
-    // --- unblacklist restores access ------------------------------------- //
-
-    function test_Blacklist_Unblacklist_RestoresAccess() public {
-        bytes32 h = keccak256(abi.encodePacked(alice));
-        vm.prank(admin);
-        exchange.setBlacklisted(h, true);
-
-        // Blocked before unblacklisting.
-        AsseteraExchange.KycAttestation memory att1 =
-            _attestPlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
-        AsseteraExchange.FeeAttestation memory feeAtt1 =
-            _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
-        vm.startPrank(alice);
-        rwa.approve(address(exchange), SELL_RWA * 2);
-        vm.expectRevert(AsseteraExchange.AccountBlacklisted.selector);
-        exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att1, feeAtt1);
-        vm.stopPrank();
-
-        vm.prank(admin);
-        exchange.setBlacklisted(h, false);
-
-        // Access restored after unblacklisting.
-        AsseteraExchange.KycAttestation memory att2 =
-            _attestPlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
-        AsseteraExchange.FeeAttestation memory feeAtt2 =
-            _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
-        vm.startPrank(alice);
-        uint256 id = exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att2, feeAtt2);
         vm.stopPrank();
 
         assertEq(exchange.getOrder(id).maker, alice);
@@ -2111,25 +1959,6 @@ contract AsseteraExchangeTest is Test {
         vm.stopPrank();
     }
 
-    function test_Offer_SettleRevertsIfMakerBlacklisted() public {
-        uint256 id = _makeOffer(alice, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
-
-        AsseteraExchange.KycAttestation memory acceptAtt = _attestAcceptOffer(bob, id, SELL_RWA, WANT_USDC);
-        vm.startPrank(bob);
-        usdc.approve(address(exchange), WANT_USDC);
-        exchange.acceptOffer(id, acceptAtt);
-        vm.stopPrank();
-
-        vm.prank(admin);
-        exchange.setBlacklisted(keccak256(abi.encodePacked(alice)), true);
-
-        AsseteraExchange.KycAttestation memory makerAtt = _attest(alice, AsseteraExchange.Action.Settle, id);
-        AsseteraExchange.KycAttestation memory takerAtt = _attest(bob, AsseteraExchange.Action.Settle, id);
-        vm.prank(operator);
-        vm.expectRevert(AsseteraExchange.AccountBlacklisted.selector);
-        exchange.settleOffer(id, makerAtt, takerAtt);
-    }
-
     function test_Offer_MakeRevertsOnWrongParamsHash() public {
         // Sign with mismatched takerAmount in paramsHash.
         bytes32 badHash = keccak256(abi.encodePacked(bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC + 1));
@@ -2339,23 +2168,15 @@ contract AsseteraExchangeTest is Test {
     }
 
     function test_CancelOfferForUser_AcceptedOffer_ReturnsBothEscrows() public {
-        // The core scenario: both sides escrowed, maker is blacklisted post-accept,
-        // settleOffer is blocked, and the only exit is cancelOfferForUser.
+        // The core scenario: both sides escrowed (e.g. maker's KYC backend now
+        // refuses to sign), settleOffer can no longer proceed, and the only
+        // exit is cancelOfferForUser.
         uint256 id = _makeOffer(alice, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         AsseteraExchange.KycAttestation memory acceptAtt = _attestAcceptOffer(bob, id, SELL_RWA, WANT_USDC);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
         exchange.acceptOffer(id, acceptAtt);
         vm.stopPrank();
-
-        // Blacklist alice — settleOffer would now revert.
-        vm.prank(admin);
-        exchange.setBlacklisted(keccak256(abi.encodePacked(alice)), true);
-        AsseteraExchange.KycAttestation memory makerAtt = _attestSettleOffer(alice, id, SELL_RWA, WANT_USDC);
-        AsseteraExchange.KycAttestation memory takerAtt = _attestSettleOffer(bob, id, SELL_RWA, WANT_USDC);
-        vm.prank(operator);
-        vm.expectRevert(AsseteraExchange.AccountBlacklisted.selector);
-        exchange.settleOffer(id, makerAtt, takerAtt);
 
         // Admin rescues both escrows to compliance-chosen addresses.
         uint256 aliceBefore = rwa.balanceOf(alice);
@@ -2485,22 +2306,6 @@ contract AsseteraExchangeTest is Test {
         ids[0] = id;
         exchange.sweepExpiredOffers(ids);
 
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Open));
-    }
-
-    function test_SweepExpiredOffers_SkipsBlacklistedProposer() public {
-        uint64 expiry = uint64(block.timestamp + 1 hours);
-        uint256 id = _makeOfferWithExpiry(alice, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC, expiry);
-
-        vm.prank(admin);
-        exchange.setBlacklisted(keccak256(abi.encodePacked(alice)), true);
-
-        vm.warp(block.timestamp + 1 hours + 1);
-        uint256[] memory ids = new uint256[](1);
-        ids[0] = id;
-        exchange.sweepExpiredOffers(ids); // silent skip
-
-        // Tokens still in contract — admin must use cancelOfferForUser.
         assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Open));
     }
 
