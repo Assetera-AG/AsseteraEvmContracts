@@ -12,6 +12,11 @@ dist/
 packages/sdk/src/deployments/31337.json
 packages/sdk/src/deployments/1337.json
 
+# Generated SDK code — regenerated from the contracts + committed deployment JSON via `npm run generate`
+# (never committed, so a dev's local deployment can't leak a baked address into the package).
+packages/sdk/src/generated/
+packages/sdk/src/deployments/deployments.gen.ts
+
 # Editor directories
 .vscode/
 .idea/

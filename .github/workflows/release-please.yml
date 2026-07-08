@@ -1,0 +1,61 @@
+name: release-please
+
+# Automated releases for @asseteragmbh/evm-contracts (ADR-0007 / ADR-0016 / ADR-0026 D7).
+# On push to main, release-please maintains a release PR from Conventional Commits; when it merges it tags a
+# release, and the `publish` job below publishes to npm via **OIDC trusted publishing** — no stored token.
+#
+# ONE-TIME BOOTSTRAP (see RELEASING.md): npm cannot configure a trusted publisher until the package exists, so
+# the very first version is published manually. After that, this workflow is fully hands-off.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release + tag
+      pull-requests: write # maintain the release PR
+    outputs:
+      release_created: ${{ steps.release.outputs['packages/sdk--release_created'] }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC token for npm trusted publishing (no NODE_AUTH_TOKEN)
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive # SDK codegen reads the contracts' build output
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24 # ships npm >= 11.5.1 (required for OIDC); we still pin below to be safe
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Ensure npm supports OIDC trusted publishing
+        run: npm install -g npm@latest # >= 11.5.1
+
+      - run: npm ci
+      - name: Build the SDK
+        run: npm run build -w @asseteragmbh/evm-contracts # prebuild runs codegen (needs Foundry)
+
+      - name: Publish to npm (OIDC — no token)
+        run: npm publish -w @asseteragmbh/evm-contracts
