@@ -26,6 +26,7 @@ import {FaucetToken} from "../src/FaucetToken.sol";
 ///   ADMIN_ADDRESS      — DEFAULT_ADMIN_ROLE (upgrade + role admin); use the Safe multisig in prod
 ///   OPERATOR_ADDRESS   — OPERATOR_ROLE (settle/refund/pause)
 ///   KYC_SIGNER_ADDRESS — KYC_OPERATOR_ROLE (signs KYC attestations)
+///   FEE_SIGNER_ADDRESS — FEE_OPERATOR_ROLE (signs fee attestations; the fee service)
 ///   RELAYER_ADDRESS    — recorded for reference (the gasless relayer EOA)
 contract Deploy is DeployBase {
     /// @dev Ensures the CreateX factory is available (etched on anvil; already present on live chains).
@@ -42,6 +43,7 @@ contract Deploy is DeployBase {
         admin = vm.envOr("ADMIN_ADDRESS", deployer);
         operator = vm.envOr("OPERATOR_ADDRESS", deployer);
         kycSigner = vm.envOr("KYC_SIGNER_ADDRESS", deployer);
+        feeSigner = vm.envOr("FEE_SIGNER_ADDRESS", deployer);
         relayer = vm.envOr("RELAYER_ADDRESS", deployer);
 
         if (pk != 0) vm.startBroadcast(pk);
@@ -87,7 +89,7 @@ contract Deploy is DeployBase {
         bytes32 proxySalt = _salt(deployer, "AsseteraExchange.proxy");
         exchangeProxy = computeCreate3Address(proxySalt, deployer);
         if (!_hasCode(exchangeProxy)) {
-            bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, operator, kycSigner));
+            bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, operator, kycSigner, feeSigner));
             bytes memory proxyInit =
                 abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(exchangeImpl, initData));
             address deployed = create3(proxySalt, proxyInit);
