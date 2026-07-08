@@ -53,6 +53,11 @@ contract AsseteraExchange is
     ///         holds this role is accepted. Managed by the admin multisig.
     bytes32 public constant KYC_OPERATOR_ROLE = keccak256("KYC_OPERATOR_ROLE");
 
+    /// @notice Whitelisted fee signers (the fee service — separate from KYC).
+    ///         Any fee attestation whose recovered signer holds this role is
+    ///         accepted. Managed by the admin multisig.
+    bytes32 public constant FEE_OPERATOR_ROLE = keccak256("FEE_OPERATOR_ROLE");
+
     // --------------------------------------------------------------------- //
     //                              Data model                                //
     // --------------------------------------------------------------------- //
@@ -129,6 +134,8 @@ contract AsseteraExchange is
 
     /// @notice A single-use KYC authorization. The first five fields are EIP-712
     ///         signed by a `KYC_OPERATOR_ROLE` holder; `signature` is that sig.
+    ///         Carries no fee terms — fees are authorised separately via
+    ///         `FeeAttestation`, signed by the (distinct) fee service.
     struct KycAttestation {
         address account; // the party being authorized; must equal the actor
         Action action; // which action this authorizes
@@ -136,20 +143,44 @@ contract AsseteraExchange is
         uint256 nonce; // single-use, per-account
         uint256 deadline; // unix expiry (backend sets ~3 min)
         bytes32 paramsHash; // keccak256(abi.encode(sellToken,sellAmount,buyToken,buyAmount)) for Place; bytes32(0) otherwise
-        // Per-pair fee parameters — backend signs these for Place; zero for all other actions.
-        uint16 makerFeeBps; // fee the maker pays from what they receive
-        uint16 takerFeeBps; // fee the taker pays from what they receive
-        address feeCollector; // must be in the on-chain allowlist when non-zero fees
         bytes signature; // KYC operator's EIP-712 signature over the above
     }
 
     bytes32 public constant KYC_TYPEHASH = keccak256(
-        "KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector)"
+        "KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint256 deadline,bytes32 paramsHash)"
+    );
+
+    /// @notice A single-use fee authorization from the fee service, required
+    ///         alongside a `KycAttestation` on fee-setting actions (`placeOrder`,
+    ///         `placeOrderWithPermit`, `makeOffer`). Bound to the same actor and
+    ///         action as the paired KYC attestation, and to the same `paramsHash`
+    ///         (both are checked against the identical on-chain-computed hash),
+    ///         so a fee attestation cannot be replayed against a different order/
+    ///         offer or paired with a mismatched KYC attestation. Uses a separate
+    ///         nonce namespace (`usedFeeNonce`) from KYC.
+    struct FeeAttestation {
+        address account; // the party being authorized; must equal the actor
+        Action action; // which action this authorizes (Place or MakeOffer)
+        uint256 nonce; // single-use, per-account, separate from KYC nonces
+        uint256 deadline; // unix expiry (fee service sets ~3 min)
+        bytes32 paramsHash; // must equal the paired KycAttestation's paramsHash
+        uint16 makerFeeBps; // fee the maker pays from what they receive
+        uint16 takerFeeBps; // fee the taker pays from what they receive
+        address feeCollector; // must be in the on-chain allowlist when non-zero fees
+        bytes signature; // fee operator's EIP-712 signature over the above
+    }
+
+    bytes32 public constant FEE_TYPEHASH = keccak256(
+        "FeeAttestation(address account,uint8 action,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector)"
     );
 
     /// @notice Hard cap on attestation freshness; rejects over-long deadlines
     ///         even if a signer produced one. Backend uses ~3 min.
     uint256 public constant MAX_KYC_TTL = 15 minutes;
+
+    /// @notice Hard cap on fee attestation freshness, mirroring MAX_KYC_TTL for
+    ///         the separate fee-service signing flow.
+    uint256 public constant MAX_FEE_TTL = 15 minutes;
 
     /// @notice Absolute upper bound on fee basis points (100 % = 10 000 bps).
     ///         Practical configs will be well below this.
@@ -158,11 +189,16 @@ contract AsseteraExchange is
     mapping(uint256 => Order) private _orders;
     uint256 public totalOrders;
 
-    /// @notice Consumed attestation nonces, per account. Single-use replay guard.
+    /// @notice Consumed KYC attestation nonces, per account. Single-use replay guard.
     mapping(address => mapping(uint256 => bool)) public usedNonce;
 
-    /// @notice Whether each action requires a KYC attestation. Composable: turn
-    ///         gating on/off per action (admin). Defaults to all-on.
+    /// @notice Consumed fee attestation nonces, per account. Separate namespace
+    ///         from `usedNonce` since fee attestations are signed by a different party.
+    mapping(address => mapping(uint256 => bool)) public usedFeeNonce;
+
+    /// @notice Whether each action requires a KYC attestation (and, for Place/
+    ///         MakeOffer, a fee attestation too — both share this toggle).
+    ///         Composable: turn gating on/off per action (admin). Defaults to all-on.
     mapping(Action => bool) public complianceRequired;
 
     /// @notice On-chain compliance fallback. Keyed by keccak256(abi.encodePacked(account))
@@ -177,7 +213,7 @@ contract AsseteraExchange is
     ///         because the collector must be in this allowlist at placement time.
     mapping(address => bool) public allowedCollectors;
 
-    uint256[42] private __gap; // reduced from [43]: allowedCollectors uses one slot
+    uint256[41] private __gap; // reduced from [42]: usedFeeNonce uses one slot
 
     // --------------------------------------------------------------------- //
     //                                Events                                  //
@@ -235,6 +271,7 @@ contract AsseteraExchange is
     /// @notice Emitted when the admin updates the fee collector allowlist.
     event CollectorAllowed(address indexed collector, bool allowed);
     event KycConsumed(address indexed account, Action indexed action, uint256 indexed orderId, uint256 nonce);
+    event FeeConsumed(address indexed account, Action indexed action, uint256 nonce);
     event ComplianceRequiredSet(Action indexed action, bool required);
     event BlacklistUpdated(bytes32 indexed hashedAccount, bool blocked);
     event OfferMade(
@@ -305,6 +342,13 @@ contract AsseteraExchange is
     error KycTtlTooLong();
     error KycNonceUsed();
     error KycBadSigner();
+    // Fee attestation
+    error FeeAccountMismatch();
+    error FeeActionMismatch();
+    error FeeExpired();
+    error FeeTtlTooLong();
+    error FeeNonceUsed();
+    error FeeBadSigner();
 
     // --------------------------------------------------------------------- //
     //                              Initializer                               //
@@ -317,11 +361,14 @@ contract AsseteraExchange is
         _disableInitializers();
     }
 
-    /// @param admin    DEFAULT_ADMIN_ROLE (upgrade, role mgmt, force-cancel). Multisig in prod.
-    /// @param operator OPERATOR_ROLE (settle/refund/pause).
+    /// @param admin     DEFAULT_ADMIN_ROLE (upgrade, role mgmt, force-cancel). Multisig in prod.
+    /// @param operator  OPERATOR_ROLE (settle/refund/pause).
     /// @param kycSigner Initial KYC_OPERATOR_ROLE holder (the backend signer).
-    function initialize(address admin, address operator, address kycSigner) external initializer {
-        if (admin == address(0) || operator == address(0) || kycSigner == address(0)) revert ZeroAddress();
+    /// @param feeSigner Initial FEE_OPERATOR_ROLE holder (the fee service signer).
+    function initialize(address admin, address operator, address kycSigner, address feeSigner) external initializer {
+        if (admin == address(0) || operator == address(0) || kycSigner == address(0) || feeSigner == address(0)) {
+            revert ZeroAddress();
+        }
 
         __UUPSUpgradeable_init();
         __AccessControl_init();
@@ -332,6 +379,7 @@ contract AsseteraExchange is
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(OPERATOR_ROLE, operator);
         _grantRole(KYC_OPERATOR_ROLE, kycSigner);
+        _grantRole(FEE_OPERATOR_ROLE, feeSigner);
 
         // Default: every trade action is KYC-gated.
         complianceRequired[Action.Place] = true;
@@ -370,16 +418,7 @@ contract AsseteraExchange is
 
         bytes32 structHash = keccak256(
             abi.encode(
-                KYC_TYPEHASH,
-                att.account,
-                uint8(att.action),
-                att.orderId,
-                att.nonce,
-                att.deadline,
-                att.paramsHash,
-                att.makerFeeBps,
-                att.takerFeeBps,
-                att.feeCollector
+                KYC_TYPEHASH, att.account, uint8(att.action), att.orderId, att.nonce, att.deadline, att.paramsHash
             )
         );
         address signer = ECDSA.recover(_hashTypedDataV4(structHash), att.signature);
@@ -397,44 +436,115 @@ contract AsseteraExchange is
     }
 
     // --------------------------------------------------------------------- //
+    //                           Fee attestation core                         //
+    // --------------------------------------------------------------------- //
+
+    /// @dev Verify a fee attestation without consuming the nonce. Pure validation;
+    ///      no state writes. Fee attestations only exist for fee-setting actions
+    ///      (Place, MakeOffer); the caller is responsible for checking
+    ///      `att.paramsHash` against the same on-chain-computed hash it checks the
+    ///      paired KycAttestation against — that transitively enforces
+    ///      `fee.paramsHash == kyc.paramsHash` without a separate cross-check here.
+    function _verifyFee(address account, Action action, FeeAttestation calldata att) private view {
+        // Blacklist is unconditional — applies even when attestation gating is disabled.
+        if (_blacklist[keccak256(abi.encodePacked(account))]) revert AccountBlacklisted();
+        if (!complianceRequired[action]) return;
+        if (att.account != account) revert FeeAccountMismatch();
+        if (att.action != action) revert FeeActionMismatch();
+        if (block.timestamp > att.deadline) revert FeeExpired();
+        if (att.deadline > block.timestamp + MAX_FEE_TTL) revert FeeTtlTooLong();
+        if (usedFeeNonce[account][att.nonce]) revert FeeNonceUsed();
+
+        bytes32 structHash = keccak256(
+            abi.encode(
+                FEE_TYPEHASH,
+                att.account,
+                uint8(att.action),
+                att.nonce,
+                att.deadline,
+                att.paramsHash,
+                att.makerFeeBps,
+                att.takerFeeBps,
+                att.feeCollector
+            )
+        );
+        address signer = ECDSA.recover(_hashTypedDataV4(structHash), att.signature);
+        if (!hasRole(FEE_OPERATOR_ROLE, signer)) revert FeeBadSigner();
+    }
+
+    /// @dev Verifies both the KYC and fee attestations for a fee-setting action
+    ///      (Place, MakeOffer) before burning either nonce — an invalid second
+    ///      attestation must not consume the first attestation's nonce on a
+    ///      reverted call. Both are checked against the same `account`/`action`,
+    ///      which transitively binds `fee.account == kyc.account == account` and
+    ///      `fee.action == kyc.action == action`.
+    function _consumeKycAndFee(
+        address account,
+        Action action,
+        uint256 orderId,
+        KycAttestation calldata kycAtt,
+        FeeAttestation calldata feeAtt
+    ) private {
+        _verifyKyc(account, action, orderId, kycAtt);
+        _verifyFee(account, action, feeAtt);
+        if (complianceRequired[action]) {
+            usedNonce[account][kycAtt.nonce] = true;
+            emit KycConsumed(account, action, orderId, kycAtt.nonce);
+            usedFeeNonce[account][feeAtt.nonce] = true;
+            emit FeeConsumed(account, action, feeAtt.nonce);
+        }
+    }
+
+    // --------------------------------------------------------------------- //
     //                              Maker actions                             //
     // --------------------------------------------------------------------- //
 
     /// @param expireTs Unix timestamp after which the order can be swept; 0 = no expiry.
+    /// @param att      KYC attestation authorising Place (no fee terms).
+    /// @param feeAtt   Fee attestation from the fee service, authorising the fee terms
+    ///                 snapshotted onto the order. Bound to the same account/action/
+    ///                 paramsHash as `att` (see `_consumeKycAndFee`).
     function placeOrder(
         address sellToken,
         uint256 sellAmount,
         address buyToken,
         uint256 buyAmount,
         uint64 expireTs,
-        KycAttestation calldata att
+        KycAttestation calldata att,
+        FeeAttestation calldata feeAtt
     ) external whenNotPaused nonReentrant returns (uint256 id) {
-        // Validate all params and paramsHash BEFORE consuming the KYC nonce so
-        // that a bad call does not burn the attestation.
+        // Validate all params and paramsHash BEFORE consuming either nonce so
+        // that a bad call does not burn either attestation.
         if (sellToken == address(0) || buyToken == address(0)) revert ZeroAddress();
         if (sellAmount == 0 || buyAmount == 0) revert ZeroAmount();
         if (sellToken == buyToken) revert SameToken();
         if (expireTs != 0 && expireTs <= block.timestamp) revert InvalidExpiry();
-        if (
-            complianceRequired[Action.Place]
-                && att.paramsHash != keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount))
-        ) {
-            revert ParamsHashMismatch();
+        if (complianceRequired[Action.Place]) {
+            bytes32 paramsHash = keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount));
+            if (att.paramsHash != paramsHash) revert ParamsHashMismatch();
+            if (feeAtt.paramsHash != paramsHash) revert ParamsHashMismatch();
         }
-        // Fee validation — always enforced so a compromised signer cannot
-        // set extreme fees or route to an unlisted collector.
-        if (att.makerFeeBps > MAX_FEE_BPS || att.takerFeeBps > MAX_FEE_BPS) revert InvalidFee();
-        if (att.makerFeeBps > 0 || att.takerFeeBps > 0) {
-            if (att.feeCollector == address(0)) revert ZeroAddress();
-            if (!allowedCollectors[att.feeCollector]) revert FeeCollectorNotAllowed(att.feeCollector);
-        }
-        _consumeKyc(_msgSender(), Action.Place, 0, att);
+        // Fee bounds — always enforced (defence in depth) so a compromised fee
+        // signer cannot set extreme fees or route to an unlisted collector.
+        _validateFees(feeAtt.makerFeeBps, feeAtt.takerFeeBps, feeAtt.feeCollector);
+        _consumeKycAndFee(_msgSender(), Action.Place, 0, att, feeAtt);
         return _placeOrder(
-            sellToken, sellAmount, buyToken, buyAmount, expireTs, att.makerFeeBps, att.takerFeeBps, att.feeCollector
+            sellToken,
+            sellAmount,
+            buyToken,
+            buyAmount,
+            expireTs,
+            feeAtt.makerFeeBps,
+            feeAtt.takerFeeBps,
+            feeAtt.feeCollector
         );
     }
 
     /// @param expireTs Unix timestamp after which the order can be swept; 0 = no expiry.
+    /// @param att      KYC attestation authorising Place (no fee terms).
+    /// @param feeAtt   Fee attestation from the fee service, authorising the fee terms
+    ///                 snapshotted onto the order. Bound to the same account/action/
+    ///                 paramsHash as `att` (see `_consumeKycAndFee`).
     function placeOrderWithPermit(
         address sellToken,
         uint256 sellAmount,
@@ -445,29 +555,32 @@ contract AsseteraExchange is
         uint8 v,
         bytes32 r,
         bytes32 s,
-        KycAttestation calldata att
+        KycAttestation calldata att,
+        FeeAttestation calldata feeAtt
     ) external whenNotPaused nonReentrant returns (uint256 id) {
-        // Validate all params and paramsHash BEFORE consuming the KYC nonce so
-        // that a bad call does not burn the attestation.
+        // Validate all params and paramsHash BEFORE consuming either nonce so
+        // that a bad call does not burn either attestation.
         if (sellToken == address(0) || buyToken == address(0)) revert ZeroAddress();
         if (sellAmount == 0 || buyAmount == 0) revert ZeroAmount();
         if (sellToken == buyToken) revert SameToken();
         if (expireTs != 0 && expireTs <= block.timestamp) revert InvalidExpiry();
-        if (
-            complianceRequired[Action.Place]
-                && att.paramsHash != keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount))
-        ) {
-            revert ParamsHashMismatch();
+        if (complianceRequired[Action.Place]) {
+            bytes32 paramsHash = keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount));
+            if (att.paramsHash != paramsHash) revert ParamsHashMismatch();
+            if (feeAtt.paramsHash != paramsHash) revert ParamsHashMismatch();
         }
-        if (att.makerFeeBps > MAX_FEE_BPS || att.takerFeeBps > MAX_FEE_BPS) revert InvalidFee();
-        if (att.makerFeeBps > 0 || att.takerFeeBps > 0) {
-            if (att.feeCollector == address(0)) revert ZeroAddress();
-            if (!allowedCollectors[att.feeCollector]) revert FeeCollectorNotAllowed(att.feeCollector);
-        }
-        _consumeKyc(_msgSender(), Action.Place, 0, att);
+        _validateFees(feeAtt.makerFeeBps, feeAtt.takerFeeBps, feeAtt.feeCollector);
+        _consumeKycAndFee(_msgSender(), Action.Place, 0, att, feeAtt);
         _tryPermit(sellToken, sellAmount, permitDeadline, v, r, s);
         return _placeOrder(
-            sellToken, sellAmount, buyToken, buyAmount, expireTs, att.makerFeeBps, att.takerFeeBps, att.feeCollector
+            sellToken,
+            sellAmount,
+            buyToken,
+            buyAmount,
+            expireTs,
+            feeAtt.makerFeeBps,
+            feeAtt.takerFeeBps,
+            feeAtt.feeCollector
         );
     }
 
@@ -738,6 +851,10 @@ contract AsseteraExchange is
 
     /// @notice Create a targeted offer. Maker escrows makerToken; only the
     ///         nominated taker can respond. KYC-gated on the maker.
+    /// @param att    KYC attestation authorising MakeOffer (no fee terms).
+    /// @param feeAtt Fee attestation from the fee service, authorising the fee terms
+    ///               snapshotted onto the offer. Bound to the same account/action/
+    ///               paramsHash as `att` (see `_consumeKycAndFee`).
     function makeOffer(
         address taker,
         address makerToken,
@@ -745,7 +862,8 @@ contract AsseteraExchange is
         address takerToken,
         uint256 takerAmount,
         uint64 expireTs,
-        KycAttestation calldata att
+        KycAttestation calldata att,
+        FeeAttestation calldata feeAtt
     ) external whenNotPaused nonReentrant returns (uint256 id) {
         address maker = _msgSender();
         if (taker == address(0) || makerToken == address(0) || takerToken == address(0)) revert ZeroAddress();
@@ -754,17 +872,15 @@ contract AsseteraExchange is
         if (taker == maker) revert OfferSelfTarget();
         if (expireTs != 0 && expireTs <= block.timestamp) revert InvalidExpiry();
 
-        if (
-            complianceRequired[Action.MakeOffer]
-                && att.paramsHash
-                    != keccak256(abi.encodePacked(taker, makerToken, makerAmount, takerToken, takerAmount))
-        ) {
-            revert ParamsHashMismatch();
+        if (complianceRequired[Action.MakeOffer]) {
+            bytes32 paramsHash = keccak256(abi.encodePacked(taker, makerToken, makerAmount, takerToken, takerAmount));
+            if (att.paramsHash != paramsHash) revert ParamsHashMismatch();
+            if (feeAtt.paramsHash != paramsHash) revert ParamsHashMismatch();
         }
-        _validateFees(att.makerFeeBps, att.takerFeeBps, att.feeCollector);
-        _consumeKyc(maker, Action.MakeOffer, 0, att);
+        _validateFees(feeAtt.makerFeeBps, feeAtt.takerFeeBps, feeAtt.feeCollector);
+        _consumeKycAndFee(maker, Action.MakeOffer, 0, att, feeAtt);
 
-        id = _storeOffer(maker, taker, makerToken, makerAmount, takerToken, takerAmount, expireTs, att);
+        id = _storeOffer(maker, taker, makerToken, makerAmount, takerToken, takerAmount, expireTs, feeAtt);
         IERC20(makerToken).safeTransferFrom(maker, address(this), makerAmount);
         emit OfferMade(
             id,
@@ -775,9 +891,9 @@ contract AsseteraExchange is
             takerToken,
             takerAmount,
             expireTs,
-            att.makerFeeBps,
-            att.takerFeeBps,
-            att.feeCollector
+            feeAtt.makerFeeBps,
+            feeAtt.takerFeeBps,
+            feeAtt.feeCollector
         );
     }
 
@@ -797,7 +913,7 @@ contract AsseteraExchange is
         address takerToken,
         uint256 takerAmount,
         uint64 expireTs,
-        KycAttestation calldata att
+        FeeAttestation calldata feeAtt
     ) internal returns (uint256 id) {
         id = ++totalOffers;
         _offers[id] = Offer({
@@ -812,9 +928,9 @@ contract AsseteraExchange is
             createdAt: uint64(block.timestamp),
             expireTs: expireTs,
             proposedBy: maker,
-            makerFeeBps: att.makerFeeBps,
-            takerFeeBps: att.takerFeeBps,
-            feeCollector: att.feeCollector
+            makerFeeBps: feeAtt.makerFeeBps,
+            takerFeeBps: feeAtt.takerFeeBps,
+            feeCollector: feeAtt.feeCollector
         });
     }
 

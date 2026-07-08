@@ -19,7 +19,7 @@ import {console2} from "forge-std/Script.sol";
 ///           "contracts":       { "AsseteraExchange": "0x..(proxy)..", "Forwarder": "0x..", "MockUSDC": "0x..", "MockRWA": "0x.." },
 ///           "implementations": { "AsseteraExchange": "0x..(impl).." },
 ///           "metadata":        { "deployer": "0x..", "admin": "0x..", "operator": "0x..", "kycSigner": "0x..",
-///                                "relayer": "0x..", "deployBlock": 0, "deployTimestamp": 0 }
+///                                "feeSigner": "0x..", "relayer": "0x..", "deployBlock": 0, "deployTimestamp": 0 }
 ///         }
 ///
 ///         The numeric `chainId` key serves the viem/wagmi client; `caip2` + `namespace` let the CAIP-2-keyed
@@ -38,6 +38,7 @@ abstract contract DeployBase is CreateXScript {
     address internal usdc;
     address internal rwa;
     address internal kycSigner;
+    address internal feeSigner;
     address internal operator;
     address internal relayer;
     address internal admin;
@@ -111,6 +112,7 @@ abstract contract DeployBase is CreateXScript {
         vm.serializeAddress(m, "admin", admin);
         vm.serializeAddress(m, "operator", operator);
         vm.serializeAddress(m, "kycSigner", kycSigner);
+        vm.serializeAddress(m, "feeSigner", feeSigner);
         vm.serializeAddress(m, "relayer", relayer);
         vm.serializeUint(m, "deployBlock", block.number);
         string memory mJson = vm.serializeUint(m, "deployTimestamp", block.timestamp);
