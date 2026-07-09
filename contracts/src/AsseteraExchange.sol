@@ -46,12 +46,16 @@ contract AsseteraExchange is
         _disableInitializers();
     }
 
-    /// @param admin     DEFAULT_ADMIN_ROLE (upgrade, role mgmt, force-cancel). Multisig in prod.
-    /// @param operator  OPERATOR_ROLE (settle/refund/pause).
+    /// @param admin     DEFAULT_ADMIN_ROLE (upgrade, role mgmt, pause/unpause, force-cancel). Multisig in prod.
+    /// @param operator  Unused while OPERATOR_ROLE is parked (AC-246) — kept in the
+    ///                  signature so re-enabling operator functions later needs no
+    ///                  initializer ABI change, just uncommenting
+    ///                  admin/OperatorFunctions.sol and the grant below.
     /// @param kycSigner Initial KYC_OPERATOR_ROLE holder (the backend signer).
     /// @param feeSigner Initial FEE_OPERATOR_ROLE holder (the fee service signer).
     function initialize(address admin, address operator, address kycSigner, address feeSigner) external initializer {
-        if (admin == address(0) || operator == address(0) || kycSigner == address(0) || feeSigner == address(0)) {
+        // operator == address(0) check parked alongside OPERATOR_ROLE (AC-246) — see admin/OperatorFunctions.sol
+        if (admin == address(0) || kycSigner == address(0) || feeSigner == address(0)) {
             revert ZeroAddress();
         }
 
@@ -62,7 +66,7 @@ contract AsseteraExchange is
         __EIP712_init("AsseteraExchange", "1");
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
-        _grantRole(OPERATOR_ROLE, operator);
+        // _grantRole(OPERATOR_ROLE, operator); // parked (AC-246) — see admin/OperatorFunctions.sol
         _grantRole(KYC_OPERATOR_ROLE, kycSigner);
         _grantRole(FEE_OPERATOR_ROLE, feeSigner);
 
@@ -74,7 +78,8 @@ contract AsseteraExchange is
         complianceRequired[Action.ReplaceOffer] = true;
         complianceRequired[Action.AcceptOffer] = true;
         complianceRequired[Action.CancelOffer] = true;
-        complianceRequired[Action.SettleOffer] = true;
+        // Action.SettleOffer is unused (AC-246) — acceptOffer settles atomically
+        // under Action.AcceptOffer's gate; there's no separate settle step to gate.
     }
 
     // --------------------------------------------------------------------- //

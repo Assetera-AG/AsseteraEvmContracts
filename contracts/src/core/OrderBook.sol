@@ -10,8 +10,9 @@ import {ExchangeAdmin} from "../admin/ExchangeAdmin.sol";
 import {FeeMath} from "../libs/FeeMath.sol";
 
 /// @title OrderBook
-/// @notice Order lifecycle: place, self-cancel, fill, operator-settle, refund,
-///         and permissionless sweep of expired orders.
+/// @notice Order lifecycle: place, self-cancel, fill, and permissionless sweep
+///         of expired orders. Operator-only settle/refund are parked — see
+///         admin/OperatorFunctions.sol (AC-246).
 abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
     using SafeERC20 for IERC20;
 
@@ -49,24 +50,9 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
         uint256 takerFeeAmount,
         address feeCollector
     );
-    /// @dev settledSellAmount/settledBuyAmount are gross (pre-fee) quantities.
-    event OrderSettled(
-        uint256 indexed buyId,
-        uint256 indexed sellId,
-        address indexed operator,
-        uint256 settledSellAmount,
-        uint256 settledBuyAmount,
-        uint256 buyMakerFeeAmount,
-        uint256 sellMakerFeeAmount,
-        address buyFeeCollector,
-        address sellFeeCollector
-    );
-    event OrderRefunded(uint256 indexed id, address indexed maker, address indexed operator, string reason);
     event OrderExpired(uint256 indexed id, address indexed maker, uint256 remainingQuantity);
 
     error NotMaker(uint256 id);
-    error NotComplementary(uint256 buyId, uint256 sellId);
-    error PriceNotCrossed(uint256 buyId, uint256 sellId);
     error SelfTrade(uint256 id);
     error OrderIsExpired(uint256 id);
     error FillAmountZero();
@@ -272,84 +258,8 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
     }
 
     // --------------------------------------------------------------------- //
-    //                            Operator actions                            //
+    //                          Permissionless sweep                          //
     // --------------------------------------------------------------------- //
-
-    /// @notice Settle two complementary orders. Both makers must present a fresh
-    ///         KYC attestation. The operator decides when to call settle — the
-    ///         contract transfers each order's full remaining quantity to the
-    ///         counterparty, supporting partial-fill scenarios.
-    function settle(uint256 buyId, uint256 sellId, KycAttestation calldata attBuy, KycAttestation calldata attSell)
-        external
-        onlyRole(OPERATOR_ROLE)
-        nonReentrant
-    {
-        Order storage a = _orders[buyId];
-        Order storage b = _orders[sellId];
-        if (a.status != OrderStatus.Open) revert OrderNotOpen(buyId);
-        if (b.status != OrderStatus.Open) revert OrderNotOpen(sellId);
-        if (a.expireTs != 0 && block.timestamp > a.expireTs) revert OrderIsExpired(buyId);
-        if (b.expireTs != 0 && block.timestamp > b.expireTs) revert OrderIsExpired(sellId);
-        if (a.sellToken != b.buyToken || a.buyToken != b.sellToken) revert NotComplementary(buyId, sellId);
-        if (a.maker == b.maker) revert SelfTrade(buyId);
-
-        // Settle full remaining quantities of both orders.
-        uint256 settleA = a.remainingQuantity; // a.sellToken → b.maker
-        uint256 settleB = b.remainingQuantity; // b.sellToken → a.maker
-
-        // Price check at remaining quantities via cross-multiplication (no division).
-        // Each maker receives at least the rate their original limit price implies.
-        // Equivalent to the original-amount comparison when neither order has been partially filled.
-        if (settleB * a.sellAmount < settleA * a.buyAmount) revert PriceNotCrossed(buyId, sellId);
-        if (settleA * b.sellAmount < settleB * b.buyAmount) revert PriceNotCrossed(buyId, sellId);
-
-        // Verify both attestations before consuming either nonce so that an invalid
-        // second attestation cannot burn the first maker's nonce on a failed call.
-        _verifyKyc(a.maker, Action.Settle, buyId, attBuy);
-        _verifyKyc(b.maker, Action.Settle, sellId, attSell);
-        if (complianceRequired[Action.Settle]) {
-            usedNonce[a.maker][attBuy.nonce] = true;
-            emit KycConsumed(a.maker, Action.Settle, buyId, attBuy.nonce);
-            usedNonce[b.maker][attSell.nonce] = true;
-            emit KycConsumed(b.maker, Action.Settle, sellId, attSell.nonce);
-        }
-
-        // Per-order maker fees applied to what each maker receives.
-        // settleB = what a.maker receives (b's sellToken); settleA = what b.maker receives (a's sellToken).
-        uint256 buyMakerFeeAmount = FeeMath.feeAmount(settleB, a.makerFeeBps);
-        uint256 sellMakerFeeAmount = FeeMath.feeAmount(settleA, b.makerFeeBps);
-
-        a.remainingQuantity = 0;
-        b.remainingQuantity = 0;
-        a.status = OrderStatus.Settled;
-        b.status = OrderStatus.Settled;
-
-        IERC20(a.sellToken).safeTransfer(b.maker, settleA - sellMakerFeeAmount);
-        if (sellMakerFeeAmount > 0) IERC20(a.sellToken).safeTransfer(b.feeCollector, sellMakerFeeAmount);
-        IERC20(b.sellToken).safeTransfer(a.maker, settleB - buyMakerFeeAmount);
-        if (buyMakerFeeAmount > 0) IERC20(b.sellToken).safeTransfer(a.feeCollector, buyMakerFeeAmount);
-
-        emit OrderSettled(
-            buyId,
-            sellId,
-            _msgSender(),
-            settleA,
-            settleB,
-            buyMakerFeeAmount,
-            sellMakerFeeAmount,
-            a.feeCollector,
-            b.feeCollector
-        );
-    }
-
-    /// @notice Operator returns an open order's remaining escrow to its maker.
-    function refund(uint256 id, string calldata reason) external onlyRole(OPERATOR_ROLE) nonReentrant {
-        Order storage o = _orders[id];
-        if (o.status != OrderStatus.Open) revert OrderNotOpen(id);
-        o.status = OrderStatus.Refunded;
-        IERC20(o.sellToken).safeTransfer(o.maker, o.remainingQuantity);
-        emit OrderRefunded(id, o.maker, _msgSender(), reason);
-    }
 
     /// @notice Anyone can sweep a batch of expired orders, returning each order's
     ///         remaining escrow to the maker. Orders that are not Open, lack an

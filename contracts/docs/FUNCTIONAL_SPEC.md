@@ -16,7 +16,7 @@ AsseteraExchange is an escrow-based, off-chain-matched limit-order venue for reg
 - **Negative / escape hatch** — admin functions (`cancelOrderForUser`, `cancelOfferForUser`) allow the multisig to force-return escrowed funds to a compliance-chosen recipient, bypassing the KYC gate.
 - **Fee gate (separate from KYC)** — the three fee-setting actions (`placeOrder`, `placeOrderWithPermit`, `makeOffer`) additionally require a *fee attestation* signed by a distinct fee service (`FEE_OPERATOR_ROLE`), not the KYC backend. Fee terms never ride inside the KYC attestation. See [§5](#5-fee-attestation).
 
-There is **no on-chain matching engine**. Orders and offers are matched off-chain by the operator, who then drives the settlement call. This keeps gas costs low and lets the operator apply compliance logic before any settlement.
+There is **no on-chain matching engine**, and standard operation needs no operator actions at all — settlement/matching isn't done on-chain by an operator. `settle`/`refund` (order-level) are parked (AC-246; see [§11](#11-upgrade-considerations)), re-enableable later via a single UUPS upgrade if ever needed. `settleOffer` (offer-level) is retired outright, not parked — its logic was merged directly into `acceptOffer`, which settles atomically on acceptance (see [§7](#7-offer-lifecycle)) rather than waiting for a separate step. `pause`/`unpause` remain active as an admin-gated "stop the venue" lever, and `cancelOrderForUser`/`cancelOfferForUser` remain active as the admin's emergency-exit path.
 
 Identity is resolved via `_msgSender()` (ERC-2771), so callers can be plain EOAs, gasless relayer-forwarded EOAs, or future ERC-4337 smart accounts — the contract is agnostic.
 
@@ -26,8 +26,8 @@ Identity is resolved via `_msgSender()` (ERC-2771), so callers can be plain EOAs
 
 | Actor | Role constant | Capabilities |
 |---|---|---|
-| **Admin (multisig)** | `DEFAULT_ADMIN_ROLE` | Upgrade proxy, manage roles, force-cancel orders/offers, toggle KYC gating per action, manage fee collector allowlist |
-| **Operator** | `OPERATOR_ROLE` | Settle matched orders, settle accepted offers, refund orders, pause/unpause venue |
+| **Admin (multisig)** | `DEFAULT_ADMIN_ROLE` | Upgrade proxy, manage roles, force-cancel orders/offers, toggle KYC gating per action, manage fee collector allowlist, pause/unpause venue |
+| **Operator** *(parked, AC-246)* | `OPERATOR_ROLE` | Not granted while parked. Previously: settle matched orders, refund orders. See `admin/OperatorFunctions.sol`. (Offer settlement is not part of this — `settleOffer` was retired outright, merged into `acceptOffer`.) |
 | **KYC Backend** | `KYC_OPERATOR_ROLE` | Sign KYC attestations authorising user actions |
 | **Fee Service** | `FEE_OPERATOR_ROLE` | Sign fee attestations authorising per-pair fee terms on `placeOrder`/`placeOrderWithPermit`/`makeOffer` — a distinct signer from the KYC backend |
 | **Maker** | — | Place orders, place offers, cancel own orders (always unattested), cancel own offers (KYC-gated) |
@@ -116,11 +116,10 @@ KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint25
 | `ReplaceOffer` | `keccak256(abi.encodePacked(offerId, newMakerAmount, newTakerAmount))` |
 | `AcceptOffer` | `keccak256(abi.encodePacked(offerId, makerAmount, takerAmount))` |
 | `CancelOffer` | `keccak256(abi.encodePacked(offerId, makerAmount, takerAmount))` |
-| `SettleOffer` | `keccak256(abi.encodePacked(offerId, makerAmount, takerAmount))` |
 
-`AcceptOffer`, `CancelOffer`, and `SettleOffer` bind to the **current** `makerAmount` / `takerAmount` stored in the offer at call time, so a stale attestation signed before a `replaceOffer` counter-proposal will be rejected with `ParamsHashMismatch`.
+`AcceptOffer` and `CancelOffer` bind to the **current** `makerAmount` / `takerAmount` stored in the offer at call time, so a stale attestation signed before a `replaceOffer` counter-proposal will be rejected with `ParamsHashMismatch`.
 
-`SettleOffer` (action 8) is intentionally distinct from `Settle` (action 3) to prevent cross-function attestation replay between order-level and offer-level operations. There is no order-level `Cancel` action — `cancelOrder` never requires (or consumes) a KYC attestation, so no such replay is possible for cancellation.
+`SettleOffer` (action 8) still exists in the `Action` enum (ordinal stability for off-chain systems) but is unused — `acceptOffer` settles atomically under `AcceptOffer`'s own gate (AC-246); there's no separate settle step to attest to. There is no order-level `Cancel` action — `cancelOrder` never requires (or consumes) a KYC attestation, so no replay concern applies to cancellation either.
 
 **Rationale — why `Fill` does not bind the fill amount:**
 Orders support partial fills, meaning `remainingQuantity` can change between the moment the KYC backend signs the attestation and the moment the taker submits the transaction (another taker may have partially filled the order in between). Binding `fillSellAmount` into `paramsHash` would invalidate the attestation whenever the remaining quantity changed, forcing the taker into a retry loop of requesting new signatures. The compliance intent is fully preserved without amount binding: the backend controls *who* may fill *which specific order* (via `orderId` binding); the order's price terms are fixed at placement and enforced by the contract for any fill amount; and the taker cannot redirect the attestation to a different order or act as a different account. Binding the amount would add friction with no additional compliance benefit given the partial-fill model.
@@ -186,7 +185,7 @@ Unlike attestation *verification* above (which is skipped when `complianceRequir
 | Either fee bps non-zero and `feeCollector == address(0)` | `ZeroAddress` |
 | Either fee bps non-zero and `feeCollector` not on the admin-managed allowlist (`allowedCollectors`) | `FeeCollectorNotAllowed` |
 
-Validation runs before either nonce is consumed, so a call that fails fee validation does not burn either attestation. The fee snapshot (`makerFeeBps`, `takerFeeBps`, `feeCollector`) is stored on the `Order`/`Offer` at creation and is immutable for that order's/offer's lifetime — `replaceOffer` renegotiates amounts but not fee terms, and downstream actions (`fillOrder`, `settle`, `acceptOffer`, `settleOffer`, …) read the snapshot rather than requiring a fresh fee attestation.
+Validation runs before either nonce is consumed, so a call that fails fee validation does not burn either attestation. The fee snapshot (`makerFeeBps`, `takerFeeBps`, `feeCollector`) is stored on the `Order`/`Offer` at creation and is immutable for that order's/offer's lifetime — `replaceOffer` renegotiates amounts but not fee terms, and downstream actions (`fillOrder`, `acceptOffer`, …) read the snapshot rather than requiring a fresh fee attestation.
 
 ---
 
@@ -195,20 +194,22 @@ Validation runs before either nonce is consumed, so a call that fails fee valida
 ### State machine
 
 ```
-                    ┌─────────────────────────────────────────────────────┐
-                    │                      OPEN                           │
-                    └────┬──────┬──────┬──────┬──────┬──────┬────────────┘
-                         │      │      │      │      │      │
-                    fill │ fill │settle│cancel│refund│cancel│sweep
-                  (part) │(full)│      │Order │      │Order │Expired
-                         │      │      │      │      │ForUsr│
-                         ▼      ▼      ▼      ▼      ▼      ▼
-                       OPEN  FILLED SETTLED CANCEL REFUND FORCE   EXPIRED
-                                          -LED   -ED    CANCEL
-                                                        -LED
+                    ┌──────────────────────────────────────────┐
+                    │                  OPEN                     │
+                    └────┬──────┬──────┬──────┬──────┬─────────┘
+                         │      │      │      │      │
+                    fill │ fill │cancel│cancel│sweep
+                  (part) │(full)│Order │Order │Expired
+                         │      │      │ForUsr│
+                         ▼      ▼      ▼      ▼
+                       OPEN  FILLED  CANCEL FORCE   EXPIRED
+                                       -LED  CANCEL
+                                             -LED
 ```
 
-All terminal states are final — no transitions out.
+`SETTLED` and `REFUNDED` are still valid `OrderStatus` values but are currently
+unreachable — the only transitions into them (`settle`, `refund`) are parked
+(AC-246). All terminal states are final — no transitions out.
 
 ### Functions
 
@@ -229,13 +230,8 @@ Fees are taken from the order's snapshotted `makerFeeBps`/`takerFeeBps` (floor d
 - `takerFeeAmount = fillSellAmount * takerFeeBps / 10_000` — deducted from what the taker receives (in `sellToken`); taker nets `fillSellAmount - takerFeeAmount`.
 - Both fee legs are paid to the order's `feeCollector`.
 
-#### `settle(buyId, sellId, attBuy, attSell)`
-Operator-only. Settles two complementary open orders at their full remaining quantities. Verifies both KYC attestations before consuming either nonce — if the second attestation is invalid, the first nonce is not burned. Performs cross-multiplication price checks to ensure both makers receive at least their limit rate.
-
-Only each order's **maker fee** applies at settlement (taker fee is not charged here, since there is no taker in a settle — both sides are makers): `buyId`'s maker fee is deducted from what `sellId`'s maker receives (and vice versa), each paid to its own order's `feeCollector`.
-
-#### `refund(id, reason)`
-Operator-only. Returns an open order's remaining escrow to the maker. Emits `OrderRefunded` with a human-readable reason string for audit trail.
+#### `settle`, `refund` — parked (AC-246)
+Formerly operator-only (`settle` settled two complementary open orders; `refund` returned an open order's remaining escrow to the maker). Neither is reachable on the active contract — see `admin/OperatorFunctions.sol` for the parked implementations and re-enable steps.
 
 #### `cancelOrderForUser(id, recipient)`
 Admin-only. Force-cancels any open order and routes escrow to `recipient` (may differ from the maker for compliance routing). Emits `OrderForceCancelled`.
@@ -247,7 +243,7 @@ Permissionless. Returns escrowed tokens to makers of expired open orders. Skips 
 
 ## 7. Offer Lifecycle
 
-Offers are targeted bilateral negotiations between a specific maker and taker. Either party can propose, counter-propose, accept, or cancel. The operator settles once both sides have committed.
+Offers are targeted bilateral negotiations between a specific maker and taker. Either party can propose, counter-propose, accept, or cancel. Acceptance settles the trade atomically in the same call (AC-246) — the accepting party's side is escrowed and both sides are released to their counterparties (fees deducted) in one transaction, with no separate operator step. `Accepted` is never a persisted state.
 
 ### State machine
 
@@ -263,21 +259,18 @@ Offers are targeted bilateral negotiations between a specific maker and taker. E
   Offer    Offer       Offer                                 │
      │       │            │                                 │
      ▼       ▼            ▼                           replaceOffer
- COUNTER  CANCEL      ACCEPTED                        (counter back)
- -ED      -LED            │                                 │
-     │                    ├──── settleOffer ──► SETTLED     │
-     │                    └──── cancelOfferForUser ──► FORCE-CANCELLED
-     │
+ COUNTER  CANCEL      SETTLED                         (counter back)
+ -ED      -LED      (atomic with                            │
+     │                accept)                                │
+     │                                                        │
      └──── replaceOffer ──────────────────────────────────►─┘
            (either party counters again)
 
 Any non-terminal state ──► sweepExpiredOffers ──► EXPIRED  (Open/Countered only)
-Any non-terminal state ──► cancelOfferForUser ──► FORCE-CANCELLED
+Any non-terminal state ──► cancelOfferForUser ──► FORCE-CANCELLED (Open/Countered only)
 ```
 
-**Escrow invariant:** At any point, exactly one side's tokens are held by the contract:
-- `Open` / `Countered` → only the current proposer's tokens (`proposedBy` field)
-- `Accepted` → both sides' tokens
+**Escrow invariant:** At any point, exactly one side's tokens are held by the contract — only the current proposer's tokens (`proposedBy` field), for `Open`/`Countered`. `acceptOffer` escrows the other side and releases both sides to their counterparties within the same call, so there's never a persisted state where both sides sit escrowed.
 
 ### Functions
 
@@ -288,23 +281,16 @@ Creates a targeted offer from `_msgSender()` (maker) to `taker`. Escrows `makerA
 Either the maker or taker can counter-propose new amounts. The previous proposer's escrow is returned; the caller escrows their side at the new amounts. Status transitions to `Countered`. `proposedBy` is updated to the caller. Requires a `ReplaceOffer` attestation binding `offerId`, `newMakerAmount`, and `newTakerAmount`. **Fee terms are not renegotiated** — `makerFeeBps`/`takerFeeBps`/`feeCollector` remain fixed from `makeOffer`.
 
 #### `acceptOffer(offerId, att)`
-The non-proposing party accepts current terms and escrows their side. If the taker accepts, `takerAmount` of `takerToken` is escrowed; if the maker accepts a counter, `makerAmount` of `makerToken` is escrowed. Status transitions to `Accepted`. Requires an `AcceptOffer` attestation with `paramsHash` bound to the current offer amounts — stale attestations signed before a counter-proposal will be rejected.
+The non-proposing party accepts current terms — settlement is atomic with acceptance (AC-246), no separate operator step. The caller's side is escrowed, then both sides are released to their counterparties: maker receives `takerAmount` of `takerToken` minus `makerFeeBps`; taker receives `makerAmount` of `makerToken` minus `takerFeeBps` (same fee formula the retired `settleOffer` used). Status goes straight to `Settled`. Requires an `AcceptOffer` attestation with `paramsHash` bound to the current offer amounts — stale attestations signed before a counter-proposal will be rejected. Emits both `OfferAccepted` and `OfferSettled`.
 
 #### `cancelOffer(offerId, att)`
-Either the maker or taker can cancel while the offer is `Open` or `Countered`. Returns the current proposer's escrowed tokens. Cannot cancel an `Accepted` offer — use `cancelOfferForUser` (admin). Requires a `CancelOffer` attestation (action 7) to prevent cross-function replay with other offer-level actions.
-
-#### `settleOffer(offerId, makerAtt, takerAtt)`
-Operator-only. Transfers escrowed tokens between parties: maker receives `takerAmount` of `takerToken`; taker receives `makerAmount` of `makerToken`. Both parties must provide a `SettleOffer` attestation with `paramsHash` bound to the current offer amounts. Both attestations are verified before either nonce is consumed.
-
-Fees use the offer's snapshotted `makerFeeBps`/`takerFeeBps` (floor division), both paid to the single offer-level `feeCollector`:
-- `makerFeeAmount = takerAmount * makerFeeBps / 10_000` — maker nets `takerAmount - makerFeeAmount`.
-- `takerFeeAmount = makerAmount * takerFeeBps / 10_000` — taker nets `makerAmount - takerFeeAmount`.
+Either the maker or taker can cancel while the offer is `Open` or `Countered`. Returns the current proposer's escrowed tokens. Cannot cancel a `Settled` offer. Requires a `CancelOffer` attestation (action 7) to prevent cross-function replay with other offer-level actions.
 
 #### `cancelOfferForUser(offerId, makerRecipient, takerRecipient)`
-Admin-only. Force-cancels any non-terminal offer and routes escrowed tokens to compliance-chosen recipients. If the offer is `Accepted` (both sides escrowed), both recipients receive their respective tokens. For `Open`/`Countered`, only the current proposer's tokens are held and returned to `makerRecipient` or `takerRecipient` as appropriate.
+Admin-only. Force-cancels an offer still `Open`/`Countered` and routes the current proposer's escrowed tokens to a compliance-chosen recipient. Mirrors `cancelOrderForUser`. Not usable on a `Settled` offer — there's no window where both sides sit escrowed waiting for a separate step, since `acceptOffer` completes the trade in the same call.
 
 #### `sweepExpiredOffers(ids[])`
-Permissionless. Returns the current proposer's escrowed tokens for expired `Open`/`Countered` offers. `Accepted` offers are not swept (both sides are locked; use `cancelOfferForUser` to release). Silently skips non-eligible entries.
+Permissionless. Returns the current proposer's escrowed tokens for expired `Open`/`Countered` offers. Silently skips non-eligible entries (including already-`Settled` offers).
 
 ---
 
@@ -316,7 +302,7 @@ Each `Action` enum value maps to a boolean in `complianceRequired`. When `false`
 
 ### Pause
 
-`pause()` / `unpause()` (operator-only) block all new position-opening calls (`placeOrder`, `placeOrderWithPermit`, `makeOffer`, `fillOrder`, `acceptOffer`, `replaceOffer`). Admin and operator functions, self-cancel, and sweeps remain available while paused so that funds can always be returned.
+`pause()` / `unpause()` (admin-only, moved from `OPERATOR_ROLE` in AC-246) block all new position-opening calls (`placeOrder`, `placeOrderWithPermit`, `makeOffer`, `fillOrder`, `acceptOffer`, `replaceOffer`). Admin functions, self-cancel, and sweeps remain available while paused so that funds can always be returned.
 
 ### Fee collector allowlist
 
@@ -336,8 +322,8 @@ Each `Action` enum value maps to a boolean in `complianceRequired`. When `false`
 | Cross-function replay | Separate `Action` enum values for order-level vs offer-level operations |
 | KYC/fee cross-pairing | `feeAtt`/`att` bound to the same account, action, and on-chain-computed `paramsHash` on every fee-setting call — a fee attestation cannot be paired with a mismatched KYC attestation or a different order/offer |
 | Stale attestation | 15-minute hard cap on KYC TTL (`MAX_KYC_TTL`) and fee TTL (`MAX_FEE_TTL`); `KycExpired`/`FeeExpired` revert after deadline |
-| Partial attestation burn | `settle`, `settleOffer`, and `placeOrder`/`placeOrderWithPermit`/`makeOffer` (KYC + fee) verify all required attestations before consuming any nonce |
-| Price integrity | Cross-multiplication price check in `settle`; ceiling division in `fillOrder` |
+| Partial attestation burn | `placeOrder`/`placeOrderWithPermit`/`makeOffer` (KYC + fee) verify all required attestations before consuming any nonce (`settle` has the same guarantee — parked, AC-246) |
+| Price integrity | Ceiling division in `fillOrder` (`settle`'s cross-multiplication price check is parked, AC-246) |
 | Upgrade authority | `_authorizeUpgrade` restricted to `DEFAULT_ADMIN_ROLE` |
 | Self-trade | Rejected in `fillOrder` (`SelfTrade`) and `makeOffer` (`OfferSelfTarget`) |
 | Zero-address recipient | Rejected in `cancelOrderForUser` and `cancelOfferForUser` |
@@ -355,15 +341,13 @@ Each `Action` enum value maps to a boolean in `complianceRequired`. When `false`
 | `OrderCancelled` | `cancelOrder` |
 | `OrderPartiallyFilled` | `fillOrder` (partial) |
 | `OrderFilled` | `fillOrder` (full) |
-| `OrderSettled` | `settle` |
-| `OrderRefunded` | `refund` |
 | `OrderForceCancelled` | `cancelOrderForUser` |
 | `OrderExpired` | `sweepExpired` |
 | `OfferMade` | `makeOffer` |
 | `OfferReplaced` | `replaceOffer` |
 | `OfferAccepted` | `acceptOffer` |
+| `OfferSettled` | `acceptOffer` (emitted alongside `OfferAccepted` — settles atomically, AC-246) |
 | `OfferCancelled` | `cancelOffer` |
-| `OfferSettled` | `settleOffer` |
 | `OfferForceCancelled` | `cancelOfferForUser` |
 | `OfferExpired` | `sweepExpiredOffers` |
 | `KycConsumed` | any KYC-gated action on attestation consumption |
@@ -371,7 +355,7 @@ Each `Action` enum value maps to a boolean in `complianceRequired`. When `false`
 | `ComplianceRequiredSet` | `setComplianceRequired` |
 | `CollectorAllowed` | `setAllowedCollector` |
 
-`OrderFilled`, `OrderPartiallyFilled`, `OrderSettled`, `OfferMade`, and `OfferSettled` carry fee amounts/collector fields for indexer and client cost disclosure. For exact event signatures, indexed-vs-data parameter layout, and `topic0` values, see [`docs/INDEXER_EVENT_SCHEMA.md`](./INDEXER_EVENT_SCHEMA.md).
+`OrderFilled`, `OrderPartiallyFilled`, `OfferMade` carry fee amounts/collector fields for indexer and client cost disclosure. For exact event signatures, indexed-vs-data parameter layout, and `topic0` values, see [`docs/INDEXER_EVENT_SCHEMA.md`](./INDEXER_EVENT_SCHEMA.md).
 
 ---
 
@@ -382,6 +366,8 @@ Each `Action` enum value maps to a boolean in `complianceRequired`. When `false`
 - Storage layout must be preserved across upgrades. The `__gap[42]` reserve leaves room for up to 42 additional storage slots in future versions of `AsseteraExchange` without colliding with inherited contract storage. (Restored from `[41]` after removing the `_blacklist` mapping freed one slot; `usedFeeNonce` still consumes one slot from the original `[42]` reserve.)
 - `initialize` now takes a required `feeSigner` param (granted `FEE_OPERATOR_ROLE`) in addition to `admin`/`operator`/`kycSigner`; this is a breaking change to the initializer signature, coordinated with a fresh deploy rather than an in-place upgrade of an already-initialized proxy.
 - If a future upgrade introduces new `complianceRequired` entries (new `Action` enum values), a `reinitializer` function must be included and called via `upgradeToAndCall` to initialise the new storage slots — they default to `false` and must be explicitly set.
+- **Order-level operator functions are parked (AC-246):** `settle`, `refund`, and the `OPERATOR_ROLE` constant are commented out in `admin/OperatorFunctions.sol`, not deleted. `initialize`'s `operator` parameter is retained (unused) so re-enabling needs no initializer ABI change — just uncomment the file, wire `OperatorFunctions` into `OrderBook`'s inheritance, uncomment the `_grantRole(OPERATOR_ROLE, operator)` line, and deploy a new implementation via `upgradeToAndCall`.
+- **`settleOffer` is retired, not parked (AC-246):** its logic is merged into `acceptOffer`, which settles atomically on acceptance. There is nothing to re-enable via upgrade — reintroducing a separate offer-level operator settle step would require new code, not an uncomment.
 
 ---
 

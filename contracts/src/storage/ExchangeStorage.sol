@@ -27,9 +27,8 @@ abstract contract ExchangeStorage is
     // --------------------------------------------------------------------- //
     //                                Roles                                   //
     // --------------------------------------------------------------------- //
-
-    /// @notice Settlement agent: settle matched orders, refund, pause. (Safe in prod.)
-    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+    // OPERATOR_ROLE is parked (AC-246) — declared, commented, in
+    // admin/OperatorFunctions.sol alongside the functions it gates.
 
     // --------------------------------------------------------------------- //
     //                                State                                   //

@@ -24,7 +24,7 @@ import {FaucetToken} from "../src/FaucetToken.sol";
 ///
 /// Env (optional; all default to the deployer for local/testnet):
 ///   ADMIN_ADDRESS      — DEFAULT_ADMIN_ROLE (upgrade + role admin); use the Safe multisig in prod
-///   OPERATOR_ADDRESS   — OPERATOR_ROLE (settle/refund/pause)
+///   OPERATOR_ADDRESS   — recorded for reference only; OPERATOR_ROLE is parked (AC-246, not granted)
 ///   KYC_SIGNER_ADDRESS — KYC_OPERATOR_ROLE (signs KYC attestations)
 ///   FEE_SIGNER_ADDRESS — FEE_OPERATOR_ROLE (signs fee attestations; the fee service)
 ///   RELAYER_ADDRESS    — recorded for reference (the gasless relayer EOA)

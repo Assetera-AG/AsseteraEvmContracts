@@ -64,23 +64,9 @@ interface IAsseteraExchange is IKycGate, IFeeGate {
         uint256 takerFeeAmount,
         address feeCollector
     );
-    event OrderSettled(
-        uint256 indexed buyId,
-        uint256 indexed sellId,
-        address indexed operator,
-        uint256 settledSellAmount,
-        uint256 settledBuyAmount,
-        uint256 buyMakerFeeAmount,
-        uint256 sellMakerFeeAmount,
-        address buyFeeCollector,
-        address sellFeeCollector
-    );
-    event OrderRefunded(uint256 indexed id, address indexed maker, address indexed operator, string reason);
     event OrderExpired(uint256 indexed id, address indexed maker, uint256 remainingQuantity);
 
     error NotMaker(uint256 id);
-    error NotComplementary(uint256 buyId, uint256 sellId);
-    error PriceNotCrossed(uint256 buyId, uint256 sellId);
     error SelfTrade(uint256 id);
     error OrderIsExpired(uint256 id);
     error FillAmountZero();
@@ -111,7 +97,7 @@ interface IAsseteraExchange is IKycGate, IFeeGate {
     event OfferAccepted(uint256 indexed id, address indexed by, uint256 makerAmount, uint256 takerAmount);
     event OfferSettled(
         uint256 indexed id,
-        address indexed operator,
+        address indexed by,
         uint256 makerReceived,
         uint256 takerReceived,
         uint256 makerFeeAmount,
@@ -119,7 +105,6 @@ interface IAsseteraExchange is IKycGate, IFeeGate {
         address feeCollector
     );
 
-    error OfferNotAccepted(uint256 id);
     error NotOfferParty(uint256 id);
     error OfferSelfTarget();
     error AcceptorIsProposer(uint256 id);
@@ -179,17 +164,9 @@ interface IAsseteraExchange is IKycGate, IFeeGate {
     function fillOrder(uint256 id, uint256 fillSellAmount, ExchangeTypes.KycAttestation calldata att) external;
 
     // --------------------------------------------------------------------- //
-    //                            Operator actions                            //
+    //                           Admin escape hatch                           //
     // --------------------------------------------------------------------- //
-
-    function settle(
-        uint256 buyId,
-        uint256 sellId,
-        ExchangeTypes.KycAttestation calldata attBuy,
-        ExchangeTypes.KycAttestation calldata attSell
-    ) external;
-
-    function refund(uint256 id, string calldata reason) external;
+    // settle/refund are parked (AC-246) — see admin/OperatorFunctions.sol.
 
     function cancelOrderForUser(uint256 id, address recipient) external;
 
@@ -224,12 +201,6 @@ interface IAsseteraExchange is IKycGate, IFeeGate {
 
     function acceptOffer(uint256 offerId, ExchangeTypes.KycAttestation calldata att) external;
 
-    function settleOffer(
-        uint256 offerId,
-        ExchangeTypes.KycAttestation calldata makerAtt,
-        ExchangeTypes.KycAttestation calldata takerAtt
-    ) external;
-
     function cancelOfferForUser(uint256 offerId, address makerRecipient, address takerRecipient) external;
 
     // --------------------------------------------------------------------- //
@@ -253,8 +224,6 @@ interface IAsseteraExchange is IKycGate, IFeeGate {
     function getOrder(uint256 id) external view returns (ExchangeTypes.Order memory);
 
     function version() external pure returns (string memory);
-
-    function OPERATOR_ROLE() external view returns (bytes32);
 
     function totalOrders() external view returns (uint256);
 
