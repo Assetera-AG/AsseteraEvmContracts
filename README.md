@@ -15,7 +15,7 @@ contracts/     self-contained Foundry project — the audit scope
                (foundry.toml, src/{exchange,distribution,token,interfaces,libraries}, test/, script/, lib/)
 packages/
   sdk/         @asseteragmbh/evm-contracts — the published TypeScript SDK (generated from contracts/)
-examples/      consumer apps that import the SDK (added in a later phase)
+examples/      consumer apps that import the SDK (examples/nextjs — resolves Amoy by chainId)
 ```
 
 - **Contracts / auditors:** work in [`contracts/`](contracts/) — see its [README](contracts/README.md).
