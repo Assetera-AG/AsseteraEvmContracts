@@ -47,7 +47,7 @@ abstract contract ExchangeTypes {
         AcceptOffer, // 6
         CancelOffer, // 7 — offer-level cancel
         SettleOffer // 8 — unused (AC-246): acceptOffer settles atomically under its own
-            // AcceptOffer gate; kept for ordinal stability, never checked
+        // AcceptOffer gate; kept for ordinal stability, never checked
     }
 
     struct Order {
