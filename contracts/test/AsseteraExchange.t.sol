@@ -5,6 +5,13 @@ import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ERC2771Forwarder} from "@openzeppelin/contracts/metatx/ERC2771Forwarder.sol";
 import {AsseteraExchange} from "../src/AsseteraExchange.sol";
+import {ExchangeTypes} from "../src/types/ExchangeTypes.sol";
+import {ExchangeStorage} from "../src/storage/ExchangeStorage.sol";
+import {IKycGate} from "../src/interfaces/IKycGate.sol";
+import {IFeeGate} from "../src/interfaces/IFeeGate.sol";
+import {OrderBook} from "../src/core/OrderBook.sol";
+import {OfferBook} from "../src/core/OfferBook.sol";
+import {ExchangeAdmin} from "../src/admin/ExchangeAdmin.sol";
 import {FaucetToken} from "../src/FaucetToken.sol";
 import {AsseteraExchangeV2} from "./mocks/AsseteraExchangeV2.sol";
 import {ReentrantToken} from "./mocks/ReentrantToken.sol";
@@ -112,7 +119,7 @@ contract AsseteraExchangeTest is Test {
             keccak256(abi.encode(KYC_TYPEHASH, account, uint8(action), orderId, nonce, deadline, paramsHash));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domain, structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
-        att = AsseteraExchange.KycAttestation({
+        att = ExchangeTypes.KycAttestation({
             account: account,
             action: action,
             orderId: orderId,
@@ -160,7 +167,7 @@ contract AsseteraExchangeTest is Test {
         );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domain, structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
-        att = AsseteraExchange.FeeAttestation({
+        att = ExchangeTypes.FeeAttestation({
             account: account,
             action: action,
             nonce: nonce,
@@ -187,9 +194,10 @@ contract AsseteraExchangeTest is Test {
         returns (AsseteraExchange.KycAttestation memory)
     {
         bytes32 ph = keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount));
-        return _signAtt(
-            kycSignerPk, account, AsseteraExchange.Action.Place, 0, _freshNonce(), block.timestamp + 3 minutes, ph
-        );
+        return
+            _signAtt(
+                kycSignerPk, account, ExchangeTypes.Action.Place, 0, _freshNonce(), block.timestamp + 3 minutes, ph
+            );
     }
 
     /// A valid, fresh zero-fee Fee attestation for Place actions.
@@ -215,7 +223,7 @@ contract AsseteraExchangeTest is Test {
         return _signFeeAtt(
             feeSignerPk,
             account,
-            AsseteraExchange.Action.Place,
+            ExchangeTypes.Action.Place,
             _freshNonce(),
             block.timestamp + 3 minutes,
             ph,
@@ -255,23 +263,23 @@ contract AsseteraExchangeTest is Test {
         assertTrue(exchange.hasRole(KYC_OPERATOR_ROLE, kycSigner));
         assertTrue(exchange.hasRole(FEE_OPERATOR_ROLE, feeSigner));
         assertEq(exchange.version(), "3.1.0");
-        assertTrue(exchange.complianceRequired(AsseteraExchange.Action.Place));
-        assertTrue(exchange.complianceRequired(AsseteraExchange.Action.Fill));
-        assertTrue(exchange.complianceRequired(AsseteraExchange.Action.Settle));
+        assertTrue(exchange.complianceRequired(ExchangeTypes.Action.Place));
+        assertTrue(exchange.complianceRequired(ExchangeTypes.Action.Fill));
+        assertTrue(exchange.complianceRequired(ExchangeTypes.Action.Settle));
         assertEq(exchange.trustedForwarder(), address(forwarder));
     }
 
     function test_Initialize_RevertsOnZeroKycSigner() public {
         AsseteraExchange impl = new AsseteraExchange(address(forwarder));
         bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, operator, address(0), feeSigner));
-        vm.expectRevert(AsseteraExchange.ZeroAddress.selector);
+        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initData);
     }
 
     function test_Initialize_RevertsOnZeroFeeSigner() public {
         AsseteraExchange impl = new AsseteraExchange(address(forwarder));
         bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, operator, kycSigner, address(0)));
-        vm.expectRevert(AsseteraExchange.ZeroAddress.selector);
+        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initData);
     }
 
@@ -298,7 +306,7 @@ contract AsseteraExchangeTest is Test {
 
         assertEq(id, 1);
         assertEq(rwa.balanceOf(address(exchange)), SELL_RWA);
-        assertEq(uint8(exchange.getOrder(1).status), uint8(AsseteraExchange.OrderStatus.Open));
+        assertEq(uint8(exchange.getOrder(1).status), uint8(ExchangeTypes.OrderStatus.Open));
         assertEq(exchange.getOrder(1).remainingQuantity, SELL_RWA);
         assertEq(exchange.getOrder(1).expireTs, 0);
     }
@@ -327,7 +335,7 @@ contract AsseteraExchangeTest is Test {
             _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(AsseteraExchange.InvalidExpiry.selector);
+        vm.expectRevert(ExchangeStorage.InvalidExpiry.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, uint64(block.timestamp - 1), att, feeAtt);
         vm.stopPrank();
     }
@@ -336,12 +344,12 @@ contract AsseteraExchangeTest is Test {
         // Signed by a key that does NOT hold KYC_OPERATOR_ROLE.
         bytes32 ph = keccak256(abi.encode(address(rwa), SELL_RWA, address(usdc), WANT_USDC));
         AsseteraExchange.KycAttestation memory att =
-            _signAtt(0xBAD, alice, AsseteraExchange.Action.Place, 0, _freshNonce(), block.timestamp + 3 minutes, ph);
+            _signAtt(0xBAD, alice, ExchangeTypes.Action.Place, 0, _freshNonce(), block.timestamp + 3 minutes, ph);
         AsseteraExchange.FeeAttestation memory feeAtt =
             _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(AsseteraExchange.KycBadSigner.selector);
+        vm.expectRevert(IKycGate.KycBadSigner.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -349,13 +357,13 @@ contract AsseteraExchangeTest is Test {
     function test_PlaceOrder_RevertsOnExpiredAttestation() public {
         bytes32 ph = keccak256(abi.encode(address(rwa), SELL_RWA, address(usdc), WANT_USDC));
         AsseteraExchange.KycAttestation memory att =
-            _signAtt(kycSignerPk, alice, AsseteraExchange.Action.Place, 0, _freshNonce(), block.timestamp + 100, ph);
+            _signAtt(kycSignerPk, alice, ExchangeTypes.Action.Place, 0, _freshNonce(), block.timestamp + 100, ph);
         AsseteraExchange.FeeAttestation memory feeAtt =
             _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.warp(block.timestamp + 101);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(AsseteraExchange.KycExpired.selector);
+        vm.expectRevert(IKycGate.KycExpired.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -363,13 +371,13 @@ contract AsseteraExchangeTest is Test {
     function test_PlaceOrder_RevertsOnTtlTooLong() public {
         bytes32 ph = keccak256(abi.encode(address(rwa), SELL_RWA, address(usdc), WANT_USDC));
         AsseteraExchange.KycAttestation memory att = _signAtt(
-            kycSignerPk, alice, AsseteraExchange.Action.Place, 0, _freshNonce(), block.timestamp + 16 minutes, ph
+            kycSignerPk, alice, ExchangeTypes.Action.Place, 0, _freshNonce(), block.timestamp + 16 minutes, ph
         );
         AsseteraExchange.FeeAttestation memory feeAtt =
             _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(AsseteraExchange.KycTtlTooLong.selector);
+        vm.expectRevert(IKycGate.KycTtlTooLong.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -381,7 +389,7 @@ contract AsseteraExchangeTest is Test {
             _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(AsseteraExchange.KycAccountMismatch.selector);
+        vm.expectRevert(IKycGate.KycAccountMismatch.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -390,14 +398,13 @@ contract AsseteraExchangeTest is Test {
         // Attestation carries the correct paramsHash but wrong action (Fill vs Place).
         // paramsHash check passes; KycActionMismatch fires inside _consumeKyc.
         bytes32 ph = keccak256(abi.encode(address(rwa), SELL_RWA, address(usdc), WANT_USDC));
-        AsseteraExchange.KycAttestation memory att = _signAtt(
-            kycSignerPk, alice, AsseteraExchange.Action.Fill, 0, _freshNonce(), block.timestamp + 3 minutes, ph
-        );
+        AsseteraExchange.KycAttestation memory att =
+            _signAtt(kycSignerPk, alice, ExchangeTypes.Action.Fill, 0, _freshNonce(), block.timestamp + 3 minutes, ph);
         AsseteraExchange.FeeAttestation memory feeAtt =
             _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(AsseteraExchange.KycActionMismatch.selector);
+        vm.expectRevert(IKycGate.KycActionMismatch.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -411,7 +418,7 @@ contract AsseteraExchangeTest is Test {
         rwa.approve(address(exchange), SELL_RWA * 2);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         // Same attestation (same nonce) again -> consumed.
-        vm.expectRevert(AsseteraExchange.KycNonceUsed.selector);
+        vm.expectRevert(IKycGate.KycNonceUsed.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -432,7 +439,7 @@ contract AsseteraExchangeTest is Test {
 
     function test_PlaceOrder_GatingOff_NoAttestationNeeded() public {
         vm.prank(admin);
-        exchange.setComplianceRequired(AsseteraExchange.Action.Place, false);
+        exchange.setComplianceRequired(ExchangeTypes.Action.Place, false);
         AsseteraExchange.KycAttestation memory empty; // garbage / empty
         AsseteraExchange.FeeAttestation memory emptyFee; // garbage / empty
         vm.startPrank(alice);
@@ -446,7 +453,7 @@ contract AsseteraExchangeTest is Test {
         AsseteraExchange.KycAttestation memory att = _attestPlace(alice, address(rwa), 0, address(usdc), WANT_USDC);
         AsseteraExchange.FeeAttestation memory feeAtt = _feePlace(alice, address(rwa), 0, address(usdc), WANT_USDC);
         vm.prank(alice);
-        vm.expectRevert(AsseteraExchange.ZeroAmount.selector);
+        vm.expectRevert(ExchangeStorage.ZeroAmount.selector);
         exchange.placeOrder(address(rwa), 0, address(usdc), WANT_USDC, 0, att, feeAtt);
     }
 
@@ -461,7 +468,7 @@ contract AsseteraExchangeTest is Test {
         vm.prank(alice);
         exchange.cancelOrder(id);
 
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Cancelled));
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Cancelled));
         assertEq(rwa.balanceOf(alice), bal + SELL_RWA);
     }
 
@@ -472,15 +479,15 @@ contract AsseteraExchangeTest is Test {
         uint256 halfRwa = SELL_RWA / 2;
         uint256 halfUsdc = (halfRwa * WANT_USDC + SELL_RWA - 1) / SELL_RWA; // ceiling
         vm.prank(admin);
-        exchange.setComplianceRequired(AsseteraExchange.Action.Fill, false);
+        exchange.setComplianceRequired(ExchangeTypes.Action.Fill, false);
         vm.startPrank(bob);
         usdc.approve(address(exchange), halfUsdc);
         exchange.fillOrder(
             id,
             halfRwa,
-            AsseteraExchange.KycAttestation({
+            ExchangeTypes.KycAttestation({
                 account: address(0),
-                action: AsseteraExchange.Action.None,
+                action: ExchangeTypes.Action.None,
                 orderId: 0,
                 nonce: 0,
                 deadline: 0,
@@ -501,7 +508,7 @@ contract AsseteraExchangeTest is Test {
     function test_CancelOrder_RevertsIfNotMaker() public {
         uint256 id = _placeRwaForUsdc(alice);
         vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.NotMaker.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(OrderBook.NotMaker.selector, id));
         exchange.cancelOrder(id);
     }
 
@@ -510,7 +517,7 @@ contract AsseteraExchangeTest is Test {
         vm.prank(alice);
         exchange.cancelOrder(id);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OrderNotOpen.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(ExchangeStorage.OrderNotOpen.selector, id));
         exchange.cancelOrder(id);
     }
 
@@ -522,13 +529,13 @@ contract AsseteraExchangeTest is Test {
         uint256 id = _placeRwaForUsdc(alice);
         uint256 aliceUsdc = usdc.balanceOf(alice);
         uint256 bobRwa = rwa.balanceOf(bob);
-        AsseteraExchange.KycAttestation memory att = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
         exchange.fillOrder(id, SELL_RWA, att);
         vm.stopPrank();
 
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Filled));
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Filled));
         assertEq(exchange.getOrder(id).remainingQuantity, 0);
         assertEq(usdc.balanceOf(alice), aliceUsdc + WANT_USDC);
         assertEq(rwa.balanceOf(bob), bobRwa + SELL_RWA);
@@ -539,14 +546,14 @@ contract AsseteraExchangeTest is Test {
         uint256 halfRwa = SELL_RWA / 2;
         uint256 halfUsdc = (halfRwa * WANT_USDC + SELL_RWA - 1) / SELL_RWA; // ceiling
 
-        AsseteraExchange.KycAttestation memory att = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), halfUsdc);
         exchange.fillOrder(id, halfRwa, att);
         vm.stopPrank();
 
         // Order stays Open with half remaining
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Open));
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Open));
         assertEq(exchange.getOrder(id).remainingQuantity, SELL_RWA - halfRwa);
     }
 
@@ -555,18 +562,18 @@ contract AsseteraExchangeTest is Test {
         uint256 halfRwa = SELL_RWA / 2;
 
         vm.prank(admin);
-        exchange.setComplianceRequired(AsseteraExchange.Action.Fill, false);
+        exchange.setComplianceRequired(ExchangeTypes.Action.Fill, false);
 
         AsseteraExchange.KycAttestation memory empty;
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
         exchange.fillOrder(id, halfRwa, empty);
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Open));
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Open));
         // Fill remaining half
         exchange.fillOrder(id, SELL_RWA - halfRwa, empty);
         vm.stopPrank();
 
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Filled));
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Filled));
         assertEq(exchange.getOrder(id).remainingQuantity, 0);
     }
 
@@ -574,12 +581,12 @@ contract AsseteraExchangeTest is Test {
         // Maker cannot fill their own order (self-trade prevention).
         uint256 id = _placeRwaForUsdc(alice);
         vm.prank(admin);
-        exchange.setComplianceRequired(AsseteraExchange.Action.Fill, false);
+        exchange.setComplianceRequired(ExchangeTypes.Action.Fill, false);
 
         AsseteraExchange.KycAttestation memory empty;
         vm.startPrank(alice);
         usdc.approve(address(exchange), WANT_USDC);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.SelfTrade.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(OrderBook.SelfTrade.selector, id));
         exchange.fillOrder(id, SELL_RWA, empty);
         vm.stopPrank();
     }
@@ -599,44 +606,43 @@ contract AsseteraExchangeTest is Test {
 
         vm.warp(block.timestamp + 2 hours);
         vm.prank(admin);
-        exchange.setComplianceRequired(AsseteraExchange.Action.Fill, false);
+        exchange.setComplianceRequired(ExchangeTypes.Action.Fill, false);
 
         AsseteraExchange.KycAttestation memory empty;
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OrderIsExpired.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(OrderBook.OrderIsExpired.selector, id));
         exchange.fillOrder(id, SELL_RWA, empty);
         vm.stopPrank();
     }
 
     function test_FillOrder_RevertsOnFillAmountZero() public {
         uint256 id = _placeRwaForUsdc(alice);
-        AsseteraExchange.KycAttestation memory att = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
-        vm.expectRevert(AsseteraExchange.FillAmountZero.selector);
+        vm.expectRevert(OrderBook.FillAmountZero.selector);
         exchange.fillOrder(id, 0, att);
         vm.stopPrank();
     }
 
     function test_FillOrder_RevertsOnFillExceedsRemaining() public {
         uint256 id = _placeRwaForUsdc(alice);
-        AsseteraExchange.KycAttestation memory att = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC * 2);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.FillExceedsRemaining.selector, id, SELL_RWA));
+        vm.expectRevert(abi.encodeWithSelector(OrderBook.FillExceedsRemaining.selector, id, SELL_RWA));
         exchange.fillOrder(id, SELL_RWA + 1, att);
         vm.stopPrank();
     }
 
     function test_FillOrder_RevertsWithoutValidAttestation() public {
         uint256 id = _placeRwaForUsdc(alice);
-        AsseteraExchange.KycAttestation memory att = _signAtt(
-            0xBAD, bob, AsseteraExchange.Action.Fill, id, _freshNonce(), block.timestamp + 3 minutes, bytes32(0)
-        );
+        AsseteraExchange.KycAttestation memory att =
+            _signAtt(0xBAD, bob, ExchangeTypes.Action.Fill, id, _freshNonce(), block.timestamp + 3 minutes, bytes32(0));
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
-        vm.expectRevert(AsseteraExchange.KycBadSigner.selector);
+        vm.expectRevert(IKycGate.KycBadSigner.selector);
         exchange.fillOrder(id, SELL_RWA, att);
         vm.stopPrank();
     }
@@ -644,10 +650,10 @@ contract AsseteraExchangeTest is Test {
     function test_FillOrder_RevertsOnWrongOrderIdBinding() public {
         uint256 id = _placeRwaForUsdc(alice);
         // Attestation bound to a different order id.
-        AsseteraExchange.KycAttestation memory att = _attest(bob, AsseteraExchange.Action.Fill, id + 99);
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id + 99);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
-        vm.expectRevert(AsseteraExchange.KycOrderMismatch.selector);
+        vm.expectRevert(IKycGate.KycOrderMismatch.selector);
         exchange.fillOrder(id, SELL_RWA, att);
         vm.stopPrank();
     }
@@ -662,12 +668,12 @@ contract AsseteraExchangeTest is Test {
         uint256 aliceUsdc = usdc.balanceOf(alice);
         uint256 bobRwa = rwa.balanceOf(bob);
 
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
         exchange.settle(a, b, attA, attB);
 
-        assertEq(uint8(exchange.getOrder(a).status), uint8(AsseteraExchange.OrderStatus.Settled));
+        assertEq(uint8(exchange.getOrder(a).status), uint8(ExchangeTypes.OrderStatus.Settled));
         assertEq(usdc.balanceOf(alice), aliceUsdc + WANT_USDC);
         assertEq(rwa.balanceOf(bob), bobRwa + SELL_RWA);
     }
@@ -677,10 +683,10 @@ contract AsseteraExchangeTest is Test {
         uint256 a = _placeRwaForUsdc(alice);
         uint256 b = _placeUsdcForRwa(alice, WANT_USDC, SELL_RWA);
 
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(alice, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(alice, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.SelfTrade.selector, a));
+        vm.expectRevert(abi.encodeWithSelector(OrderBook.SelfTrade.selector, a));
         exchange.settle(a, b, attA, attB);
     }
 
@@ -700,10 +706,10 @@ contract AsseteraExchangeTest is Test {
         uint256 b = _placeUsdcForRwa(bob, WANT_USDC, SELL_RWA);
         vm.warp(block.timestamp + 2 hours);
 
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OrderIsExpired.selector, a));
+        vm.expectRevert(abi.encodeWithSelector(OrderBook.OrderIsExpired.selector, a));
         exchange.settle(a, b, attA, attB);
     }
 
@@ -724,10 +730,10 @@ contract AsseteraExchangeTest is Test {
 
         vm.warp(block.timestamp + 2 hours);
 
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OrderIsExpired.selector, b));
+        vm.expectRevert(abi.encodeWithSelector(OrderBook.OrderIsExpired.selector, b));
         exchange.settle(a, b, attA, attB);
     }
 
@@ -737,11 +743,11 @@ contract AsseteraExchangeTest is Test {
         uint256 b = _placeUsdcForRwa(bob, WANT_USDC, SELL_RWA); // sell 1000 USDC for 10 RWA
 
         vm.prank(admin);
-        exchange.setComplianceRequired(AsseteraExchange.Action.Fill, false);
+        exchange.setComplianceRequired(ExchangeTypes.Action.Fill, false);
 
-        AsseteraExchange.KycAttestation memory emptyAtt = AsseteraExchange.KycAttestation({
+        AsseteraExchange.KycAttestation memory emptyAtt = ExchangeTypes.KycAttestation({
             account: address(0),
-            action: AsseteraExchange.Action.None,
+            action: ExchangeTypes.Action.None,
             orderId: 0,
             nonce: 0,
             deadline: 0,
@@ -766,15 +772,15 @@ contract AsseteraExchangeTest is Test {
         uint256 aliceUsdc = usdc.balanceOf(alice);
         uint256 bobRwa = rwa.balanceOf(bob);
 
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
         exchange.settle(a, b, attA, attB);
 
         assertEq(usdc.balanceOf(alice), aliceUsdc + halfUsdc); // 500 USDC from bob's remaining
         assertEq(rwa.balanceOf(bob), bobRwa + halfRwa); // 5 RWA from alice's remaining
-        assertEq(uint8(exchange.getOrder(a).status), uint8(AsseteraExchange.OrderStatus.Settled));
-        assertEq(uint8(exchange.getOrder(b).status), uint8(AsseteraExchange.OrderStatus.Settled));
+        assertEq(uint8(exchange.getOrder(a).status), uint8(ExchangeTypes.OrderStatus.Settled));
+        assertEq(uint8(exchange.getOrder(b).status), uint8(ExchangeTypes.OrderStatus.Settled));
     }
 
     function test_Settle_RevertsOnUnfairPartialSettlement() public {
@@ -784,7 +790,7 @@ contract AsseteraExchangeTest is Test {
         uint256 b = _placeUsdcForRwa(bob, WANT_USDC, SELL_RWA);
 
         vm.prank(admin);
-        exchange.setComplianceRequired(AsseteraExchange.Action.Fill, false);
+        exchange.setComplianceRequired(ExchangeTypes.Action.Fill, false);
 
         uint256 halfRwa = SELL_RWA / 2;
         uint256 halfUsdc = (halfRwa * WANT_USDC + SELL_RWA - 1) / SELL_RWA;
@@ -794,9 +800,9 @@ contract AsseteraExchangeTest is Test {
         exchange.fillOrder(
             a,
             halfRwa,
-            AsseteraExchange.KycAttestation({
+            ExchangeTypes.KycAttestation({
                 account: address(0),
-                action: AsseteraExchange.Action.None,
+                action: ExchangeTypes.Action.None,
                 orderId: 0,
                 nonce: 0,
                 deadline: 0,
@@ -806,31 +812,31 @@ contract AsseteraExchangeTest is Test {
         );
         vm.stopPrank();
 
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.PriceNotCrossed.selector, a, b));
+        vm.expectRevert(abi.encodeWithSelector(OrderBook.PriceNotCrossed.selector, a, b));
         exchange.settle(a, b, attA, attB);
     }
 
     function test_Settle_RevertsIfMakerNotAttested() public {
         uint256 a = _placeRwaForUsdc(alice);
         uint256 b = _placeUsdcForRwa(bob, WANT_USDC, SELL_RWA);
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
         // Bob's attestation signed by a non-KYC key.
         AsseteraExchange.KycAttestation memory attB = _signAtt(
-            0xBAD, bob, AsseteraExchange.Action.Settle, b, _freshNonce(), block.timestamp + 3 minutes, bytes32(0)
+            0xBAD, bob, ExchangeTypes.Action.Settle, b, _freshNonce(), block.timestamp + 3 minutes, bytes32(0)
         );
         vm.prank(operator);
-        vm.expectRevert(AsseteraExchange.KycBadSigner.selector);
+        vm.expectRevert(IKycGate.KycBadSigner.selector);
         exchange.settle(a, b, attA, attB);
     }
 
     function test_Settle_RevertsIfNotOperator() public {
         uint256 a = _placeRwaForUsdc(alice);
         uint256 b = _placeUsdcForRwa(bob, WANT_USDC, SELL_RWA);
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(carol);
         vm.expectRevert(
             abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", carol, OPERATOR_ROLE)
@@ -841,10 +847,10 @@ contract AsseteraExchangeTest is Test {
     function test_Settle_RevertsIfNotComplementary() public {
         uint256 a = _placeRwaForUsdc(alice);
         uint256 b = _placeRwaForUsdc(bob); // same direction
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.NotComplementary.selector, a, b));
+        vm.expectRevert(abi.encodeWithSelector(OrderBook.NotComplementary.selector, a, b));
         exchange.settle(a, b, attA, attB);
     }
 
@@ -870,7 +876,7 @@ contract AsseteraExchangeTest is Test {
         ids[0] = id;
         exchange.sweepExpired(ids);
 
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Expired));
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Expired));
         assertEq(rwa.balanceOf(alice), aliceRwa + SELL_RWA);
     }
 
@@ -906,9 +912,9 @@ contract AsseteraExchangeTest is Test {
         ids[2] = id3;
         exchange.sweepExpired(ids);
 
-        assertEq(uint8(exchange.getOrder(id1).status), uint8(AsseteraExchange.OrderStatus.Open));
-        assertEq(uint8(exchange.getOrder(id2).status), uint8(AsseteraExchange.OrderStatus.Open));
-        assertEq(uint8(exchange.getOrder(id3).status), uint8(AsseteraExchange.OrderStatus.Expired));
+        assertEq(uint8(exchange.getOrder(id1).status), uint8(ExchangeTypes.OrderStatus.Open));
+        assertEq(uint8(exchange.getOrder(id2).status), uint8(ExchangeTypes.OrderStatus.Open));
+        assertEq(uint8(exchange.getOrder(id3).status), uint8(ExchangeTypes.OrderStatus.Expired));
     }
 
     function test_SweepExpired_CannotSweepTwice() public {
@@ -940,7 +946,7 @@ contract AsseteraExchangeTest is Test {
         uint256 bal = rwa.balanceOf(alice);
         vm.prank(operator);
         exchange.refund(id, "kyc lapsed");
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Refunded));
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Refunded));
         assertEq(rwa.balanceOf(alice), bal + SELL_RWA);
     }
 
@@ -953,7 +959,7 @@ contract AsseteraExchangeTest is Test {
         vm.prank(admin);
         exchange.cancelOrderForUser(id, carol); // route to a compliance-chosen address
 
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.ForceCancelled));
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.ForceCancelled));
         assertEq(rwa.balanceOf(carol), carolBal + SELL_RWA);
     }
 
@@ -969,7 +975,7 @@ contract AsseteraExchangeTest is Test {
     function test_CancelOrderForUser_RevertsOnZeroRecipient() public {
         uint256 id = _placeRwaForUsdc(alice);
         vm.prank(admin);
-        vm.expectRevert(AsseteraExchange.ZeroAddress.selector);
+        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
         exchange.cancelOrderForUser(id, address(0));
     }
 
@@ -980,7 +986,7 @@ contract AsseteraExchangeTest is Test {
     function test_SetComplianceRequired_OnlyAdmin() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", alice, ADMIN_ROLE));
-        exchange.setComplianceRequired(AsseteraExchange.Action.Fill, false);
+        exchange.setComplianceRequired(ExchangeTypes.Action.Fill, false);
     }
 
     // ===================================================================== //
@@ -1003,7 +1009,7 @@ contract AsseteraExchangeTest is Test {
             _feePlace(user, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
 
         bytes memory callData = abi.encodeCall(
-            AsseteraExchange.placeOrderWithPermit,
+            OrderBook.placeOrderWithPermit,
             (address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, permitDeadline, pv, pr, ps, att, feeAtt)
         );
 
@@ -1091,7 +1097,7 @@ contract AsseteraExchangeTest is Test {
         // Disable Fill gating so the empty attestation in the reentrant call
         // reaches the guard rather than failing KYC first.
         vm.prank(admin);
-        exchange.setComplianceRequired(AsseteraExchange.Action.Fill, false);
+        exchange.setComplianceRequired(ExchangeTypes.Action.Fill, false);
 
         ReentrantToken evil = new ReentrantToken();
         evil.mint(bob, 1_000e18);
@@ -1132,7 +1138,7 @@ contract AsseteraExchangeTest is Test {
         uint256 id = exchange.placeOrder(address(rwa), sellAmt, address(usdc), buyAmt, 0, pAtt, pFeeAtt);
         vm.stopPrank();
 
-        AsseteraExchange.KycAttestation memory fAtt = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory fAtt = _attest(bob, ExchangeTypes.Action.Fill, id);
         uint256 aliceUsdc = usdc.balanceOf(alice);
         vm.startPrank(bob);
         usdc.approve(address(exchange), buyAmt);
@@ -1149,14 +1155,14 @@ contract AsseteraExchangeTest is Test {
         AsseteraExchange impl = new AsseteraExchange(address(forwarder));
         bytes memory initData =
             abi.encodeCall(AsseteraExchange.initialize, (address(0), operator, kycSigner, feeSigner));
-        vm.expectRevert(AsseteraExchange.ZeroAddress.selector);
+        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initData);
     }
 
     function test_Initialize_RevertsOnZeroOperator() public {
         AsseteraExchange impl = new AsseteraExchange(address(forwarder));
         bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, address(0), kycSigner, feeSigner));
-        vm.expectRevert(AsseteraExchange.ZeroAddress.selector);
+        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initData);
     }
 
@@ -1182,7 +1188,7 @@ contract AsseteraExchangeTest is Test {
         AsseteraExchange.KycAttestation memory att = _attestPlace(alice, address(0), SELL_RWA, address(usdc), WANT_USDC);
         AsseteraExchange.FeeAttestation memory feeAtt = _feePlace(alice, address(0), SELL_RWA, address(usdc), WANT_USDC);
         vm.prank(alice);
-        vm.expectRevert(AsseteraExchange.ZeroAddress.selector);
+        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
         exchange.placeOrder(address(0), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
     }
 
@@ -1192,7 +1198,7 @@ contract AsseteraExchangeTest is Test {
         AsseteraExchange.FeeAttestation memory feeAtt =
             _feePlace(alice, address(rwa), SELL_RWA, address(rwa), WANT_USDC);
         vm.prank(alice);
-        vm.expectRevert(AsseteraExchange.SameToken.selector);
+        vm.expectRevert(ExchangeStorage.SameToken.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(rwa), WANT_USDC, 0, att, feeAtt);
     }
 
@@ -1200,14 +1206,13 @@ contract AsseteraExchangeTest is Test {
         // Attestation carries the correct paramsHash but wrong orderId (7 vs required 0 for Place).
         // paramsHash check passes; KycOrderMismatch fires inside _consumeKyc.
         bytes32 ph = keccak256(abi.encode(address(rwa), SELL_RWA, address(usdc), WANT_USDC));
-        AsseteraExchange.KycAttestation memory att = _signAtt(
-            kycSignerPk, alice, AsseteraExchange.Action.Place, 7, _freshNonce(), block.timestamp + 3 minutes, ph
-        );
+        AsseteraExchange.KycAttestation memory att =
+            _signAtt(kycSignerPk, alice, ExchangeTypes.Action.Place, 7, _freshNonce(), block.timestamp + 3 minutes, ph);
         AsseteraExchange.FeeAttestation memory feeAtt =
             _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(AsseteraExchange.KycOrderMismatch.selector);
+        vm.expectRevert(IKycGate.KycOrderMismatch.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -1216,10 +1221,10 @@ contract AsseteraExchangeTest is Test {
         uint256 id = _placeRwaForUsdc(alice);
         vm.prank(alice);
         exchange.cancelOrder(id);
-        AsseteraExchange.KycAttestation memory f = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory f = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OrderNotOpen.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(ExchangeStorage.OrderNotOpen.selector, id));
         exchange.fillOrder(id, SELL_RWA, f);
         vm.stopPrank();
     }
@@ -1228,7 +1233,7 @@ contract AsseteraExchangeTest is Test {
         uint256 id = _placeRwaForUsdc(alice);
         vm.prank(operator);
         exchange.pause();
-        AsseteraExchange.KycAttestation memory f = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory f = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
         vm.expectRevert(abi.encodeWithSignature("EnforcedPause()"));
@@ -1268,17 +1273,17 @@ contract AsseteraExchangeTest is Test {
         vm.prank(operator);
         exchange.refund(id, "x");
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OrderNotOpen.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(ExchangeStorage.OrderNotOpen.selector, id));
         exchange.refund(id, "again");
     }
 
     function test_Settle_RevertsIfPriceNotCrossed() public {
         uint256 a = _placeRwaForUsdc(alice); // wants 1000 USDC
         uint256 b = _placeUsdcForRwa(bob, 900e6, SELL_RWA); // only 900 escrowed
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.PriceNotCrossed.selector, a, b));
+        vm.expectRevert(abi.encodeWithSelector(OrderBook.PriceNotCrossed.selector, a, b));
         exchange.settle(a, b, attA, attB);
     }
 
@@ -1287,10 +1292,10 @@ contract AsseteraExchangeTest is Test {
         uint256 b = _placeUsdcForRwa(bob, WANT_USDC, SELL_RWA);
         vm.prank(alice);
         exchange.cancelOrder(a);
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OrderNotOpen.selector, a));
+        vm.expectRevert(abi.encodeWithSelector(ExchangeStorage.OrderNotOpen.selector, a));
         exchange.settle(a, b, attA, attB);
     }
 
@@ -1299,10 +1304,10 @@ contract AsseteraExchangeTest is Test {
         uint256 b = _placeUsdcForRwa(bob, WANT_USDC, SELL_RWA);
         vm.prank(bob);
         exchange.cancelOrder(b);
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OrderNotOpen.selector, b));
+        vm.expectRevert(abi.encodeWithSelector(ExchangeStorage.OrderNotOpen.selector, b));
         exchange.settle(a, b, attA, attB);
     }
 
@@ -1310,8 +1315,8 @@ contract AsseteraExchangeTest is Test {
         uint256 a = _placeRwaForUsdc(alice); // wants 1000 USDC
         uint256 b = _placeUsdcForRwa(bob, 1_200e6, SELL_RWA); // escrows 1200
         uint256 aliceUsdc = usdc.balanceOf(alice);
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
         exchange.settle(a, b, attA, attB);
         assertEq(usdc.balanceOf(alice), aliceUsdc + 1_200e6); // improvement: alice gets all of bob's 1200
@@ -1322,14 +1327,14 @@ contract AsseteraExchangeTest is Test {
         vm.prank(admin);
         exchange.cancelOrderForUser(id, alice);
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OrderNotOpen.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(ExchangeStorage.OrderNotOpen.selector, id));
         exchange.cancelOrderForUser(id, alice);
     }
 
     function test_SetComplianceRequired_TogglesGating() public {
         vm.prank(admin);
-        exchange.setComplianceRequired(AsseteraExchange.Action.Fill, false);
-        assertFalse(exchange.complianceRequired(AsseteraExchange.Action.Fill));
+        exchange.setComplianceRequired(ExchangeTypes.Action.Fill, false);
+        assertFalse(exchange.complianceRequired(ExchangeTypes.Action.Fill));
         // fill now works with an empty attestation
         uint256 id = _placeRwaForUsdc(alice);
         AsseteraExchange.KycAttestation memory empty;
@@ -1337,7 +1342,7 @@ contract AsseteraExchangeTest is Test {
         usdc.approve(address(exchange), WANT_USDC);
         exchange.fillOrder(id, SELL_RWA, empty);
         vm.stopPrank();
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Filled));
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Filled));
     }
 
     // ===================================================================== //
@@ -1352,7 +1357,7 @@ contract AsseteraExchangeTest is Test {
             _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(AsseteraExchange.ParamsHashMismatch.selector);
+        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC + 1, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -1375,7 +1380,7 @@ contract AsseteraExchangeTest is Test {
         // InvalidExpiry fires before _consumeKycAndFee — neither nonce may be burned.
         // expireTs <= block.timestamp triggers InvalidExpiry (zero means "no expiry").
         uint64 past = uint64(block.timestamp);
-        vm.expectRevert(AsseteraExchange.InvalidExpiry.selector);
+        vm.expectRevert(ExchangeStorage.InvalidExpiry.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, past, att, feeAtt);
 
         // Same attestations (same nonces) succeed on retry with a valid expiry.
@@ -1398,7 +1403,7 @@ contract AsseteraExchangeTest is Test {
         vm.prank(alice);
         exchange.cancelOrder(id);
 
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Cancelled));
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Cancelled));
         assertEq(rwa.balanceOf(alice), bal + SELL_RWA);
     }
 
@@ -1408,7 +1413,7 @@ contract AsseteraExchangeTest is Test {
         AsseteraExchange.KycAttestation memory att = _attestPlace(alice, address(rwa), SELL_RWA, address(usdc), 0);
         AsseteraExchange.FeeAttestation memory feeAtt = _feePlace(alice, address(rwa), SELL_RWA, address(usdc), 0);
         vm.prank(alice);
-        vm.expectRevert(AsseteraExchange.ZeroAmount.selector);
+        vm.expectRevert(ExchangeStorage.ZeroAmount.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), 0, 0, att, feeAtt);
     }
 
@@ -1416,7 +1421,7 @@ contract AsseteraExchangeTest is Test {
         AsseteraExchange.KycAttestation memory att = _attestPlace(alice, address(rwa), SELL_RWA, address(0), WANT_USDC);
         AsseteraExchange.FeeAttestation memory feeAtt = _feePlace(alice, address(rwa), SELL_RWA, address(0), WANT_USDC);
         vm.prank(alice);
-        vm.expectRevert(AsseteraExchange.ZeroAddress.selector);
+        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(0), WANT_USDC, 0, att, feeAtt);
     }
 
@@ -1435,7 +1440,7 @@ contract AsseteraExchangeTest is Test {
         vm.stopPrank();
 
         vm.prank(admin);
-        exchange.setComplianceRequired(AsseteraExchange.Action.Fill, false);
+        exchange.setComplianceRequired(ExchangeTypes.Action.Fill, false);
 
         uint256 halfRwa = SELL_RWA / 2;
         uint256 halfUsdc = (halfRwa * WANT_USDC + SELL_RWA - 1) / SELL_RWA;
@@ -1452,7 +1457,7 @@ contract AsseteraExchangeTest is Test {
         ids[0] = id;
         exchange.sweepExpired(ids);
 
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Expired));
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Expired));
         assertEq(rwa.balanceOf(alice), aliceRwaBefore + (SELL_RWA - halfRwa));
     }
 
@@ -1462,22 +1467,22 @@ contract AsseteraExchangeTest is Test {
         uint256 a = _placeRwaForUsdc(alice);
         uint256 b = _placeUsdcForRwa(bob, WANT_USDC, SELL_RWA);
 
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
         // Bob's attestation has a bad signer — the call should revert.
         AsseteraExchange.KycAttestation memory badAttB = _signAtt(
-            0xBAD, bob, AsseteraExchange.Action.Settle, b, _freshNonce(), block.timestamp + 3 minutes, bytes32(0)
+            0xBAD, bob, ExchangeTypes.Action.Settle, b, _freshNonce(), block.timestamp + 3 minutes, bytes32(0)
         );
 
         vm.prank(operator);
-        vm.expectRevert(AsseteraExchange.KycBadSigner.selector);
+        vm.expectRevert(IKycGate.KycBadSigner.selector);
         exchange.settle(a, b, attA, badAttB);
 
         // Alice's nonce was NOT burned — same attestation must succeed on retry.
-        AsseteraExchange.KycAttestation memory goodAttB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory goodAttB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
         exchange.settle(a, b, attA, goodAttB);
 
-        assertEq(uint8(exchange.getOrder(a).status), uint8(AsseteraExchange.OrderStatus.Settled));
+        assertEq(uint8(exchange.getOrder(a).status), uint8(ExchangeTypes.OrderStatus.Settled));
     }
 
     // --- I-2 fix: non-Place attestation with non-zero paramsHash rejected  //
@@ -1488,7 +1493,7 @@ contract AsseteraExchangeTest is Test {
         AsseteraExchange.KycAttestation memory att = _signAtt(
             kycSignerPk,
             bob,
-            AsseteraExchange.Action.Fill,
+            ExchangeTypes.Action.Fill,
             id,
             _freshNonce(),
             block.timestamp + 3 minutes,
@@ -1496,7 +1501,7 @@ contract AsseteraExchangeTest is Test {
         );
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
-        vm.expectRevert(AsseteraExchange.ParamsHashMismatch.selector);
+        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
         exchange.fillOrder(id, SELL_RWA, att);
         vm.stopPrank();
     }
@@ -1507,13 +1512,13 @@ contract AsseteraExchangeTest is Test {
         uint256 a = _placeRwaForUsdc(alice);
         uint256 b = _placeUsdcForRwa(bob, WANT_USDC, SELL_RWA);
 
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
 
         // attB is bound to bob/orderId=b; passing it as attBuy for buyId=a (maker=alice)
         // fires KycAccountMismatch on the first _consumeKyc call.
         vm.prank(operator);
-        vm.expectRevert(AsseteraExchange.KycAccountMismatch.selector);
+        vm.expectRevert(IKycGate.KycAccountMismatch.selector);
         exchange.settle(a, b, attB, attA);
     }
 
@@ -1532,9 +1537,10 @@ contract AsseteraExchangeTest is Test {
         uint256 takerAmt
     ) internal returns (AsseteraExchange.KycAttestation memory) {
         bytes32 ph = keccak256(abi.encodePacked(taker, makerToken, makerAmt, takerToken, takerAmt));
-        return _signAtt(
-            kycSignerPk, maker, AsseteraExchange.Action.MakeOffer, 0, _freshNonce(), block.timestamp + 3 minutes, ph
-        );
+        return
+            _signAtt(
+                kycSignerPk, maker, ExchangeTypes.Action.MakeOffer, 0, _freshNonce(), block.timestamp + 3 minutes, ph
+            );
     }
 
     /// A valid, fresh zero-fee Fee attestation for MakeOffer actions.
@@ -1565,7 +1571,7 @@ contract AsseteraExchangeTest is Test {
         return _signFeeAtt(
             feeSignerPk,
             maker,
-            AsseteraExchange.Action.MakeOffer,
+            ExchangeTypes.Action.MakeOffer,
             _freshNonce(),
             block.timestamp + 3 minutes,
             ph,
@@ -1583,7 +1589,7 @@ contract AsseteraExchangeTest is Test {
         return _signAtt(
             kycSignerPk,
             caller,
-            AsseteraExchange.Action.ReplaceOffer,
+            ExchangeTypes.Action.ReplaceOffer,
             offerId,
             _freshNonce(),
             block.timestamp + 3 minutes,
@@ -1599,7 +1605,7 @@ contract AsseteraExchangeTest is Test {
         return _signAtt(
             kycSignerPk,
             caller,
-            AsseteraExchange.Action.AcceptOffer,
+            ExchangeTypes.Action.AcceptOffer,
             offerId,
             _freshNonce(),
             block.timestamp + 3 minutes,
@@ -1615,7 +1621,7 @@ contract AsseteraExchangeTest is Test {
         return _signAtt(
             kycSignerPk,
             caller,
-            AsseteraExchange.Action.CancelOffer,
+            ExchangeTypes.Action.CancelOffer,
             offerId,
             _freshNonce(),
             block.timestamp + 3 minutes,
@@ -1631,7 +1637,7 @@ contract AsseteraExchangeTest is Test {
         return _signAtt(
             kycSignerPk,
             caller,
-            AsseteraExchange.Action.SettleOffer,
+            ExchangeTypes.Action.SettleOffer,
             offerId,
             _freshNonce(),
             block.timestamp + 3 minutes,
@@ -1697,7 +1703,7 @@ contract AsseteraExchangeTest is Test {
         // Alice offers 10 RWA for 1000 USDC; Bob accepts immediately without countering.
         uint256 id = _makeOffer(alice, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         assertEq(rwa.balanceOf(address(exchange)), SELL_RWA);
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Open));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Open));
         assertEq(exchange.getOffer(id).proposedBy, alice);
 
         uint256 aliceUsdcBefore = usdc.balanceOf(alice);
@@ -1710,7 +1716,7 @@ contract AsseteraExchangeTest is Test {
         exchange.acceptOffer(id, acceptAtt);
         vm.stopPrank();
 
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Accepted));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Accepted));
         assertEq(usdc.balanceOf(address(exchange)), WANT_USDC);
 
         // Operator settles.
@@ -1719,7 +1725,7 @@ contract AsseteraExchangeTest is Test {
         vm.prank(operator);
         exchange.settleOffer(id, makerAtt, takerAtt);
 
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Settled));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Settled));
         assertEq(usdc.balanceOf(alice), aliceUsdcBefore + WANT_USDC); // alice receives USDC
         assertEq(rwa.balanceOf(bob), bobRwaBefore + SELL_RWA); // bob receives RWA
         assertEq(rwa.balanceOf(address(exchange)), 0);
@@ -1740,7 +1746,7 @@ contract AsseteraExchangeTest is Test {
         exchange.replaceOffer(id, SELL_RWA, counterUsdc, 0, replaceAtt);
         vm.stopPrank();
 
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Countered));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Countered));
         assertEq(exchange.getOffer(id).proposedBy, bob);
         assertEq(rwa.balanceOf(alice), aliceRwaBefore + SELL_RWA); // Alice's RWA returned
         assertEq(usdc.balanceOf(address(exchange)), counterUsdc); // Bob's USDC escrowed
@@ -1754,7 +1760,7 @@ contract AsseteraExchangeTest is Test {
         exchange.acceptOffer(id, acceptAtt);
         vm.stopPrank();
 
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Accepted));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Accepted));
 
         // Operator settles.
         AsseteraExchange.KycAttestation memory makerAtt = _attestSettleOffer(alice, id, SELL_RWA, counterUsdc);
@@ -1762,7 +1768,7 @@ contract AsseteraExchangeTest is Test {
         vm.prank(operator);
         exchange.settleOffer(id, makerAtt, takerAtt);
 
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Settled));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Settled));
         assertEq(usdc.balanceOf(alice), aliceUsdcBefore + counterUsdc);
         assertEq(rwa.balanceOf(bob), bobRwaBefore + SELL_RWA);
     }
@@ -1823,7 +1829,7 @@ contract AsseteraExchangeTest is Test {
         vm.prank(alice);
         exchange.cancelOffer(id, att);
 
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Cancelled));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Cancelled));
         assertEq(rwa.balanceOf(alice), aliceRwaBefore + SELL_RWA);
     }
 
@@ -1842,18 +1848,18 @@ contract AsseteraExchangeTest is Test {
         vm.prank(bob);
         exchange.cancelOffer(id, cancelAtt);
 
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Cancelled));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Cancelled));
         assertEq(usdc.balanceOf(bob), bobUsdcBefore + 800e6); // Bob's USDC returned
     }
 
     // ── Compliance flags ───────────────────────────────────────────────── //
 
     function test_Offer_ComplianceFlagsSetOnDeploy() public view {
-        assertTrue(exchange.complianceRequired(AsseteraExchange.Action.MakeOffer));
-        assertTrue(exchange.complianceRequired(AsseteraExchange.Action.ReplaceOffer));
-        assertTrue(exchange.complianceRequired(AsseteraExchange.Action.AcceptOffer));
-        assertTrue(exchange.complianceRequired(AsseteraExchange.Action.CancelOffer));
-        assertTrue(exchange.complianceRequired(AsseteraExchange.Action.SettleOffer));
+        assertTrue(exchange.complianceRequired(ExchangeTypes.Action.MakeOffer));
+        assertTrue(exchange.complianceRequired(ExchangeTypes.Action.ReplaceOffer));
+        assertTrue(exchange.complianceRequired(ExchangeTypes.Action.AcceptOffer));
+        assertTrue(exchange.complianceRequired(ExchangeTypes.Action.CancelOffer));
+        assertTrue(exchange.complianceRequired(ExchangeTypes.Action.SettleOffer));
     }
 
     // ── Event shape ───────────────────────────────────────────────────── //
@@ -1865,7 +1871,7 @@ contract AsseteraExchangeTest is Test {
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
         vm.expectEmit(true, true, false, true);
-        emit AsseteraExchange.OfferAccepted(id, bob, SELL_RWA, WANT_USDC);
+        emit OfferBook.OfferAccepted(id, bob, SELL_RWA, WANT_USDC);
         exchange.acceptOffer(id, att);
         vm.stopPrank();
     }
@@ -1876,7 +1882,7 @@ contract AsseteraExchangeTest is Test {
 
         vm.prank(alice);
         vm.expectEmit(true, true, false, true);
-        emit AsseteraExchange.OfferCancelled(id, alice, SELL_RWA, WANT_USDC);
+        emit OfferBook.OfferCancelled(id, alice, SELL_RWA, WANT_USDC);
         exchange.cancelOffer(id, att);
     }
 
@@ -1889,7 +1895,7 @@ contract AsseteraExchangeTest is Test {
             _feeMakeOffer(alice, alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(AsseteraExchange.OfferSelfTarget.selector);
+        vm.expectRevert(OfferBook.OfferSelfTarget.selector);
         exchange.makeOffer(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -1899,7 +1905,7 @@ contract AsseteraExchangeTest is Test {
         AsseteraExchange.KycAttestation memory att = _attestReplaceOffer(carol, id, SELL_RWA, 800e6);
         vm.startPrank(carol);
         usdc.approve(address(exchange), 800e6);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.NotOfferParty.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(OfferBook.NotOfferParty.selector, id));
         exchange.replaceOffer(id, SELL_RWA, 800e6, 0, att);
         vm.stopPrank();
     }
@@ -1909,17 +1915,17 @@ contract AsseteraExchangeTest is Test {
         AsseteraExchange.KycAttestation memory att = _attestAcceptOffer(alice, id, SELL_RWA, WANT_USDC);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.AcceptorIsProposer.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(OfferBook.AcceptorIsProposer.selector, id));
         exchange.acceptOffer(id, att);
         vm.stopPrank();
     }
 
     function test_Offer_SettleRevertsBeforeAccept() public {
         uint256 id = _makeOffer(alice, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
-        AsseteraExchange.KycAttestation memory makerAtt = _attest(alice, AsseteraExchange.Action.Settle, id);
-        AsseteraExchange.KycAttestation memory takerAtt = _attest(bob, AsseteraExchange.Action.Settle, id);
+        AsseteraExchange.KycAttestation memory makerAtt = _attest(alice, ExchangeTypes.Action.Settle, id);
+        AsseteraExchange.KycAttestation memory takerAtt = _attest(bob, ExchangeTypes.Action.Settle, id);
         vm.prank(operator);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OfferNotAccepted.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(OfferBook.OfferNotAccepted.selector, id));
         exchange.settleOffer(id, makerAtt, takerAtt);
     }
 
@@ -1932,9 +1938,9 @@ contract AsseteraExchangeTest is Test {
         exchange.acceptOffer(id, acceptAtt);
         vm.stopPrank();
 
-        AsseteraExchange.KycAttestation memory cancelAtt = _attest(alice, AsseteraExchange.Action.CancelOffer, id);
+        AsseteraExchange.KycAttestation memory cancelAtt = _attest(alice, ExchangeTypes.Action.CancelOffer, id);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OfferNotOpen.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(ExchangeStorage.OfferNotOpen.selector, id));
         exchange.cancelOffer(id, cancelAtt);
     }
 
@@ -1954,7 +1960,7 @@ contract AsseteraExchangeTest is Test {
         AsseteraExchange.KycAttestation memory acceptAtt = _attestAcceptOffer(bob, id, SELL_RWA, WANT_USDC);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OfferIsExpired.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(OfferBook.OfferIsExpired.selector, id));
         exchange.acceptOffer(id, acceptAtt);
         vm.stopPrank();
     }
@@ -1963,19 +1969,13 @@ contract AsseteraExchangeTest is Test {
         // Sign with mismatched takerAmount in paramsHash.
         bytes32 badHash = keccak256(abi.encodePacked(bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC + 1));
         AsseteraExchange.KycAttestation memory att = _signAtt(
-            kycSignerPk,
-            alice,
-            AsseteraExchange.Action.MakeOffer,
-            0,
-            _freshNonce(),
-            block.timestamp + 3 minutes,
-            badHash
+            kycSignerPk, alice, ExchangeTypes.Action.MakeOffer, 0, _freshNonce(), block.timestamp + 3 minutes, badHash
         );
         AsseteraExchange.FeeAttestation memory feeAtt =
             _feeMakeOffer(alice, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(AsseteraExchange.ParamsHashMismatch.selector);
+        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
         exchange.makeOffer(bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -1985,17 +1985,11 @@ contract AsseteraExchangeTest is Test {
         // Sign with a different newTakerAmount than what will be passed.
         bytes32 badHash = keccak256(abi.encodePacked(id, SELL_RWA, uint256(800e6 + 1)));
         AsseteraExchange.KycAttestation memory att = _signAtt(
-            kycSignerPk,
-            bob,
-            AsseteraExchange.Action.ReplaceOffer,
-            id,
-            _freshNonce(),
-            block.timestamp + 3 minutes,
-            badHash
+            kycSignerPk, bob, ExchangeTypes.Action.ReplaceOffer, id, _freshNonce(), block.timestamp + 3 minutes, badHash
         );
         vm.startPrank(bob);
         usdc.approve(address(exchange), 800e6);
-        vm.expectRevert(AsseteraExchange.ParamsHashMismatch.selector);
+        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
         exchange.replaceOffer(id, SELL_RWA, 800e6, 0, att);
         vm.stopPrank();
     }
@@ -2005,17 +1999,11 @@ contract AsseteraExchangeTest is Test {
         // Attestation signed with mismatched takerAmount.
         bytes32 badHash = keccak256(abi.encodePacked(id, SELL_RWA, WANT_USDC + 1));
         AsseteraExchange.KycAttestation memory att = _signAtt(
-            kycSignerPk,
-            bob,
-            AsseteraExchange.Action.AcceptOffer,
-            id,
-            _freshNonce(),
-            block.timestamp + 3 minutes,
-            badHash
+            kycSignerPk, bob, ExchangeTypes.Action.AcceptOffer, id, _freshNonce(), block.timestamp + 3 minutes, badHash
         );
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
-        vm.expectRevert(AsseteraExchange.ParamsHashMismatch.selector);
+        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
         exchange.acceptOffer(id, att);
         vm.stopPrank();
     }
@@ -2027,14 +2015,14 @@ contract AsseteraExchangeTest is Test {
         AsseteraExchange.KycAttestation memory att = _signAtt(
             kycSignerPk,
             alice,
-            AsseteraExchange.Action.CancelOffer,
+            ExchangeTypes.Action.CancelOffer,
             id,
             _freshNonce(),
             block.timestamp + 3 minutes,
             badHash
         );
         vm.prank(alice);
-        vm.expectRevert(AsseteraExchange.ParamsHashMismatch.selector);
+        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
         exchange.cancelOffer(id, att);
     }
 
@@ -2052,7 +2040,7 @@ contract AsseteraExchangeTest is Test {
         AsseteraExchange.KycAttestation memory badMakerAtt = _signAtt(
             kycSignerPk,
             alice,
-            AsseteraExchange.Action.SettleOffer,
+            ExchangeTypes.Action.SettleOffer,
             id,
             _freshNonce(),
             block.timestamp + 3 minutes,
@@ -2061,7 +2049,7 @@ contract AsseteraExchangeTest is Test {
         AsseteraExchange.KycAttestation memory takerAtt = _attestSettleOffer(bob, id, SELL_RWA, WANT_USDC);
 
         vm.prank(operator);
-        vm.expectRevert(AsseteraExchange.ParamsHashMismatch.selector);
+        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
         exchange.settleOffer(id, badMakerAtt, takerAtt);
     }
 
@@ -2077,18 +2065,12 @@ contract AsseteraExchangeTest is Test {
 
         // Sign with Action.Settle (3) instead of Action.SettleOffer (8).
         AsseteraExchange.KycAttestation memory orderSettleAtt = _signAtt(
-            kycSignerPk,
-            alice,
-            AsseteraExchange.Action.Settle,
-            id,
-            _freshNonce(),
-            block.timestamp + 3 minutes,
-            bytes32(0)
+            kycSignerPk, alice, ExchangeTypes.Action.Settle, id, _freshNonce(), block.timestamp + 3 minutes, bytes32(0)
         );
         AsseteraExchange.KycAttestation memory goodTakerAtt = _attestSettleOffer(bob, id, SELL_RWA, WANT_USDC);
 
         vm.prank(operator);
-        vm.expectRevert(AsseteraExchange.KycActionMismatch.selector);
+        vm.expectRevert(IKycGate.KycActionMismatch.selector);
         exchange.settleOffer(id, orderSettleAtt, goodTakerAtt);
     }
 
@@ -2100,7 +2082,7 @@ contract AsseteraExchangeTest is Test {
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA * 2);
         exchange.makeOffer(bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
-        vm.expectRevert(AsseteraExchange.KycNonceUsed.selector);
+        vm.expectRevert(IKycGate.KycNonceUsed.selector);
         exchange.makeOffer(bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -2116,11 +2098,11 @@ contract AsseteraExchangeTest is Test {
 
         AsseteraExchange.KycAttestation memory makerAtt = _attestSettleOffer(alice, id, SELL_RWA, WANT_USDC);
         AsseteraExchange.KycAttestation memory badTakerAtt = _signAtt(
-            0xBAD, bob, AsseteraExchange.Action.SettleOffer, id, _freshNonce(), block.timestamp + 3 minutes, bytes32(0)
+            0xBAD, bob, ExchangeTypes.Action.SettleOffer, id, _freshNonce(), block.timestamp + 3 minutes, bytes32(0)
         );
 
         vm.prank(operator);
-        vm.expectRevert(AsseteraExchange.KycBadSigner.selector);
+        vm.expectRevert(IKycGate.KycBadSigner.selector);
         exchange.settleOffer(id, makerAtt, badTakerAtt);
 
         // Alice's nonce must still be valid — retry with good taker attestation.
@@ -2128,13 +2110,13 @@ contract AsseteraExchangeTest is Test {
         vm.prank(operator);
         exchange.settleOffer(id, makerAtt, goodTakerAtt);
 
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Settled));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Settled));
     }
 
     function test_Offer_RevertsOnNonExistentOffer() public {
-        AsseteraExchange.KycAttestation memory att = _attest(alice, AsseteraExchange.Action.CancelOffer, 999);
+        AsseteraExchange.KycAttestation memory att = _attest(alice, ExchangeTypes.Action.CancelOffer, 999);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OfferNotFound.selector, 999));
+        vm.expectRevert(abi.encodeWithSelector(ExchangeStorage.OfferNotFound.selector, 999));
         exchange.cancelOffer(999, att);
     }
 
@@ -2148,7 +2130,7 @@ contract AsseteraExchangeTest is Test {
         exchange.cancelOfferForUser(id, alice, bob);
 
         assertEq(rwa.balanceOf(alice), aliceBefore + SELL_RWA);
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.ForceCancelled));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.ForceCancelled));
     }
 
     function test_CancelOfferForUser_CounteredOffer_ReturnsTakerEscrow() public {
@@ -2186,7 +2168,7 @@ contract AsseteraExchangeTest is Test {
 
         assertEq(rwa.balanceOf(alice), aliceBefore + SELL_RWA);
         assertEq(usdc.balanceOf(bob), bobBefore + WANT_USDC);
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.ForceCancelled));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.ForceCancelled));
     }
 
     function test_CancelOfferForUser_RevertsIfNotAdmin() public {
@@ -2207,11 +2189,11 @@ contract AsseteraExchangeTest is Test {
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
         exchange.sweepExpiredOffers(ids);
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Expired));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Expired));
 
         // Admin calling cancelOfferForUser on an Expired offer must revert.
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OfferNotOpen.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(ExchangeStorage.OfferNotOpen.selector, id));
         exchange.cancelOfferForUser(id, alice, bob);
     }
 
@@ -2229,14 +2211,14 @@ contract AsseteraExchangeTest is Test {
         exchange.settleOffer(id, makerAtt, takerAtt);
 
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.OfferNotOpen.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(ExchangeStorage.OfferNotOpen.selector, id));
         exchange.cancelOfferForUser(id, alice, bob);
     }
 
     function test_CancelOfferForUser_RevertsOnZeroRecipient() public {
         uint256 id = _makeOffer(alice, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.prank(admin);
-        vm.expectRevert(AsseteraExchange.ZeroAddress.selector);
+        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
         exchange.cancelOfferForUser(id, address(0), bob);
     }
 
@@ -2244,7 +2226,7 @@ contract AsseteraExchangeTest is Test {
         uint256 id = _makeOffer(alice, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.prank(admin);
         vm.expectEmit(true, true, false, true);
-        emit AsseteraExchange.OfferForceCancelled(id, alice, alice, bob, admin);
+        emit ExchangeAdmin.OfferForceCancelled(id, alice, alice, bob, admin);
         exchange.cancelOfferForUser(id, alice, bob);
     }
 
@@ -2261,7 +2243,7 @@ contract AsseteraExchangeTest is Test {
         exchange.sweepExpiredOffers(ids);
 
         assertEq(rwa.balanceOf(alice), aliceBefore + SELL_RWA);
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Expired));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Expired));
     }
 
     function test_SweepExpiredOffers_CounteredOffer_ReturnsTakerEscrow() public {
@@ -2283,7 +2265,7 @@ contract AsseteraExchangeTest is Test {
         exchange.sweepExpiredOffers(ids);
 
         assertEq(usdc.balanceOf(bob), bobBefore + WANT_USDC * 2);
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Expired));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Expired));
     }
 
     function test_SweepExpiredOffers_SkipsNonExpired() public {
@@ -2295,7 +2277,7 @@ contract AsseteraExchangeTest is Test {
         ids[0] = id;
         exchange.sweepExpiredOffers(ids);
 
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Open));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Open));
     }
 
     function test_SweepExpiredOffers_SkipsNoExpiry() public {
@@ -2306,7 +2288,7 @@ contract AsseteraExchangeTest is Test {
         ids[0] = id;
         exchange.sweepExpiredOffers(ids);
 
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Open));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Open));
     }
 
     function test_SweepExpiredOffers_SkipsAcceptedOffer() public {
@@ -2325,7 +2307,7 @@ contract AsseteraExchangeTest is Test {
         ids[0] = id;
         exchange.sweepExpiredOffers(ids); // silent skip — Accepted is not Open/Countered
 
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Accepted));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Accepted));
     }
 
     function test_SweepExpiredOffers_CannotSweepTwice() public {
@@ -2350,7 +2332,7 @@ contract AsseteraExchangeTest is Test {
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
         vm.expectEmit(true, true, false, true);
-        emit AsseteraExchange.OfferExpired(id, alice, SELL_RWA);
+        emit OfferBook.OfferExpired(id, alice, SELL_RWA);
         exchange.sweepExpiredOffers(ids);
     }
 
@@ -2384,7 +2366,7 @@ contract AsseteraExchangeTest is Test {
             _feePlaceWithFee(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 50, 30, carol);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.FeeCollectorNotAllowed.selector, carol));
+        vm.expectRevert(abi.encodeWithSelector(IFeeGate.FeeCollectorNotAllowed.selector, carol));
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -2409,7 +2391,7 @@ contract AsseteraExchangeTest is Test {
             _feePlaceWithFee(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 50, 30, carol);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.FeeCollectorNotAllowed.selector, carol));
+        vm.expectRevert(abi.encodeWithSelector(IFeeGate.FeeCollectorNotAllowed.selector, carol));
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -2434,7 +2416,7 @@ contract AsseteraExchangeTest is Test {
             _feePlaceWithFee(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 50, 0, address(0));
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(AsseteraExchange.ZeroAddress.selector);
+        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -2447,7 +2429,7 @@ contract AsseteraExchangeTest is Test {
             _feePlaceWithFee(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 10_001, 0, carol);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(AsseteraExchange.InvalidFee.selector);
+        vm.expectRevert(IFeeGate.InvalidFee.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -2455,7 +2437,7 @@ contract AsseteraExchangeTest is Test {
     function test_Fee_EmitsCollectorAllowed() public {
         vm.prank(admin);
         vm.expectEmit(true, false, false, true);
-        emit AsseteraExchange.CollectorAllowed(carol, true);
+        emit ExchangeAdmin.CollectorAllowed(carol, true);
         exchange.setAllowedCollector(carol, true);
     }
 
@@ -2482,7 +2464,7 @@ contract AsseteraExchangeTest is Test {
         // Fill should still work using the snapshotted fees/collector.
         uint256 carolUsdc = usdc.balanceOf(carol);
         uint256 carolRwa = rwa.balanceOf(carol);
-        AsseteraExchange.KycAttestation memory att = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
         exchange.fillOrder(id, SELL_RWA, att);
@@ -2507,7 +2489,7 @@ contract AsseteraExchangeTest is Test {
         uint256 carolUsdcBefore = usdc.balanceOf(carol);
         uint256 carolRwaBefore = rwa.balanceOf(carol);
 
-        AsseteraExchange.KycAttestation memory att = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
         exchange.fillOrder(id, SELL_RWA, att);
@@ -2529,7 +2511,7 @@ contract AsseteraExchangeTest is Test {
         uint256 aliceUsdcBefore = usdc.balanceOf(alice);
         uint256 bobRwaBefore = rwa.balanceOf(bob);
 
-        AsseteraExchange.KycAttestation memory att = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
         exchange.fillOrder(id, SELL_RWA, att);
@@ -2549,7 +2531,7 @@ contract AsseteraExchangeTest is Test {
         uint256 carolUsdcBefore = usdc.balanceOf(carol);
         uint256 carolRwaBefore = rwa.balanceOf(carol);
 
-        AsseteraExchange.KycAttestation memory att = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
         exchange.fillOrder(id, SELL_RWA, att);
@@ -2569,7 +2551,7 @@ contract AsseteraExchangeTest is Test {
         uint256 carolUsdcBefore = usdc.balanceOf(carol);
         uint256 carolRwaBefore = rwa.balanceOf(carol);
 
-        AsseteraExchange.KycAttestation memory att = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
         exchange.fillOrder(id, SELL_RWA, att);
@@ -2593,7 +2575,7 @@ contract AsseteraExchangeTest is Test {
         uint256 carolUsdcBefore = usdc.balanceOf(carol);
         uint256 carolRwaBefore = rwa.balanceOf(carol);
 
-        AsseteraExchange.KycAttestation memory att = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), halfUsdc);
         exchange.fillOrder(id, halfRwa, att);
@@ -2605,7 +2587,7 @@ contract AsseteraExchangeTest is Test {
         assertEq(usdc.balanceOf(carol), carolUsdcBefore + expectedMakerFee);
         assertEq(rwa.balanceOf(carol), carolRwaBefore + expectedTakerFee);
         // Order stays Open.
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Open));
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Open));
     }
 
     function test_Fee_Fill_Rounding_FloorFavorsMakerAndTaker() public {
@@ -2625,7 +2607,7 @@ contract AsseteraExchangeTest is Test {
         uint256 carolRwaBefore = rwa.balanceOf(carol);
 
         vm.prank(admin);
-        exchange.setComplianceRequired(AsseteraExchange.Action.Fill, false);
+        exchange.setComplianceRequired(ExchangeTypes.Action.Fill, false);
 
         AsseteraExchange.KycAttestation memory empty;
         vm.startPrank(bob);
@@ -2661,8 +2643,8 @@ contract AsseteraExchangeTest is Test {
         uint256 carolUsdcBefore = usdc.balanceOf(carol);
         uint256 carolRwaBefore = rwa.balanceOf(carol);
 
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
         exchange.settle(a, b, attA, attB);
 
@@ -2684,8 +2666,8 @@ contract AsseteraExchangeTest is Test {
         uint256 aliceUsdcBefore = usdc.balanceOf(alice);
         uint256 bobRwaBefore = rwa.balanceOf(bob);
 
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
         exchange.settle(a, b, attA, attB);
 
@@ -2714,8 +2696,8 @@ contract AsseteraExchangeTest is Test {
         uint256 carolUsdcBefore = usdc.balanceOf(carol); // gets alice's fee (buyToken = USDC)
         uint256 aliceRwaBefore = rwa.balanceOf(alice); // gets bob's fee (sellToken = RWA) + is maker
 
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
         exchange.settle(a, b, attA, attB);
 
@@ -2726,8 +2708,8 @@ contract AsseteraExchangeTest is Test {
 
         assertEq(usdc.balanceOf(carol), carolUsdcBefore + aliceFee, "carol receives USDC makerFee from alice's order");
         assertEq(rwa.balanceOf(alice), aliceRwaBefore + bobFee, "alice receives RWA makerFee as bob's collector");
-        assertEq(uint8(exchange.getOrder(a).status), uint8(AsseteraExchange.OrderStatus.Settled));
-        assertEq(uint8(exchange.getOrder(b).status), uint8(AsseteraExchange.OrderStatus.Settled));
+        assertEq(uint8(exchange.getOrder(a).status), uint8(ExchangeTypes.OrderStatus.Settled));
+        assertEq(uint8(exchange.getOrder(b).status), uint8(ExchangeTypes.OrderStatus.Settled));
     }
 
     // --- validation: takerFeeBps > MAX ----------------------------------- //
@@ -2740,7 +2722,7 @@ contract AsseteraExchangeTest is Test {
             _feePlaceWithFee(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, 10_001, carol);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(AsseteraExchange.InvalidFee.selector);
+        vm.expectRevert(IFeeGate.InvalidFee.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -2760,7 +2742,7 @@ contract AsseteraExchangeTest is Test {
             _feePlaceWithFee(maker, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 50, 30, carol);
         (uint8 v, bytes32 r, bytes32 s) = _signPermit(rwa, pk, maker, address(exchange), SELL_RWA, dl);
         vm.prank(maker);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.FeeCollectorNotAllowed.selector, carol));
+        vm.expectRevert(abi.encodeWithSelector(IFeeGate.FeeCollectorNotAllowed.selector, carol));
         exchange.placeOrderWithPermit(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, dl, v, r, s, att, feeAtt);
 
         // Happy: allowlist carol, then permit + fees succeed.
@@ -2790,13 +2772,11 @@ contract AsseteraExchangeTest is Test {
         uint256 expectedMakerFee = (WANT_USDC * 50) / 10_000;
         uint256 expectedTakerFee = (SELL_RWA * 30) / 10_000;
 
-        AsseteraExchange.KycAttestation memory att = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
         vm.expectEmit(true, true, true, true);
-        emit AsseteraExchange.OrderFilled(
-            id, alice, bob, SELL_RWA, WANT_USDC, expectedMakerFee, expectedTakerFee, carol
-        );
+        emit OrderBook.OrderFilled(id, alice, bob, SELL_RWA, WANT_USDC, expectedMakerFee, expectedTakerFee, carol);
         exchange.fillOrder(id, SELL_RWA, att);
         vm.stopPrank();
     }
@@ -2812,11 +2792,11 @@ contract AsseteraExchangeTest is Test {
         uint256 expectedTakerFee = (halfRwa * 30) / 10_000;
         uint256 expectedRemaining = SELL_RWA - halfRwa;
 
-        AsseteraExchange.KycAttestation memory att = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), halfUsdc);
         vm.expectEmit(true, true, true, true);
-        emit AsseteraExchange.OrderPartiallyFilled(
+        emit OrderBook.OrderPartiallyFilled(
             id, alice, bob, halfRwa, expectedRemaining, expectedMakerFee, expectedTakerFee, carol
         );
         exchange.fillOrder(id, halfRwa, att);
@@ -2842,11 +2822,11 @@ contract AsseteraExchangeTest is Test {
         // sellMakerFeeAmount: b.makerFeeBps on what bob receives (settleA = SELL_RWA of a.sellToken).
         uint256 sellMakerFee = (SELL_RWA * 30) / 10_000;
 
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
         vm.expectEmit(true, true, true, true);
-        emit AsseteraExchange.OrderSettled(a, b, operator, SELL_RWA, WANT_USDC, buyMakerFee, sellMakerFee, carol, carol);
+        emit OrderBook.OrderSettled(a, b, operator, SELL_RWA, WANT_USDC, buyMakerFee, sellMakerFee, carol, carol);
         exchange.settle(a, b, attA, attB);
     }
 
@@ -2864,20 +2844,20 @@ contract AsseteraExchangeTest is Test {
         uint256 carolRwaBefore = rwa.balanceOf(carol);
 
         // First half.
-        AsseteraExchange.KycAttestation memory att1 = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory att1 = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC); // covers both fills
         exchange.fillOrder(id, halfRwa, att1);
         vm.stopPrank();
 
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Open), "still open");
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Open), "still open");
 
         // Second half (clears the order).
-        AsseteraExchange.KycAttestation memory att2 = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory att2 = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.prank(bob);
         exchange.fillOrder(id, halfRwa, att2);
 
-        assertEq(uint8(exchange.getOrder(id).status), uint8(AsseteraExchange.OrderStatus.Filled), "fully filled");
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Filled), "fully filled");
 
         uint256 totalMakerFee = (halfUsdc * 50) / 10_000 + (halfUsdc * 50) / 10_000;
         uint256 totalTakerFee = (halfRwa * 30) / 10_000 + (halfRwa * 30) / 10_000;
@@ -2900,8 +2880,8 @@ contract AsseteraExchangeTest is Test {
         uint256 carolUsdcBefore = usdc.balanceOf(carol);
         uint256 carolRwaBefore = rwa.balanceOf(carol);
 
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
         exchange.settle(a, b, attA, attB);
 
@@ -2933,8 +2913,8 @@ contract AsseteraExchangeTest is Test {
         uint256 aliceUsdcBefore = usdc.balanceOf(alice);
         uint256 bobRwaBefore = rwa.balanceOf(bob);
 
-        AsseteraExchange.KycAttestation memory attA = _attest(alice, AsseteraExchange.Action.Settle, a);
-        AsseteraExchange.KycAttestation memory attB = _attest(bob, AsseteraExchange.Action.Settle, b);
+        AsseteraExchange.KycAttestation memory attA = _attest(alice, ExchangeTypes.Action.Settle, a);
+        AsseteraExchange.KycAttestation memory attB = _attest(bob, ExchangeTypes.Action.Settle, b);
         vm.prank(operator);
         exchange.settle(a, b, attA, attB);
 
@@ -2961,7 +2941,7 @@ contract AsseteraExchangeTest is Test {
 
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(AsseteraExchange.FeeBadSigner.selector);
+        vm.expectRevert(IFeeGate.FeeBadSigner.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -2979,7 +2959,7 @@ contract AsseteraExchangeTest is Test {
         uint256 carolUsdcBefore = usdc.balanceOf(carol);
         uint256 bobRwaBefore = rwa.balanceOf(bob);
 
-        AsseteraExchange.KycAttestation memory att = _attest(bob, AsseteraExchange.Action.Fill, id);
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
         exchange.fillOrder(id, SELL_RWA, att);
@@ -2999,7 +2979,7 @@ contract AsseteraExchangeTest is Test {
             _feeMakeOfferWithFee(alice, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 100, 50, carol);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(abi.encodeWithSelector(AsseteraExchange.FeeCollectorNotAllowed.selector, carol));
+        vm.expectRevert(abi.encodeWithSelector(IFeeGate.FeeCollectorNotAllowed.selector, carol));
         exchange.makeOffer(bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -3012,7 +2992,7 @@ contract AsseteraExchangeTest is Test {
             _feeMakeOfferWithFee(alice, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC, tooHigh, 0, carol);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(AsseteraExchange.InvalidFee.selector);
+        vm.expectRevert(IFeeGate.InvalidFee.selector);
         exchange.makeOffer(bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -3070,7 +3050,7 @@ contract AsseteraExchangeTest is Test {
         uint256 makerFeeAmt = (WANT_USDC * makerFeeBps) / 10_000;
         uint256 takerFeeAmt = (SELL_RWA * takerFeeBps) / 10_000;
 
-        assertEq(uint8(exchange.getOffer(id).status), uint8(AsseteraExchange.OfferStatus.Settled));
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Settled));
         assertEq(usdc.balanceOf(alice), aliceUsdcBefore + WANT_USDC - makerFeeAmt, "maker receives USDC minus fee");
         assertEq(rwa.balanceOf(bob), bobRwaBefore + SELL_RWA - takerFeeAmt, "taker receives RWA minus fee");
         assertEq(usdc.balanceOf(carol), carolUsdcBefore + makerFeeAmt, "carol receives maker fee in USDC");
