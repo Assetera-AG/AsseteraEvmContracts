@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v0.2.0...evm-contracts-v1.0.0) (2026-07-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* **contracts:** park operator functions, settle offers atomically on accept (AC-246) ([#20](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/20))
+
+### Features
+
+* **contracts:** park operator functions, settle offers atomically on accept (AC-246) ([#20](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/20)) ([74c397c](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/74c397c2cec910f87a4d45655da6bf44eff19351))
+
 ## [0.2.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v0.1.0...evm-contracts-v0.2.0) (2026-07-08)
 
 
