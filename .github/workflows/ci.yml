@@ -71,3 +71,5 @@ jobs:
         run: npm run typecheck -w @asseteragmbh/evm-contracts
       - name: Build
         run: npm run build -w @asseteragmbh/evm-contracts
+      - name: Build the Next.js example (proves the consumer story compiles against the package)
+        run: npm run build -w evm-contracts-example-nextjs
