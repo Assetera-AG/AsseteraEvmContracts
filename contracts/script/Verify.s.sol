@@ -29,7 +29,7 @@ contract Verify is Script {
         address proxy = json.readAddress(".contracts.AsseteraExchange");
         address impl = json.readAddress(".implementations.AsseteraExchange");
         address adminAddr = json.readAddress(".metadata.admin");
-        address opAddr = json.readAddress(".metadata.operator");
+        // address opAddr = json.readAddress(".metadata.operator"); // unused while OPERATOR_ROLE is parked (AC-246)
         address kycAddr = json.readAddress(".metadata.kycSigner");
         address feeAddr = json.readAddress(".metadata.feeSigner");
 
@@ -69,12 +69,13 @@ contract Verify is Script {
             );
         }
 
-        // 5. Operator holds OPERATOR_ROLE.
-        _check(
-            "operator holds OPERATOR_ROLE",
-            exchange.hasRole(exchange.OPERATOR_ROLE(), opAddr),
-            string.concat("  ", vm.toString(opAddr), " does NOT hold OPERATOR_ROLE")
-        );
+        // 5. OPERATOR_ROLE is parked (AC-246) — see admin/OperatorFunctions.sol.
+        //    No operator role check while parked; re-add when re-enabled:
+        //    _check(
+        //        "operator holds OPERATOR_ROLE",
+        //        exchange.hasRole(exchange.OPERATOR_ROLE(), opAddr),
+        //        string.concat("  ", vm.toString(opAddr), " does NOT hold OPERATOR_ROLE")
+        //    );
 
         // 6. KYC signer holds KYC_OPERATOR_ROLE.
         _check(

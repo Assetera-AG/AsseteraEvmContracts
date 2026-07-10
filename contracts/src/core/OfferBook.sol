@@ -10,7 +10,9 @@ import {FeeMath} from "../libs/FeeMath.sol";
 
 /// @title OfferBook
 /// @notice Targeted offer / counter-offer lifecycle: make, replace, cancel,
-///         accept, operator-settle, and permissionless sweep of expired offers.
+///         and accept — acceptance settles atomically in the same call, no
+///         separate operator step (AC-246). Plus permissionless sweep of
+///         expired offers.
 abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
     using SafeERC20 for IERC20;
 
@@ -35,7 +37,7 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
     event OfferAccepted(uint256 indexed id, address indexed by, uint256 makerAmount, uint256 takerAmount);
     event OfferSettled(
         uint256 indexed id,
-        address indexed operator,
+        address indexed by,
         uint256 makerReceived,
         uint256 takerReceived,
         uint256 makerFeeAmount,
@@ -43,7 +45,6 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         address feeCollector
     );
 
-    error OfferNotAccepted(uint256 id);
     error NotOfferParty(uint256 id);
     error OfferSelfTarget();
     error AcceptorIsProposer(uint256 id);
@@ -223,10 +224,13 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         emit OfferCancelled(offerId, caller, makerAmount, takerAmount);
     }
 
-    /// @notice The non-proposing party accepts current terms and escrows their
-    ///         side. Status transitions to Accepted, enabling settleOffer.
+    /// @notice The non-proposing party accepts current terms. Settlement is
+    ///         atomic with acceptance — no separate operator step: the caller's
+    ///         side is escrowed and both sides are released to their
+    ///         counterparties (fees deducted) in the same transaction. Status
+    ///         goes straight to Settled; `Accepted` is never a persisted state.
     ///         KYC-gated on the caller.
-    /// @param offerId The offer to accept.
+    /// @param offerId The offer to accept and settle.
     /// @param att     KYC attestation authorising the caller for AcceptOffer on this offerId,
     ///                with paramsHash bound to keccak256(offerId, makerAmount, takerAmount).
     function acceptOffer(uint256 offerId, KycAttestation calldata att) external whenNotPaused nonReentrant {
@@ -247,65 +251,42 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         }
         _consumeKyc(caller, Action.AcceptOffer, offerId, att);
 
-        // Cache terms before state change so the event carries the agreed amounts.
+        // Cache terms before state change (CEI) — also needed post-transfer for fee math.
         uint256 makerAmount = o.makerAmount;
         uint256 takerAmount = o.takerAmount;
+        address makerToken = o.makerToken;
+        address takerToken = o.takerToken;
+        address maker = o.maker;
+        address taker = o.taker;
 
-        // Effects before interaction (CEI).
-        o.status = OfferStatus.Accepted;
-
-        // Escrow the accepting party's tokens. By Accepted, both sides are held.
-        if (caller == o.taker) {
-            IERC20(o.takerToken).safeTransferFrom(o.taker, address(this), takerAmount);
-        } else {
-            IERC20(o.makerToken).safeTransferFrom(o.maker, address(this), makerAmount);
-        }
-
-        emit OfferAccepted(offerId, caller, makerAmount, takerAmount);
-    }
-
-    /// @notice Operator settles an Accepted offer. Both parties must provide a
-    ///         fresh Settle attestation.
-    function settleOffer(uint256 offerId, KycAttestation calldata makerAtt, KycAttestation calldata takerAtt)
-        external
-        onlyRole(OPERATOR_ROLE)
-        nonReentrant
-    {
-        Offer storage o = _offers[offerId];
-        if (o.id == 0) revert OfferNotFound(offerId);
-        if (o.status != OfferStatus.Accepted) revert OfferNotAccepted(offerId);
-
-        // Verify both signatures before consuming either nonce.
-        _verifyKyc(o.maker, Action.SettleOffer, offerId, makerAtt);
-        _verifyKyc(o.taker, Action.SettleOffer, offerId, takerAtt);
-        if (complianceRequired[Action.SettleOffer]) {
-            bytes32 ph = keccak256(abi.encodePacked(offerId, o.makerAmount, o.takerAmount));
-            if (makerAtt.paramsHash != ph) revert ParamsHashMismatch();
-            if (takerAtt.paramsHash != ph) revert ParamsHashMismatch();
-            usedNonce[o.maker][makerAtt.nonce] = true;
-            emit KycConsumed(o.maker, Action.SettleOffer, offerId, makerAtt.nonce);
-            usedNonce[o.taker][takerAtt.nonce] = true;
-            emit KycConsumed(o.taker, Action.SettleOffer, offerId, takerAtt.nonce);
-        }
-
-        // Fees deducted from what each party receives at settlement.
-        uint256 makerFeeAmount = FeeMath.feeAmount(o.takerAmount, o.makerFeeBps);
-        uint256 takerFeeAmount = FeeMath.feeAmount(o.makerAmount, o.takerFeeBps);
-        uint256 makerReceived = o.takerAmount - makerFeeAmount;
-        uint256 takerReceived = o.makerAmount - takerFeeAmount;
+        // Fees deducted from what each party receives at settlement (same
+        // formula as the retired settleOffer).
+        uint256 makerFeeAmount = FeeMath.feeAmount(takerAmount, o.makerFeeBps);
+        uint256 takerFeeAmount = FeeMath.feeAmount(makerAmount, o.takerFeeBps);
+        uint256 makerReceived = takerAmount - makerFeeAmount;
+        uint256 takerReceived = makerAmount - takerFeeAmount;
         address collector = o.feeCollector;
 
-        // Effects before transfers (CEI).
+        // Effects before interactions (CEI).
         o.status = OfferStatus.Settled;
 
-        IERC20(o.takerToken).safeTransfer(o.maker, makerReceived);
-        if (makerFeeAmount > 0) IERC20(o.takerToken).safeTransfer(collector, makerFeeAmount);
-        IERC20(o.makerToken).safeTransfer(o.taker, takerReceived);
-        if (takerFeeAmount > 0) IERC20(o.makerToken).safeTransfer(collector, takerFeeAmount);
+        emit OfferAccepted(offerId, caller, makerAmount, takerAmount);
 
-        emit OfferSettled(
-            offerId, _msgSender(), makerReceived, takerReceived, makerFeeAmount, takerFeeAmount, collector
-        );
+        // Escrow the accepting party's side — the other side is already held
+        // from makeOffer/replaceOffer.
+        if (caller == taker) {
+            IERC20(takerToken).safeTransferFrom(taker, address(this), takerAmount);
+        } else {
+            IERC20(makerToken).safeTransferFrom(maker, address(this), makerAmount);
+        }
+
+        // Release both sides to their counterparties.
+        IERC20(takerToken).safeTransfer(maker, makerReceived);
+        if (makerFeeAmount > 0) IERC20(takerToken).safeTransfer(collector, makerFeeAmount);
+        IERC20(makerToken).safeTransfer(taker, takerReceived);
+        if (takerFeeAmount > 0) IERC20(makerToken).safeTransfer(collector, takerFeeAmount);
+
+        emit OfferSettled(offerId, caller, makerReceived, takerReceived, makerFeeAmount, takerFeeAmount, collector);
     }
 
     /// @notice Anyone can sweep a batch of expired offers, returning the current

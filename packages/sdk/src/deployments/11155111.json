@@ -1,6 +1,6 @@
 {
-  "caip2": "eip155:80002",
-  "chainId": 80002,
+  "caip2": "eip155:11155111",
+  "chainId": 11155111,
   "contracts": {
     "AsseteraExchange": "0xcaA53Df2F0835E8000E36C7c2b101d449FAA2dE9",
     "Forwarder": "0x053053b847251DEDdD4880d1e984d13add1b7Dff",
@@ -12,8 +12,8 @@
   },
   "metadata": {
     "admin": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",
-    "deployBlock": 41853395,
-    "deployTimestamp": 1783671793,
+    "deployBlock": 11242052,
+    "deployTimestamp": 1783671720,
     "deployer": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",
     "feeSigner": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",
     "kycSigner": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",

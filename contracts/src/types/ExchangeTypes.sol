@@ -27,8 +27,9 @@ abstract contract ExchangeTypes {
         None, // 0
         Open, // 1 — initial proposal by maker
         Countered, // 2 — either party has replaced with new terms
-        Accepted, // 3 — non-proposer has accepted; both sides escrowed
-        Settled, // 4 — operator transferred both sides
+        Accepted, // 3 — defined but never persisted (AC-246): acceptOffer settles
+        // atomically and writes Settled directly, no intermediate step
+        Settled, // 4 — non-proposer accepted; acceptOffer transferred both sides (AC-246)
         Cancelled, // 5 — cancelled by maker or taker
         ForceCancelled, // 6 — admin escape hatch (cancelOfferForUser)
         Expired // 7 — swept after expireTs via sweepExpiredOffers
@@ -45,7 +46,8 @@ abstract contract ExchangeTypes {
         ReplaceOffer, // 5
         AcceptOffer, // 6
         CancelOffer, // 7 — offer-level cancel
-        SettleOffer // 8 — offer-level settle (distinct from Settle to prevent cross-function replay)
+        SettleOffer // 8 — unused (AC-246): acceptOffer settles atomically under its own
+        // AcceptOffer gate; kept for ordinal stability, never checked
     }
 
     struct Order {

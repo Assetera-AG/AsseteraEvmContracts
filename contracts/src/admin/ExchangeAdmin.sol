@@ -28,11 +28,15 @@ abstract contract ExchangeAdmin is ExchangeStorage {
         emit CollectorAllowed(collector, allowed);
     }
 
-    function pause() external onlyRole(OPERATOR_ROLE) {
+    /// @notice "Stop the venue" lever. Moved from OPERATOR_ROLE to
+    ///         DEFAULT_ADMIN_ROLE (AC-246) — OPERATOR_ROLE itself is parked, and
+    ///         pausing is worth keeping as an active, admin-gated escape hatch so
+    ///         `whenNotPaused` stays meaningful.
+    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _pause();
     }
 
-    function unpause() external onlyRole(OPERATOR_ROLE) {
+    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
     }
 
@@ -55,14 +59,16 @@ abstract contract ExchangeAdmin is ExchangeStorage {
         emit OrderForceCancelled(id, o.maker, recipient, _msgSender());
     }
 
-    /// @notice Admin (multisig) escape hatch: force-cancel any non-settled offer
-    ///         and route each party's escrowed tokens to compliance-chosen recipients.
-    ///         Works in all non-terminal states including Accepted (both sides escrowed).
-    ///         Mirrors cancelOrderForUser for regular orders — needed when a party is
-    ///         frozen after acceptOffer, which otherwise permanently locks both escrows.
+    /// @notice Admin (multisig) escape hatch: force-cancel any offer still in
+    ///         `Open`/`Countered` and route the current proposer's escrowed
+    ///         tokens to a compliance-chosen recipient. Mirrors
+    ///         cancelOrderForUser for regular orders. `Accepted` is never a
+    ///         reachable persisted state (AC-246) — acceptOffer settles
+    ///         atomically in the same call, so there's no window where both
+    ///         sides sit escrowed waiting for a separate step.
     /// @param offerId         The offer to force-cancel.
-    /// @param makerRecipient  Address to receive the maker's escrowed tokens.
-    /// @param takerRecipient  Address to receive the taker's escrowed tokens (only used when Accepted).
+    /// @param makerRecipient  Address to receive the maker's escrowed tokens (used only if the maker is the current proposer).
+    /// @param takerRecipient  Address to receive the taker's escrowed tokens (used only if the taker is the current proposer).
     function cancelOfferForUser(uint256 offerId, address makerRecipient, address takerRecipient)
         external
         onlyRole(DEFAULT_ADMIN_ROLE)
@@ -71,10 +77,7 @@ abstract contract ExchangeAdmin is ExchangeStorage {
         if (makerRecipient == address(0) || takerRecipient == address(0)) revert ZeroAddress();
         Offer storage o = _offers[offerId];
         if (o.id == 0) revert OfferNotFound(offerId);
-        if (
-            o.status == OfferStatus.Settled || o.status == OfferStatus.Cancelled
-                || o.status == OfferStatus.ForceCancelled || o.status == OfferStatus.Expired
-        ) {
+        if (o.status != OfferStatus.Open && o.status != OfferStatus.Countered) {
             revert OfferNotOpen(offerId);
         }
 
@@ -82,21 +85,14 @@ abstract contract ExchangeAdmin is ExchangeStorage {
         uint256 makerAmount = o.makerAmount;
         address takerToken = o.takerToken;
         uint256 takerAmount = o.takerAmount;
-        OfferStatus prevStatus = o.status;
 
         o.status = OfferStatus.ForceCancelled;
 
-        if (prevStatus == OfferStatus.Accepted) {
-            // Both sides escrowed — return each to their designated recipient.
+        // Only the current proposer's side is held in escrow.
+        if (o.proposedBy == o.maker) {
             IERC20(makerToken).safeTransfer(makerRecipient, makerAmount);
-            IERC20(takerToken).safeTransfer(takerRecipient, takerAmount);
         } else {
-            // Only the current proposer's side is held in escrow.
-            if (o.proposedBy == o.maker) {
-                IERC20(makerToken).safeTransfer(makerRecipient, makerAmount);
-            } else {
-                IERC20(takerToken).safeTransfer(takerRecipient, takerAmount);
-            }
+            IERC20(takerToken).safeTransfer(takerRecipient, takerAmount);
         }
 
         emit OfferForceCancelled(offerId, o.maker, makerRecipient, takerRecipient, _msgSender());
