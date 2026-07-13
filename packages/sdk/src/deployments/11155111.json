@@ -2,19 +2,19 @@
   "caip2": "eip155:11155111",
   "chainId": 11155111,
   "contracts": {
-    "AsseteraExchange": "0xcaA53Df2F0835E8000E36C7c2b101d449FAA2dE9",
-    "Forwarder": "0x053053b847251DEDdD4880d1e984d13add1b7Dff",
-    "MockRWA": "0x6d1Df25dF103d1F35c852c891E2F3538DE755C93",
-    "MockUSDC": "0x855329ec3940d00a74EBCbFC5844080788fFE16E"
+    "AsseteraExchange": "0x58c3Fb1B69ca985A5461CcEfFd0Fe590b653F213",
+    "Forwarder": "0x402D2d3e7CdD42cAb656475952961f150f3Cf07f",
+    "MockRWA": "0x7c8d03B4aA9b4A21BAA82266f10174f0961a7A0E",
+    "MockUSDC": "0xf4e1049Ec8b2C8CD2e5a6554acA3f5c267951043"
   },
   "implementations": {
-    "AsseteraExchange": "0x85197d9816B92bc86C6334E9261d3c38b6BDD125"
+    "AsseteraExchange": "0xFF1299F40672B546B19A3939f1eB5Dad3Bf15B48"
   },
   "metadata": {
     "admin": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",
-    "deployBlock": 11242052,
-    "deployTimestamp": 1783671720,
-    "deployer": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",
+    "deployBlock": 11264402,
+    "deployTimestamp": 1783952688,
+    "deployer": "0x5Bf64d5d83636fb1773811DA467f8f1c6bE7a283",
     "feeSigner": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",
     "kycSigner": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",
     "operator": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",

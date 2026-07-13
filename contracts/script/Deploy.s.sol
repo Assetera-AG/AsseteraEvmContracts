@@ -89,7 +89,7 @@ contract Deploy is DeployBase {
         bytes32 proxySalt = _salt(deployer, "AsseteraExchange.proxy");
         exchangeProxy = computeCreate3Address(proxySalt, deployer);
         if (!_hasCode(exchangeProxy)) {
-            bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, operator, kycSigner, feeSigner));
+            bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, kycSigner, feeSigner));
             bytes memory proxyInit =
                 abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(exchangeImpl, initData));
             address deployed = create3(proxySalt, proxyInit);

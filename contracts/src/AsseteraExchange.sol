@@ -47,14 +47,9 @@ contract AsseteraExchange is
     }
 
     /// @param admin     DEFAULT_ADMIN_ROLE (upgrade, role mgmt, pause/unpause, force-cancel). Multisig in prod.
-    /// @param operator  Unused while OPERATOR_ROLE is parked (AC-246) — kept in the
-    ///                  signature so re-enabling operator functions later needs no
-    ///                  initializer ABI change, just uncommenting
-    ///                  admin/OperatorFunctions.sol and the grant below.
     /// @param kycSigner Initial KYC_OPERATOR_ROLE holder (the backend signer).
     /// @param feeSigner Initial FEE_OPERATOR_ROLE holder (the fee service signer).
-    function initialize(address admin, address operator, address kycSigner, address feeSigner) external initializer {
-        // operator == address(0) check parked alongside OPERATOR_ROLE (AC-246) — see admin/OperatorFunctions.sol
+    function initialize(address admin, address kycSigner, address feeSigner) external initializer {
         if (admin == address(0) || kycSigner == address(0) || feeSigner == address(0)) {
             revert ZeroAddress();
         }

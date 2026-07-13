@@ -72,7 +72,7 @@ contract AsseteraExchangeTest is Test {
         forwarder = new ERC2771Forwarder("AsseteraForwarder");
 
         AsseteraExchange impl = new AsseteraExchange(address(forwarder));
-        bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, operator, kycSigner, feeSigner));
+        bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, kycSigner, feeSigner));
         exchange = AsseteraExchange(address(new ERC1967Proxy(address(impl), initData)));
 
         KYC_OPERATOR_ROLE = exchange.KYC_OPERATOR_ROLE();
@@ -269,21 +269,21 @@ contract AsseteraExchangeTest is Test {
 
     function test_Initialize_RevertsOnZeroKycSigner() public {
         AsseteraExchange impl = new AsseteraExchange(address(forwarder));
-        bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, operator, address(0), feeSigner));
+        bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, address(0), feeSigner));
         vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initData);
     }
 
     function test_Initialize_RevertsOnZeroFeeSigner() public {
         AsseteraExchange impl = new AsseteraExchange(address(forwarder));
-        bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, operator, kycSigner, address(0)));
+        bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, kycSigner, address(0)));
         vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initData);
     }
 
     function test_Initialize_CannotReinitialize() public {
         vm.expectRevert(abi.encodeWithSignature("InvalidInitialization()"));
-        exchange.initialize(alice, bob, carol, makeAddr("newFeeSigner"));
+        exchange.initialize(alice, carol, makeAddr("newFeeSigner"));
     }
 
     // ===================================================================== //
@@ -946,8 +946,7 @@ contract AsseteraExchangeTest is Test {
 
     function test_Initialize_RevertsOnZeroAdmin() public {
         AsseteraExchange impl = new AsseteraExchange(address(forwarder));
-        bytes memory initData =
-            abi.encodeCall(AsseteraExchange.initialize, (address(0), operator, kycSigner, feeSigner));
+        bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (address(0), kycSigner, feeSigner));
         vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initData);
     }
