@@ -1,6 +1,6 @@
 {
   "name": "@asseteragmbh/evm-contracts",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "TypeScript SDK for the Assetera EVM contracts — ABIs, per-chain addresses, a viem client, and wagmi hooks.",
   "license": "UNLICENSED",
   "type": "module",
