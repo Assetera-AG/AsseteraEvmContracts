@@ -125,7 +125,7 @@ interface IAsseteraExchange is IKycGate, IFeeGate {
     //                                Initializer                             //
     // --------------------------------------------------------------------- //
 
-    function initialize(address admin, address operator, address kycSigner, address feeSigner) external;
+    function initialize(address admin, address kycSigner, address feeSigner) external;
 
     // --------------------------------------------------------------------- //
     //                              Maker actions                             //
