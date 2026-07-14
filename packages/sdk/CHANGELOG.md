@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v1.0.0...evm-contracts-v2.0.0) (2026-07-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **contracts:** drop unused operator param from initialize(); Fresh Amoy/Sepolia deployments recorded. ([#22](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/22))
+
+### Refactors
+
+* **contracts:** drop unused operator param from initialize(); Fresh Amoy/Sepolia deployments recorded. ([#22](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/22)) ([78aee84](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/78aee84c48e138c0a57fa4422e18e134a4f95456))
+
 ## [1.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v0.2.0...evm-contracts-v1.0.0) (2026-07-10)
 
 
