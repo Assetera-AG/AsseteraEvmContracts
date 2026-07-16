@@ -63,6 +63,14 @@ abstract contract DeployBase is CreateXScript {
         return a != address(0) && a.code.length > 0;
     }
 
+    /// @dev Chains where the open-mint faucet tokens (MockUSDC/MockRWA) are allowed to deploy:
+    ///      local anvil (31337), Polygon Amoy (80002), Ethereum Sepolia (11155111). On any other
+    ///      chain — notably mainnets — the faucet is never deployed (real venues reference real
+    ///      settlement/asset tokens). Overridable via the `DEPLOY_MOCKS` env in `Deploy.run()`.
+    function _isTestnet(uint256 id) internal pure returns (bool) {
+        return id == 31337 || id == 80002 || id == 11155111;
+    }
+
     /// @dev CREATE3-deploy `initCode` at its stable, deployer-permissioned address; reuse if already there.
     ///      Address depends only on (deployer, salt) — use for contracts whose address must be constant
     ///      across chains AND across initcode/bytecode changes (the proxy, the forwarder).
@@ -98,9 +106,12 @@ abstract contract DeployBase is CreateXScript {
 
     /// @dev Serialize and write the full deployment file (chainId/CAIP-2 at the top level).
     function _save(address deployer) internal {
+        // MockUSDC/MockRWA only exist on testnets (see `_isTestnet`); omit their keys entirely on chains
+        // where the faucet wasn't deployed rather than recording a misleading 0x0. AsseteraExchange is
+        // serialized last so its return value carries the full "contracts" object regardless.
         string memory c = "contracts";
-        vm.serializeAddress(c, "MockUSDC", usdc);
-        vm.serializeAddress(c, "MockRWA", rwa);
+        if (usdc != address(0)) vm.serializeAddress(c, "MockUSDC", usdc);
+        if (rwa != address(0)) vm.serializeAddress(c, "MockRWA", rwa);
         vm.serializeAddress(c, "Forwarder", forwarder);
         string memory cJson = vm.serializeAddress(c, "AsseteraExchange", exchangeProxy);
 

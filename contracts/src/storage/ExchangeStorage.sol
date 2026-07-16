@@ -28,7 +28,7 @@ abstract contract ExchangeStorage is
     //                                Roles                                   //
     // --------------------------------------------------------------------- //
     // OPERATOR_ROLE is parked (AC-246) — declared, commented, in
-    // admin/OperatorFunctions.sol alongside the functions it gates.
+    // docs/parked/OperatorFunctions.sol alongside the functions it gates.
 
     // --------------------------------------------------------------------- //
     //                                State                                   //
