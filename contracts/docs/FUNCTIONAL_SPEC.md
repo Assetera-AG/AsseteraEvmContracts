@@ -35,7 +35,12 @@ Identity is resolved via `_msgSender()` (ERC-2771), so callers can be plain EOAs
 | **Anyone** | — | Sweep expired orders (`sweepExpired`) and offers (`sweepExpiredOffers`) |
 | **Relayer** | — | Submit gasless meta-transactions via the ERC-2771 forwarder |
 
-In development/testnet deployments all roles may be held by a single EOA. On mainnet the admin must be a Safe multisig and the KYC backend must use a dedicated key with secure key management.
+In development/testnet deployments all roles may be held by a single EOA. This centralization is intentional for a regulated MiFID-style venue — `DEFAULT_ADMIN_ROLE` is effectively full custody (can `upgradeToAndCall` to arbitrary logic and force-cancel/route any escrow) and must be operationally hardened before mainnet:
+
+- **Admin must be a Safe multisig**, not a single EOA.
+- **`upgradeToAndCall` should sit behind a timelock** (e.g. an OZ `TimelockController` as/behind the admin) so upgrades have a mandatory delay/notice window; not implemented on-chain today — deferred as an operational/deployment decision, not a code change, unless mainnet requirements dictate otherwise.
+- **`KYC_OPERATOR_ROLE` and `FEE_OPERATOR_ROLE`** must each use a dedicated, well-managed key (separate from the admin multisig and from each other) with secure key management (e.g. HSM/KMS-backed signing).
+- Consider splitting collector-allowlist administration from upgrade administration if a single multisig's blast radius is a concern.
 
 ---
 
@@ -306,7 +311,7 @@ Each `Action` enum value maps to a boolean in `complianceRequired`. When `false`
 
 ### Fee collector allowlist
 
-`setAllowedCollector(collector, allowed)` (admin-only) manages `allowedCollectors`, the set of addresses eligible to receive fee proceeds. A non-zero `makerFeeBps`/`takerFeeBps` on a fee attestation is only accepted if `feeCollector` is on this allowlist at the time of `placeOrder`/`placeOrderWithPermit`/`makeOffer` (see [Fee bounds](#fee-bounds-enforced-unconditionally-by-placeorder--placeorderwithpermit--makeoffer-defence-in-depth)). This bounds the blast radius of a compromised fee signer: even a forged fee attestation cannot redirect fee proceeds to an arbitrary wallet, only to a collector the admin multisig has already approved. Emits `CollectorAllowed`.
+`setAllowedCollector(collector, allowed)` (admin-only) manages `allowedCollectors`, the set of addresses eligible to receive fee proceeds. A non-zero `makerFeeBps`/`takerFeeBps` on a fee attestation is only accepted if `feeCollector` is on this allowlist at the time of `placeOrder`/`placeOrderWithPermit`/`makeOffer` (see [Fee bounds](#fee-bounds-enforced-unconditionally-by-placeorder--placeorderwithpermit--makeoffer-defence-in-depth)). This bounds the blast radius of a compromised fee signer: even a forged fee attestation cannot redirect fee proceeds to an arbitrary wallet, only to a collector the admin multisig has already approved. Emits `CollectorAllowed`. The allowlist is checked **only at placement** — removing a collector does not affect orders/offers already placed against it; they still pay out to that collector on fill/settle (snapshot semantics, by design).
 
 ---
 
@@ -330,6 +335,8 @@ Each `Action` enum value maps to a boolean in `complianceRequired`. When `false`
 | Fee-signer isolation | Fee terms are authorised by a distinct `FEE_OPERATOR_ROLE` signer, separate from `KYC_OPERATOR_ROLE` — a compromised KYC signer can no longer set or redirect fees, and vice versa |
 | Fee bounds | `makerFeeBps`/`takerFeeBps` capped at `MAX_FEE_BPS` (10,000 = 100%); enforced unconditionally on every fee-setting call regardless of gating |
 | Fee redirection | Non-zero-fee `feeCollector` must be on the admin-managed `allowedCollectors` allowlist — a compromised fee signer cannot redirect fee proceeds |
+| Token standard | Escrow accounting (`remainingQuantity`, offer amounts) assumes a **standard, non-rebasing, non-fee-on-transfer ERC-20** — it records the nominal amount requested and assumes `transferFrom`/`transfer` delivers exactly that. This is **not enforced on-chain**; it is enforced by the backend token allowlist that already gates KYC/fee attestation signing, which must never approve a fee-on-transfer or rebasing token for trading. Listing a rebasing token would require a contract upgrade |
+| Freezable/blacklistable tokens (known limitation) | If a maker or the contract itself is blacklisted on a token with an issuer-controlled freeze (e.g. USDC), `cancelOrder`/`sweepExpired`/`cancelOrderForUser` revert on transfer to the frozen party, stranding that escrow. `cancelOrderForUser` partially mitigates by routing to a *different*, compliance-chosen recipient, but cannot help if the **contract address itself** is frozen — that case is unrecoverable on-chain. Not enforced or worked around in code; the backend token allowlist must factor in a token's freeze/blacklist risk before approving it for trading |
 
 ---
 
@@ -364,9 +371,9 @@ Each `Action` enum value maps to a boolean in `complianceRequired`. When `false`
 - The contract uses the UUPS proxy pattern. Only the admin (`DEFAULT_ADMIN_ROLE`) can call `upgradeToAndCall`.
 - The forwarder address is immutable in each implementation. If the forwarder must change, a new implementation is deployed and the proxy is upgraded.
 - Storage layout must be preserved across upgrades. The `__gap[42]` reserve leaves room for up to 42 additional storage slots in future versions of `AsseteraExchange` without colliding with inherited contract storage. (Restored from `[41]` after removing the `_blacklist` mapping freed one slot; `usedFeeNonce` still consumes one slot from the original `[42]` reserve.)
-- `initialize` now takes a required `feeSigner` param (granted `FEE_OPERATOR_ROLE`) in addition to `admin`/`operator`/`kycSigner`; this is a breaking change to the initializer signature, coordinated with a fresh deploy rather than an in-place upgrade of an already-initialized proxy.
+- `initialize(admin, kycSigner, feeSigner)` takes a required `feeSigner` param (granted `FEE_OPERATOR_ROLE`); this is a breaking change to the initializer signature, coordinated with a fresh deploy rather than an in-place upgrade of an already-initialized proxy. The previously-present `operator` param was dropped entirely (commit `78aee84`) since `OPERATOR_ROLE` is unused while parked — see below.
 - If a future upgrade introduces new `complianceRequired` entries (new `Action` enum values), a `reinitializer` function must be included and called via `upgradeToAndCall` to initialise the new storage slots — they default to `false` and must be explicitly set.
-- **Order-level operator functions are parked (AC-246):** `settle`, `refund`, and the `OPERATOR_ROLE` constant are commented out in `admin/OperatorFunctions.sol`, not deleted. `initialize`'s `operator` parameter is retained (unused) so re-enabling needs no initializer ABI change — just uncomment the file, wire `OperatorFunctions` into `OrderBook`'s inheritance, uncomment the `_grantRole(OPERATOR_ROLE, operator)` line, and deploy a new implementation via `upgradeToAndCall`.
+- **Order-level operator functions are parked (AC-246):** `settle`, `refund`, and the `OPERATOR_ROLE` constant are commented out in `admin/OperatorFunctions.sol`, not deleted. `initialize` no longer has an `operator` parameter (dropped in commit `78aee84`), so re-enabling needs either an initializer ABI change (add `operator` back, requiring a fresh deploy) or a `reinitializer` function that grants `OPERATOR_ROLE` on an already-initialized proxy — plus uncommenting the file and wiring `OperatorFunctions` into `OrderBook`'s inheritance, then deploying a new implementation via `upgradeToAndCall`.
 - **`settleOffer` is retired, not parked (AC-246):** its logic is merged into `acceptOffer`, which settles atomically on acceptance. There is nothing to re-enable via upgrade — reintroducing a separate offer-level operator settle step would require new code, not an uncomment.
 
 ---

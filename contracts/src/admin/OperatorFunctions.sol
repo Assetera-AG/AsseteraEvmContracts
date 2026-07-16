@@ -31,8 +31,12 @@ import {FeeMath} from "../libs/FeeMath.sol";
 //   1. Delete the `/*` / `*/` markers below to uncomment this whole block.
 //   2. Add `OperatorFunctions` to `OrderBook`'s `is` list (already inherits
 //      `KycGate`, so no further wiring is needed there).
-//   3. Uncomment `_grantRole(OPERATOR_ROLE, operator);` (and the `operator`
-//      zero-address check) in `AsseteraExchange.sol::initialize`.
+//   3. Grant `OPERATOR_ROLE` to the operator. The `operator` param was dropped
+//      from `AsseteraExchange.sol::initialize` (commit 78aee84), so there is no
+//      commented-out grant line to uncomment — either add an `operator` param
+//      back to `initialize` (breaking initializer change, needs a fresh deploy
+//      like the `feeSigner` addition did) or add a `reinitializer` function that
+//      grants `OPERATOR_ROLE` on an already-initialized proxy.
 //   4. Deploy a new implementation and call `upgradeToAndCall`.
 // ============================================================================
 

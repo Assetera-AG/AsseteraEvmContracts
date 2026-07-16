@@ -15,6 +15,9 @@ import {ExchangeAdmin} from "../src/admin/ExchangeAdmin.sol";
 import {FaucetToken} from "../src/FaucetToken.sol";
 import {AsseteraExchangeV2} from "./mocks/AsseteraExchangeV2.sol";
 import {ReentrantToken} from "./mocks/ReentrantToken.sol";
+import {FeeOnTransferToken} from "./mocks/FeeOnTransferToken.sol";
+import {RebasingToken} from "./mocks/RebasingToken.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 contract AsseteraExchangeTest is Test {
     AsseteraExchange internal exchange;
@@ -906,9 +909,10 @@ contract AsseteraExchangeTest is Test {
             id = exchange.placeOrder(address(rwa), SELL_RWA, address(evil), 100e18, 0, att, feeAtt);
             vm.stopPrank();
         }
-        evil.arm(address(exchange), id);
-
         AsseteraExchange.KycAttestation memory empty;
+        // 1 = minimal fill to hit the guard.
+        evil.arm(address(exchange), abi.encodeCall(OrderBook.fillOrder, (id, 1, empty)));
+
         vm.startPrank(bob);
         evil.approve(address(exchange), type(uint256).max);
         vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
@@ -938,6 +942,40 @@ contract AsseteraExchangeTest is Test {
         exchange.fillOrder(id, sellAmt, fAtt);
         vm.stopPrank();
         assertEq(usdc.balanceOf(alice), aliceUsdc + buyAmt);
+    }
+
+    /// @notice I-2(b): fillOrder's ceiling division must never round in the
+    ///         taker's favor — the maker always receives at least the exact
+    ///         proportional buyAmount for a partial fill, never less.
+    function testFuzz_FillOrder_CeilDivNeverShortchangesMaker(uint256 sellAmt, uint256 buyAmt, uint256 fillAmt) public {
+        sellAmt = bound(sellAmt, 1, 1_000e18);
+        buyAmt = bound(buyAmt, 1, 1_000_000e6);
+        fillAmt = bound(fillAmt, 1, sellAmt);
+
+        AsseteraExchange.KycAttestation memory pAtt = _attestPlace(alice, address(rwa), sellAmt, address(usdc), buyAmt);
+        AsseteraExchange.FeeAttestation memory pFeeAtt = _feePlace(alice, address(rwa), sellAmt, address(usdc), buyAmt);
+        vm.startPrank(alice);
+        rwa.approve(address(exchange), sellAmt);
+        uint256 id = exchange.placeOrder(address(rwa), sellAmt, address(usdc), buyAmt, 0, pAtt, pFeeAtt);
+        vm.stopPrank();
+
+        // Expected buyAmountDue via the same ceiling-division formula as FeeMath.ceilDiv, computed
+        // independently of the contract under test.
+        uint256 expectedBuyAmountDue = (fillAmt * buyAmt + sellAmt - 1) / sellAmt;
+        assertGe(expectedBuyAmountDue * sellAmt, fillAmt * buyAmt, "ceiling must never round down");
+
+        AsseteraExchange.KycAttestation memory fAtt = _attest(bob, ExchangeTypes.Action.Fill, id);
+        uint256 aliceUsdcBefore = usdc.balanceOf(alice);
+        vm.startPrank(bob);
+        usdc.approve(address(exchange), expectedBuyAmountDue);
+        exchange.fillOrder(id, fillAmt, fAtt);
+        vm.stopPrank();
+
+        assertEq(
+            usdc.balanceOf(alice),
+            aliceUsdcBefore + expectedBuyAmountDue,
+            "maker receives exactly the ceiling-division amount, never less"
+        );
     }
 
     // ===================================================================== //
@@ -1543,9 +1581,10 @@ contract AsseteraExchangeTest is Test {
             id = exchange.makeOffer(bob, address(rwa), SELL_RWA, address(evil), 100e18, 0, att, feeAtt);
             vm.stopPrank();
         }
-        // targetOrderId is unreachable — the reentrant fillOrder call reverts
+        // targetOrderId (1) is unreachable — the reentrant fillOrder call reverts
         // at the nonReentrant guard before ever touching order data.
-        evil.arm(address(exchange), 1);
+        AsseteraExchange.KycAttestation memory empty;
+        evil.arm(address(exchange), abi.encodeCall(OrderBook.fillOrder, (1, 1, empty)));
 
         AsseteraExchange.KycAttestation memory acceptAtt = _attestAcceptOffer(bob, id, SELL_RWA, 100e18);
         vm.startPrank(bob);
@@ -1553,6 +1592,225 @@ contract AsseteraExchangeTest is Test {
         vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
         exchange.acceptOffer(id, acceptAtt);
         vm.stopPrank();
+    }
+
+    // ===================================================================== //
+    //     I-2(c): reentrancy across every funds-custody entry point         //
+    // ===================================================================== //
+    // Each test uses ReentrantToken as one of the trade's tokens and arms it
+    // to attempt a nested call into cancelOrder(999) (a nonexistent order —
+    // irrelevant, since the shared nonReentrant guard reverts before the
+    // reentrant call body ever runs). Together with test_FillOrder_ReentrancyGuarded
+    // and test_AcceptOffer_ReentrancyGuarded above, this exercises every
+    // state-changing, token-moving entry point on the exchange.
+
+    function test_PlaceOrder_ReentrancyGuarded() public {
+        ReentrantToken evil = new ReentrantToken();
+        evil.mint(alice, 1_000e18);
+
+        AsseteraExchange.KycAttestation memory att =
+            _attestPlace(alice, address(evil), 100e18, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory feeAtt =
+            _feePlace(alice, address(evil), 100e18, address(usdc), WANT_USDC);
+        evil.arm(address(exchange), abi.encodeCall(OrderBook.cancelOrder, (999)));
+
+        vm.startPrank(alice);
+        evil.approve(address(exchange), type(uint256).max);
+        vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
+        exchange.placeOrder(address(evil), 100e18, address(usdc), WANT_USDC, 0, att, feeAtt);
+        vm.stopPrank();
+    }
+
+    function test_PlaceOrderWithPermit_ReentrancyGuarded() public {
+        ReentrantToken evil = new ReentrantToken();
+        evil.mint(alice, 1_000e18);
+
+        AsseteraExchange.KycAttestation memory att =
+            _attestPlace(alice, address(evil), 100e18, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory feeAtt =
+            _feePlace(alice, address(evil), 100e18, address(usdc), WANT_USDC);
+        evil.arm(address(exchange), abi.encodeCall(OrderBook.cancelOrder, (999)));
+
+        // ReentrantToken has no permit — _tryPermit's try/catch swallows the
+        // revert and falls through to safeTransferFrom, same as I-3.
+        vm.startPrank(alice);
+        evil.approve(address(exchange), type(uint256).max);
+        vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
+        exchange.placeOrderWithPermit(
+            address(evil), 100e18, address(usdc), WANT_USDC, 0, 0, 0, bytes32(0), bytes32(0), att, feeAtt
+        );
+        vm.stopPrank();
+    }
+
+    function test_CancelOrder_ReentrancyGuarded() public {
+        ReentrantToken evil = new ReentrantToken();
+        evil.mint(alice, 1_000e18);
+
+        AsseteraExchange.KycAttestation memory att =
+            _attestPlace(alice, address(evil), 100e18, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory feeAtt =
+            _feePlace(alice, address(evil), 100e18, address(usdc), WANT_USDC);
+        vm.startPrank(alice);
+        evil.approve(address(exchange), type(uint256).max);
+        uint256 id = exchange.placeOrder(address(evil), 100e18, address(usdc), WANT_USDC, 0, att, feeAtt);
+        vm.stopPrank();
+
+        evil.arm(address(exchange), abi.encodeCall(OrderBook.cancelOrder, (999)));
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
+        exchange.cancelOrder(id);
+    }
+
+    function test_SweepExpired_ReentrancyGuarded() public {
+        ReentrantToken evil = new ReentrantToken();
+        evil.mint(alice, 1_000e18);
+
+        AsseteraExchange.KycAttestation memory att =
+            _attestPlace(alice, address(evil), 100e18, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory feeAtt =
+            _feePlace(alice, address(evil), 100e18, address(usdc), WANT_USDC);
+        vm.startPrank(alice);
+        evil.approve(address(exchange), type(uint256).max);
+        uint256 id = exchange.placeOrder(
+            address(evil), 100e18, address(usdc), WANT_USDC, uint64(block.timestamp + 1), att, feeAtt
+        );
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 2);
+        evil.arm(address(exchange), abi.encodeCall(OrderBook.cancelOrder, (999)));
+
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
+        exchange.sweepExpired(ids);
+    }
+
+    function test_MakeOffer_ReentrancyGuarded() public {
+        ReentrantToken evil = new ReentrantToken();
+        evil.mint(alice, 1_000e18);
+
+        AsseteraExchange.KycAttestation memory att =
+            _attestMakeOffer(alice, bob, address(evil), 100e18, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory feeAtt =
+            _feeMakeOffer(alice, bob, address(evil), 100e18, address(usdc), WANT_USDC);
+        evil.arm(address(exchange), abi.encodeCall(OrderBook.cancelOrder, (999)));
+
+        vm.startPrank(alice);
+        evil.approve(address(exchange), type(uint256).max);
+        vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
+        exchange.makeOffer(bob, address(evil), 100e18, address(usdc), WANT_USDC, 0, att, feeAtt);
+        vm.stopPrank();
+    }
+
+    function test_ReplaceOffer_ReentrancyGuarded() public {
+        ReentrantToken evil = new ReentrantToken();
+        evil.mint(alice, 1_000e18);
+
+        AsseteraExchange.KycAttestation memory att =
+            _attestMakeOffer(alice, bob, address(evil), 100e18, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory feeAtt =
+            _feeMakeOffer(alice, bob, address(evil), 100e18, address(usdc), WANT_USDC);
+        vm.startPrank(alice);
+        evil.approve(address(exchange), type(uint256).max);
+        uint256 id = exchange.makeOffer(bob, address(evil), 100e18, address(usdc), WANT_USDC, 0, att, feeAtt);
+        vm.stopPrank();
+
+        // Bob's counter first returns alice's evil-token escrow — that's the
+        // leg we hook. His usdc leg would come after, never reached.
+        evil.arm(address(exchange), abi.encodeCall(OrderBook.cancelOrder, (999)));
+
+        AsseteraExchange.KycAttestation memory replaceAtt = _attestReplaceOffer(bob, id, 100e18, WANT_USDC + 1);
+        vm.startPrank(bob);
+        usdc.approve(address(exchange), WANT_USDC + 1);
+        vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
+        exchange.replaceOffer(id, 100e18, WANT_USDC + 1, 0, replaceAtt);
+        vm.stopPrank();
+    }
+
+    function test_CancelOffer_ReentrancyGuarded() public {
+        ReentrantToken evil = new ReentrantToken();
+        evil.mint(alice, 1_000e18);
+
+        AsseteraExchange.KycAttestation memory att =
+            _attestMakeOffer(alice, bob, address(evil), 100e18, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory feeAtt =
+            _feeMakeOffer(alice, bob, address(evil), 100e18, address(usdc), WANT_USDC);
+        vm.startPrank(alice);
+        evil.approve(address(exchange), type(uint256).max);
+        uint256 id = exchange.makeOffer(bob, address(evil), 100e18, address(usdc), WANT_USDC, 0, att, feeAtt);
+        vm.stopPrank();
+
+        evil.arm(address(exchange), abi.encodeCall(OrderBook.cancelOrder, (999)));
+
+        AsseteraExchange.KycAttestation memory cancelAtt = _attestCancelOffer(alice, id, 100e18, WANT_USDC);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
+        exchange.cancelOffer(id, cancelAtt);
+    }
+
+    function test_SweepExpiredOffers_ReentrancyGuarded() public {
+        ReentrantToken evil = new ReentrantToken();
+        evil.mint(alice, 1_000e18);
+
+        AsseteraExchange.KycAttestation memory att =
+            _attestMakeOffer(alice, bob, address(evil), 100e18, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory feeAtt =
+            _feeMakeOffer(alice, bob, address(evil), 100e18, address(usdc), WANT_USDC);
+        vm.startPrank(alice);
+        evil.approve(address(exchange), type(uint256).max);
+        uint256 id = exchange.makeOffer(
+            bob, address(evil), 100e18, address(usdc), WANT_USDC, uint64(block.timestamp + 1), att, feeAtt
+        );
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 2);
+        evil.arm(address(exchange), abi.encodeCall(OrderBook.cancelOrder, (999)));
+
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
+        exchange.sweepExpiredOffers(ids);
+    }
+
+    function test_CancelOrderForUser_ReentrancyGuarded() public {
+        ReentrantToken evil = new ReentrantToken();
+        evil.mint(alice, 1_000e18);
+
+        AsseteraExchange.KycAttestation memory att =
+            _attestPlace(alice, address(evil), 100e18, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory feeAtt =
+            _feePlace(alice, address(evil), 100e18, address(usdc), WANT_USDC);
+        vm.startPrank(alice);
+        evil.approve(address(exchange), type(uint256).max);
+        uint256 id = exchange.placeOrder(address(evil), 100e18, address(usdc), WANT_USDC, 0, att, feeAtt);
+        vm.stopPrank();
+
+        evil.arm(address(exchange), abi.encodeCall(OrderBook.cancelOrder, (999)));
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
+        exchange.cancelOrderForUser(id, carol);
+    }
+
+    function test_CancelOfferForUser_ReentrancyGuarded() public {
+        ReentrantToken evil = new ReentrantToken();
+        evil.mint(alice, 1_000e18);
+
+        AsseteraExchange.KycAttestation memory att =
+            _attestMakeOffer(alice, bob, address(evil), 100e18, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory feeAtt =
+            _feeMakeOffer(alice, bob, address(evil), 100e18, address(usdc), WANT_USDC);
+        vm.startPrank(alice);
+        evil.approve(address(exchange), type(uint256).max);
+        uint256 id = exchange.makeOffer(bob, address(evil), 100e18, address(usdc), WANT_USDC, 0, att, feeAtt);
+        vm.stopPrank();
+
+        evil.arm(address(exchange), abi.encodeCall(OrderBook.cancelOrder, (999)));
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
+        exchange.cancelOfferForUser(id, carol, carol);
     }
 
     function test_Offer_EmitsOfferCancelled_WithTerms() public {
@@ -2504,5 +2762,162 @@ contract AsseteraExchangeTest is Test {
         bytes32 structHash = keccak256(abi.encode(PERMIT_TYPEHASH, owner, spender, value, nonce, deadline));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", token.DOMAIN_SEPARATOR(), structHash));
         (v, r, s) = vm.sign(ownerPk, digest);
+    }
+
+    // ===================================================================== //
+    //         token safety — fee-on-transfer / rebasing (M-1 / I-2)         //
+    // ===================================================================== //
+    // These tests document and prove the M-1 security-review finding: the
+    // pooled OrderBook/OfferBook escrow assumes a token's transferFrom/
+    // transfer delivers exactly the nominal amount requested. They are
+    // expected to demonstrate insolvency/reverts with non-standard tokens —
+    // that is the point, not a bug in these tests. A standard FaucetToken
+    // never hits these paths (see the escrow-conservation invariant suite in
+    // test/invariants/ for the positive-case regression guard).
+
+    function test_TokenSafety_FeeOnTransfer_EscrowOverstatedAtPlacement() public {
+        FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 100); // 1%
+        fot.mint(alice, 10_000e18);
+
+        uint256 sellAmt = 1_000e18;
+        AsseteraExchange.KycAttestation memory att =
+            _attestPlace(alice, address(fot), sellAmt, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory feeAtt =
+            _feePlace(alice, address(fot), sellAmt, address(usdc), WANT_USDC);
+        vm.startPrank(alice);
+        fot.approve(address(exchange), sellAmt);
+        uint256 id = exchange.placeOrder(address(fot), sellAmt, address(usdc), WANT_USDC, 0, att, feeAtt);
+        vm.stopPrank();
+
+        // Order records the full nominal sellAmount as escrowed...
+        assertEq(exchange.getOrder(id).remainingQuantity, sellAmt, "records nominal amount");
+        // ...but the contract actually received 1% less: recorded escrow overstates real holdings.
+        uint256 actualHeld = sellAmt - (sellAmt * 100) / 10_000;
+        assertEq(fot.balanceOf(address(exchange)), actualHeld, "actual balance short by the transfer fee");
+        assertLt(fot.balanceOf(address(exchange)), exchange.getOrder(id).remainingQuantity);
+    }
+
+    function test_TokenSafety_FeeOnTransfer_PoolInsolvency_LastCancellerReverts() public {
+        FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 100); // 1%
+        fot.mint(alice, 10_000e18);
+        fot.mint(bob, 10_000e18);
+
+        uint256 sellAmt = 1_000e18;
+
+        AsseteraExchange.KycAttestation memory aAtt =
+            _attestPlace(alice, address(fot), sellAmt, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory aFeeAtt =
+            _feePlace(alice, address(fot), sellAmt, address(usdc), WANT_USDC);
+        vm.startPrank(alice);
+        fot.approve(address(exchange), sellAmt);
+        uint256 aliceId = exchange.placeOrder(address(fot), sellAmt, address(usdc), WANT_USDC, 0, aAtt, aFeeAtt);
+        vm.stopPrank();
+
+        AsseteraExchange.KycAttestation memory bAtt = _attestPlace(bob, address(fot), sellAmt, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory bFeeAtt = _feePlace(bob, address(fot), sellAmt, address(usdc), WANT_USDC);
+        vm.startPrank(bob);
+        fot.approve(address(exchange), sellAmt);
+        uint256 bobId = exchange.placeOrder(address(fot), sellAmt, address(usdc), WANT_USDC, 0, bAtt, bFeeAtt);
+        vm.stopPrank();
+
+        // Pool actually holds 2 * 990e18 = 1_980e18, but recorded escrow already sums to 2_000e18.
+        assertEq(fot.balanceOf(address(exchange)), 1_980e18);
+
+        // Alice cancels first: the contract is debited the full recorded 1_000e18 (she nets 990e18
+        // after her own incoming-transfer haircut is re-applied on the way out).
+        vm.prank(alice);
+        exchange.cancelOrder(aliceId);
+        assertEq(fot.balanceOf(address(exchange)), 980e18);
+
+        // Bob's cancel requests his full recorded 1_000e18 — Alice's cancel already drew down the
+        // shared pool below what's needed to cover Bob's nominal escrow, so his cancel reverts. The
+        // FOT mock itself splits that 1_000e18 transfer into a 990e18 payout leg + a 10e18 burn leg
+        // (each its own balance check), so the shortfall surfaces on the payout leg at 990e18, not
+        // the full nominal 1_000e18.
+        vm.prank(bob);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, address(exchange), 980e18, 990e18)
+        );
+        exchange.cancelOrder(bobId);
+    }
+
+    function test_TokenSafety_Rebasing_NegativeRebaseCausesInsolvency() public {
+        RebasingToken rebasing = new RebasingToken("Rebasing Token", "RBT");
+        rebasing.mint(alice, 10_000e18);
+        rebasing.mint(bob, 10_000e18);
+
+        uint256 sellAmt = 1_000e18;
+
+        AsseteraExchange.KycAttestation memory aAtt =
+            _attestPlace(alice, address(rebasing), sellAmt, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory aFeeAtt =
+            _feePlace(alice, address(rebasing), sellAmt, address(usdc), WANT_USDC);
+        vm.startPrank(alice);
+        rebasing.approve(address(exchange), sellAmt);
+        uint256 aliceId = exchange.placeOrder(address(rebasing), sellAmt, address(usdc), WANT_USDC, 0, aAtt, aFeeAtt);
+        vm.stopPrank();
+
+        AsseteraExchange.KycAttestation memory bAtt =
+            _attestPlace(bob, address(rebasing), sellAmt, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory bFeeAtt =
+            _feePlace(bob, address(rebasing), sellAmt, address(usdc), WANT_USDC);
+        vm.startPrank(bob);
+        rebasing.approve(address(exchange), sellAmt);
+        uint256 bobId = exchange.placeOrder(address(rebasing), sellAmt, address(usdc), WANT_USDC, 0, bAtt, bFeeAtt);
+        vm.stopPrank();
+
+        // Standard transfer semantics at placement: recorded escrow matches actual balance so far.
+        assertEq(rebasing.balanceOf(address(exchange)), 2_000e18);
+
+        // A negative rebase shrinks the exchange's actual holdings without any transfer — the
+        // remainingQuantity fixed at placement never tracks this.
+        rebasing.rebase(address(exchange), -1000); // -10%
+        assertEq(rebasing.balanceOf(address(exchange)), 1_800e18);
+
+        vm.prank(alice);
+        exchange.cancelOrder(aliceId);
+        assertEq(rebasing.balanceOf(address(exchange)), 800e18);
+
+        vm.prank(bob);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, address(exchange), 800e18, 1_000e18)
+        );
+        exchange.cancelOrder(bobId);
+    }
+
+    function test_TokenSafety_FeeOnTransfer_AcceptOfferShortfall() public {
+        FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 100); // 1%
+        fot.mint(alice, 10_000e18);
+
+        uint256 makerAmt = 1_000e18;
+        uint256 takerAmt = WANT_USDC;
+
+        AsseteraExchange.KycAttestation memory att =
+            _attestMakeOffer(alice, bob, address(fot), makerAmt, address(usdc), takerAmt);
+        AsseteraExchange.FeeAttestation memory feeAtt =
+            _feeMakeOffer(alice, bob, address(fot), makerAmt, address(usdc), takerAmt);
+        vm.startPrank(alice);
+        fot.approve(address(exchange), makerAmt);
+        uint256 id = exchange.makeOffer(bob, address(fot), makerAmt, address(usdc), takerAmt, 0, att, feeAtt);
+        vm.stopPrank();
+
+        // The offer records the nominal makerAmount, but the contract only ever received 99% of it.
+        uint256 actualHeld = makerAmt - (makerAmt * 100) / 10_000;
+        assertEq(fot.balanceOf(address(exchange)), actualHeld);
+
+        AsseteraExchange.KycAttestation memory acceptAtt = _attestAcceptOffer(bob, id, makerAmt, takerAmt);
+        vm.startPrank(bob);
+        usdc.approve(address(exchange), takerAmt);
+        // acceptOffer tries to release the full nominal makerAmount (zero protocol taker fee here) to
+        // bob. The FOT mock splits that payout into a (makerAmt - transferFee) leg to bob — which
+        // exactly drains the contract's actualHeld balance to zero and succeeds — followed by a
+        // transferFee burn leg that then reverts against a zero balance, instead of silently
+        // under-paying the taker.
+        uint256 transferFee = makerAmt - actualHeld;
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, address(exchange), 0, transferFee)
+        );
+        exchange.acceptOffer(id, acceptAtt);
+        vm.stopPrank();
     }
 }

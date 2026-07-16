@@ -99,6 +99,13 @@ on-chain invariant**, and `fillOrder` inherits whatever token the order already 
    tokens without an allowlist.
 4. Add tests with a fee-on-transfer / rebasing mock asserting the escrow-conservation invariant (see I-2).
 
+> **Status: Accepted 2026-07-15.** No contract change. Treated as a
+> downstream legal/compliance/risk control, not an engineering fix: recommendation #1 adopted — the backend
+> token allowlist that already gates attestation signing must not list fee-on-transfer or rebasing tokens
+> (now stated as an explicit invariant in `FUNCTIONAL_SPEC.md §9`). Recommendations #2 (on-chain allowlist)
+> and #3 (balance-delta accounting) declined for now; if rebasing-token support is ever required, that needs
+> a contract upgrade first. Original finding text above left unmodified for the audit trail.
+
 ---
 
 ### L-1 · Blacklistable / freezable settlement tokens can permanently lock escrow
@@ -110,6 +117,12 @@ This is inherent to freezable tokens. The escape hatch partially mitigates (admi
 recipient), **unless the contract address itself is frozen**, in which case funds are unrecoverable.
 **Recommendation:** document as a known limitation; factor token freezability into the backend allowlist.
 
+> **Status: Accepted 2026-07-15.** No contract change (inherent to freezable tokens; the "contract itself
+> frozen" case has no on-chain remedy by construction). Documented as a known limitation in
+> `FUNCTIONAL_SPEC.md §9` ("Freezable/blacklistable tokens") — the backend token allowlist that gates
+> attestation signing must factor in a token's freeze/blacklist risk. Original finding text above left
+> unmodified for the audit trail.
+
 ### L-2 · Fee snapshot can outlive collector de-allowlisting
 **Severity:** Low · **Component:** `gates/FeeGate.sol`, order/offer fee snapshot
 
@@ -119,6 +132,12 @@ design). There is no lever short of `pause` / force-cancel to cut off a collecto
 stopped. **Recommendation:** accept and document, or (if a kill-switch is desired) re-check the allowlist at
 payout time — noting that would let the admin retroactively divert already-agreed fee terms, a trade-off to
 weigh.
+
+> **Status: Accepted 2026-07-15.** No contract change — snapshot semantics kept as-is (re-checking the
+> allowlist at payout time would let the admin retroactively divert already-agreed fee terms, which is a
+> worse trade-off). Already documented in `FUNCTIONAL_SPEC.md §8` ("Fee collector allowlist": *"The
+> allowlist is checked only at placement — removing a collector does not affect orders/offers already
+> placed against it"*) and restated in `§9`. Original finding text above left unmodified for the audit trail.
 
 ### L-3 · Centralized signer & upgrade authority (by design — operationalize it)
 **Severity:** Low (design-inherent) · **Component:** roles, UUPS
@@ -135,12 +154,29 @@ Safe multisig (spec already says so); add a **timelock** on `upgradeToAndCall`; 
 well-managed keys for the two signer roles; consider splitting the collector-allowlist admin from the
 upgrade admin.
 
+> **Status: Accepted 2026-07-15, documentation-only for now.** No contract change (no on-chain timelock
+> implementation) per explicit decision — this is design-inherent centralization required by the regulated
+> venue model, and adding a timelock is an operational/deployment decision, not a code defect fix. Documented
+> as a mainnet-readiness checklist in `FUNCTIONAL_SPEC.md §2` (Safe multisig admin, upgrade timelock,
+> dedicated/well-managed signer keys per role, optional admin-role splitting). If mainnet requirements later
+> mandate an on-chain timelock (e.g. `TimelockController` as/behind the admin), that is a separate,
+> larger scoped change requiring its own design and test coverage. Original finding text above left
+> unmodified for the audit trail.
+
 ---
 
 ### I-1 · Documentation drift in `FUNCTIONAL_SPEC.md`
 `§2` and `§11` still describe `initialize` taking an `operator` parameter and granting `OPERATOR_ROLE`; the
 current signature is `initialize(admin, kycSigner, feeSigner)` (the `operator` param was dropped in commit
 #22, `78aee84`). Update §11's "initialize now takes … admin/operator/kycSigner" wording to match.
+
+> **Status: Resolved 2026-07-15.** `FUNCTIONAL_SPEC.md §11` corrected to state
+> `initialize(admin, kycSigner, feeSigner)` with no `operator` param, and to describe re-enabling
+> `OPERATOR_ROLE` as requiring either a new initializer param (fresh deploy) or a `reinitializer` step,
+> rather than "uncomment a retained param" (which was no longer true). Also fixed two stale comments that
+> had the same drift: `AsseteraExchange.sol::initialize`'s commented-out `_grantRole(OPERATOR_ROLE,
+> operator)` line (referenced a param that no longer exists) and the re-enable instructions atop
+> `admin/OperatorFunctions.sol`. Original finding text above left unmodified for the audit trail.
 
 ### I-2 · Branch coverage gap on funds-custody paths
 Line coverage is excellent (~95–100% on core), but **branch coverage is 58–72%** on
@@ -151,6 +187,24 @@ Line coverage is excellent (~95–100% on core), but **branch coverage is 58–7
 `fillOrder` ceiling-division rounding;
 (c) a **reentrancy** test driving every state-changer through a malicious ERC-777-style token (a
 `ReentrantToken` mock already exists — confirm it exercises each entry point).
+
+> **Status: Resolved 2026-07-15.**
+> - (a) `test_TokenSafety_FeeOnTransfer_EscrowOverstatedAtPlacement`, `test_TokenSafety_FeeOnTransfer_PoolInsolvency_LastCancellerReverts`,
+>   `test_TokenSafety_FeeOnTransfer_AcceptOfferShortfall`, `test_TokenSafety_Rebasing_NegativeRebaseCausesInsolvency` in
+>   `test/AsseteraExchange.t.sol`, backed by new `test/mocks/{FeeOnTransferToken,RebasingToken}.sol` — prove the M-1
+>   insolvency scenario directly.
+> - (b) `test/invariants/{EscrowHandler,EscrowConservation}.t.sol` — a handler-driven invariant suite that
+>   independently recomputes Σ escrowed (from ground-truth `getOrder`/`getOffer` state, not a ghost mirror of the
+>   contract's own arithmetic) and asserts it equals `balanceOf` per token, across `placeOrder`/`fillOrder`/
+>   `cancelOrder`/`sweepExpired`/`makeOffer`/`replaceOffer`/`cancelOffer`/`acceptOffer`/`sweepExpiredOffers`
+>   (64 runs × depth 50, 0 reverts). `fillOrder` ceiling-division rounding covered separately by
+>   `testFuzz_FillOrder_CeilDivNeverShortchangesMaker`.
+> - (c) `ReentrantToken` generalized to arm arbitrary calldata against any target. All 12 funds-custody entry
+>   points now have a dedicated `..._ReentrancyGuarded` test: `placeOrder`, `placeOrderWithPermit`, `cancelOrder`,
+>   `fillOrder`, `sweepExpired`, `makeOffer`, `replaceOffer`, `cancelOffer`, `acceptOffer`, `sweepExpiredOffers`,
+>   `cancelOrderForUser`, `cancelOfferForUser`.
+>
+> 146/146 tests passing (`forge test`). Original finding text above left unmodified for the audit trail.
 
 ### I-3 · `_tryPermit` failure-swallow is correct (noted positively)
 `placeOrderWithPermit` wraps `permit` in `try/catch` (`OrderBook.sol:150-154`), so the classic
@@ -203,7 +257,7 @@ falls through to `safeTransferFrom`. No action.
 | Access controls | **Satisfactory** | Role-separated; mainnet needs multisig + timelock (L-3). |
 | Complexity mgmt | **Strong** | Small, modular, single-purpose files; clear inheritance story (AC-242). |
 | Decentralization | **Moderate** | Intentionally centralized compliance/upgrade — regulatory mandate. |
-| Documentation | **Strong** | Thorough NatSpec + `FUNCTIONAL_SPEC.md`; minor drift (I-1). |
+| Documentation | **Strong** | Thorough NatSpec + `FUNCTIONAL_SPEC.md`; drift resolved (I-1). |
 | Testing & verification | **Satisfactory (gap)** | 129 passing, high line cov; branch cov + weird-token/invariant/fuzz gap (I-2). |
 | Token handling | **Needs improvement** | M-1: no on-chain allowlist / balance-delta accounting. |
 | Low-level code | **Strong** | No assembly in scope; `SafeERC20` throughout. |
@@ -212,11 +266,14 @@ falls through to `safeTransferFrom`. No action.
 
 ## 6. Recommended next steps (priority order)
 
-1. **M-1** — decide token-safety posture: document the standard-ERC20 invariant **and** either add an on-chain
-   token allowlist or move to balance-delta escrow accounting.
-2. **I-2** — add fee-on-transfer, escrow-conservation invariant/fuzz, and reentrancy tests; lift branch
-   coverage on the books/gates.
+1. ~~**M-1**~~ — **Accepted 2026-07-15**, documentation-only (see finding).
+2. ~~**I-2**~~ — **Resolved 2026-07-15** (see finding).
 3. **L-3** — before mainnet: Safe multisig admin + upgrade timelock + hardened signer key management.
-4. **I-1 / L-1 / L-2** — documentation fixes and known-limitation notes.
-5. **I-4** — commit a Slither triage DB to keep CI signal clean.
+   **Accepted 2026-07-15, documentation-only for now** — checklist captured in `FUNCTIONAL_SPEC.md §2`;
+   actual multisig/timelock deployment remains an operational TODO before mainnet.
+4. ~~**I-1 / L-1 / L-2**~~ — **Resolved/Accepted 2026-07-15** — documentation fixes and known-limitation
+   notes landed (see findings).
+5. **I-4** — commit a Slither triage DB to keep CI signal clean. **Deferred** — Slither is not currently
+   wired into CI at all; adding it is a separate scoping decision (tool install, runtime cost, failure
+   policy), not addressed in this pass.
 6. Independent third-party audit before real-fund custody.
