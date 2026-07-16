@@ -29,7 +29,7 @@ ERC-2771 meta-transactions. The contract is **UUPS-upgradeable** (ERC-1967) and 
 ```
 src/       production contract surface (AsseteraExchange)
 script/    Foundry deploy/verify/upgrade scripts
-test/      forge tests (+ test/mocks/, incl. FaucetToken)
+test/      forge tests (+ test/mocks/)
 docs/      FUNCTIONAL_SPEC.md, INDEXER_EVENT_SCHEMA.md
 lib/       dependencies as pinned git submodules (see below)
 ```
