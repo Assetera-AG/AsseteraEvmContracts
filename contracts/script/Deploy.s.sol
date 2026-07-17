@@ -7,7 +7,7 @@ import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.s
 import {ERC2771Forwarder} from "@openzeppelin/contracts/metatx/ERC2771Forwarder.sol";
 import {DeployBase} from "./DeployBase.sol";
 import {AsseteraExchange} from "../src/AsseteraExchange.sol";
-import {FaucetToken} from "../src/FaucetToken.sol";
+import {FaucetToken} from "../test/mocks/FaucetToken.sol";
 
 /// @notice Deterministically deploys (or upgrades) the exchange stack via CreateX and records the
 ///         addresses in `packages/sdk/src/deployments/<chainId>.json` (ADR-0026). The proxy and forwarder
@@ -24,8 +24,9 @@ import {FaucetToken} from "../src/FaucetToken.sol";
 ///
 /// Env (optional; all default to the deployer for local/testnet):
 ///   ADMIN_ADDRESS      — DEFAULT_ADMIN_ROLE (upgrade + role admin); use the Safe multisig in prod
-///   OPERATOR_ADDRESS   — OPERATOR_ROLE (settle/refund/pause)
+///   OPERATOR_ADDRESS   — recorded for reference only; OPERATOR_ROLE is parked (AC-246, not granted)
 ///   KYC_SIGNER_ADDRESS — KYC_OPERATOR_ROLE (signs KYC attestations)
+///   FEE_SIGNER_ADDRESS — FEE_OPERATOR_ROLE (signs fee attestations; the fee service)
 ///   RELAYER_ADDRESS    — recorded for reference (the gasless relayer EOA)
 contract Deploy is DeployBase {
     /// @dev Ensures the CreateX factory is available (etched on anvil; already present on live chains).
@@ -42,7 +43,13 @@ contract Deploy is DeployBase {
         admin = vm.envOr("ADMIN_ADDRESS", deployer);
         operator = vm.envOr("OPERATOR_ADDRESS", deployer);
         kycSigner = vm.envOr("KYC_SIGNER_ADDRESS", deployer);
+        feeSigner = vm.envOr("FEE_SIGNER_ADDRESS", deployer);
         relayer = vm.envOr("RELAYER_ADDRESS", deployer);
+
+        // The open-mint faucet tokens are testnet-only helpers (Amoy/Sepolia/local anvil). On any other
+        // chain they are skipped so a mainnet deploy can never publish a permissionless-mint token. Set
+        // DEPLOY_MOCKS=true/false to override the per-chain default.
+        bool deployMocks = vm.envOr("DEPLOY_MOCKS", _isTestnet(chainId));
 
         if (pk != 0) vm.startBroadcast(pk);
         else vm.startBroadcast();
@@ -57,19 +64,24 @@ contract Deploy is DeployBase {
         );
         console2.log(created ? "Forwarder deployed:" : "Forwarder reused: ", forwarder);
 
-        // 2. Test tokens — CREATE3 stable addresses (testnet helpers only).
-        (usdc, created) = _deploy3(
-            deployer,
-            "MockUSDC",
-            abi.encodePacked(type(FaucetToken).creationCode, abi.encode("Mock USD Coin", "mUSDC", uint8(6)))
-        );
-        console2.log(created ? "MockUSDC deployed:" : "MockUSDC reused: ", usdc);
-        (rwa, created) = _deploy3(
-            deployer,
-            "MockRWA",
-            abi.encodePacked(type(FaucetToken).creationCode, abi.encode("Mock RWA Token", "mRWA", uint8(18)))
-        );
-        console2.log(created ? "MockRWA deployed:" : "MockRWA reused: ", rwa);
+        // 2. Faucet tokens — CREATE3 stable addresses. Testnet-only (see `deployMocks` above); left
+        //    unset (address(0), omitted from the deployment record) on chains where they don't deploy.
+        if (deployMocks) {
+            (usdc, created) = _deploy3(
+                deployer,
+                "MockUSDC",
+                abi.encodePacked(type(FaucetToken).creationCode, abi.encode("Mock USD Coin", "mUSDC", uint8(6)))
+            );
+            console2.log(created ? "MockUSDC deployed:" : "MockUSDC reused: ", usdc);
+            (rwa, created) = _deploy3(
+                deployer,
+                "MockRWA",
+                abi.encodePacked(type(FaucetToken).creationCode, abi.encode("Mock RWA Token", "mRWA", uint8(18)))
+            );
+            console2.log(created ? "MockRWA deployed:" : "MockRWA reused: ", rwa);
+        } else {
+            console2.log("Skipping faucet tokens (non-testnet chainId):", chainId);
+        }
 
         // 3. Exchange implementation — CREATE2 keyed on the initcode, so unchanged bytecode maps to the same
         //    address (re-run is a true no-op) and changed bytecode yields a new impl (→ the upgrade path
@@ -87,7 +99,7 @@ contract Deploy is DeployBase {
         bytes32 proxySalt = _salt(deployer, "AsseteraExchange.proxy");
         exchangeProxy = computeCreate3Address(proxySalt, deployer);
         if (!_hasCode(exchangeProxy)) {
-            bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, operator, kycSigner));
+            bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, kycSigner, feeSigner));
             bytes memory proxyInit =
                 abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(exchangeImpl, initData));
             address deployed = create3(proxySalt, proxyInit);
@@ -112,8 +124,10 @@ contract Deploy is DeployBase {
         console2.log("AsseteraExchange (proxy):", exchangeProxy);
         console2.log("AsseteraExchange (impl): ", exchangeImpl);
         console2.log("Forwarder:", forwarder);
-        console2.log("MockUSDC:", usdc);
-        console2.log("MockRWA: ", rwa);
+        if (deployMocks) {
+            console2.log("MockUSDC:", usdc);
+            console2.log("MockRWA: ", rwa);
+        }
     }
 
     /// @dev Read the ERC-1967 implementation slot of a proxy.

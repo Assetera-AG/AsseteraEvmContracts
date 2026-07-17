@@ -26,69 +26,70 @@ Regenerate after any contract change with `forge build` (emits `out/AsseteraExch
 
 ## 2. Public interface reference
 
-All state-changing functions accept a `KycAttestation calldata att` (or two, for two-party actions) unless noted. See [§4 KycAttestation](#kycattestation-off-chain-struct) for its shape.
+All state-changing functions accept a `KycAttestation calldata att` (or two, for two-party actions) unless noted. The three fee-setting actions (`placeOrder`, `placeOrderWithPermit`, `makeOffer`) additionally require a `FeeAttestation calldata feeAtt` from the separate fee service — fees are no longer carried inside `KycAttestation`. See [§4](#kycattestation-off-chain-struct) for both structs' shapes.
 
 ### Maker actions
 
 | Function | Access | Notes |
 |---|---|---|
-| `placeOrder(address sellToken, uint256 sellAmount, address buyToken, uint256 buyAmount, uint64 expireTs, KycAttestation calldata att) → uint256 id` | KYC-gated (`Action.Place`) | Escrows `sellAmount` of `sellToken`. Emits `OrderPlaced`. |
-| `placeOrderWithPermit(address sellToken, uint256 sellAmount, address buyToken, uint256 buyAmount, uint64 expireTs, uint256 permitDeadline, uint8 v, bytes32 r, bytes32 s, KycAttestation calldata att) → uint256 id` | KYC-gated (`Action.Place`) | Same as `placeOrder`; attempts ERC-2612 `permit` first (best-effort, swallowed on failure). |
-| `cancelOrder(uint256 id, KycAttestation calldata att)` | maker only, KYC-gated (`Action.Cancel`) | Emits `OrderCancelled`. |
-| `cancelOrderSelf(uint256 id)` | maker only, no attestation, blocked if blacklisted | Emits `OrderCancelled`. |
+| `placeOrder(address sellToken, uint256 sellAmount, address buyToken, uint256 buyAmount, uint64 expireTs, KycAttestation calldata att, FeeAttestation calldata feeAtt) → uint256 id` | KYC-gated (`Action.Place`) + fee-gated | Escrows `sellAmount` of `sellToken`. `att`/`feeAtt` are bound together (same account/action/paramsHash). Emits `OrderPlaced`. |
+| `placeOrderWithPermit(address sellToken, uint256 sellAmount, address buyToken, uint256 buyAmount, uint64 expireTs, uint256 permitDeadline, uint8 v, bytes32 r, bytes32 s, KycAttestation calldata att, FeeAttestation calldata feeAtt) → uint256 id` | KYC-gated (`Action.Place`) + fee-gated | Same as `placeOrder`; attempts ERC-2612 `permit` first (best-effort, swallowed on failure). |
+| `cancelOrder(uint256 id)` | maker only, no attestation required | A maker can always cancel their own open order and reclaim escrow, regardless of KYC status. Emits `OrderCancelled`. |
 
 ### Taker actions
 
 | Function | Access | Notes |
 |---|---|---|
-| `fillOrder(uint256 id, uint256 fillSellAmount, KycAttestation calldata att)` | KYC-gated (`Action.Fill`) | Emits `OrderFilled` (full) or `OrderPartiallyFilled` (partial). |
+| `fillOrder(uint256 id, uint256 fillSellAmount, KycAttestation calldata att)` | KYC-gated (`Action.Fill`) | No fee attestation — fee terms are read from the order's snapshot. Emits `OrderFilled` (full) or `OrderPartiallyFilled` (partial). |
 
 ### Offer lifecycle (maker/taker, party-restricted)
 
 | Function | Access | Notes |
 |---|---|---|
-| `makeOffer(address taker, address makerToken, uint256 makerAmount, address takerToken, uint256 takerAmount, uint64 expireTs, KycAttestation calldata att) → uint256 id` | KYC-gated (`Action.MakeOffer`) | Targeted at a specific `taker`. Emits `OfferMade`. |
-| `replaceOffer(uint256 offerId, uint256 newMakerAmount, uint256 newTakerAmount, uint64 expireTs, KycAttestation calldata att)` | maker or taker, KYC-gated (`Action.ReplaceOffer`) | Counter-proposal; flips `proposedBy`. Emits `OfferReplaced`. |
+| `makeOffer(address taker, address makerToken, uint256 makerAmount, address takerToken, uint256 takerAmount, uint64 expireTs, KycAttestation calldata att, FeeAttestation calldata feeAtt) → uint256 id` | KYC-gated (`Action.MakeOffer`) + fee-gated | Targeted at a specific `taker`. `att`/`feeAtt` are bound together. Emits `OfferMade`. |
+| `replaceOffer(uint256 offerId, uint256 newMakerAmount, uint256 newTakerAmount, uint64 expireTs, KycAttestation calldata att)` | maker or taker, KYC-gated (`Action.ReplaceOffer`) | No fee attestation — fee terms are fixed from `makeOffer`, not renegotiated. Counter-proposal; flips `proposedBy`. Emits `OfferReplaced`. |
 | `cancelOffer(uint256 offerId, KycAttestation calldata att)` | maker or taker, KYC-gated (`Action.CancelOffer`) | Only while `Open`/`Countered`. Emits `OfferCancelled`. |
-| `acceptOffer(uint256 offerId, KycAttestation calldata att)` | non-proposing party, KYC-gated (`Action.AcceptOffer`) | Escrows the accepting side. Emits `OfferAccepted`. |
+| `acceptOffer(uint256 offerId, KycAttestation calldata att)` | non-proposing party, KYC-gated (`Action.AcceptOffer`) | Settles atomically (AC-246) — escrows the accepting side, then releases both sides to their counterparties (fees deducted). No separate operator step. Emits `OfferAccepted` then `OfferSettled`. |
 
-### Operator actions (`OPERATOR_ROLE`)
+### Operator actions (`OPERATOR_ROLE`) — order-level parked, offer-level retired (AC-246)
 
-| Function | Notes |
-|---|---|
-| `settle(uint256 buyId, uint256 sellId, KycAttestation calldata attBuy, KycAttestation calldata attSell)` | Requires both makers' fresh `Action.Settle` attestations. Emits `OrderSettled`. |
-| `settleOffer(uint256 offerId, KycAttestation calldata makerAtt, KycAttestation calldata takerAtt)` | Requires both parties' fresh `Action.SettleOffer` attestations. Emits `OfferSettled`. |
-| `refund(uint256 id, string calldata reason)` | Returns remaining escrow to maker. Emits `OrderRefunded`. |
-| `pause()` / `unpause()` | Gates `whenNotPaused` functions. Emits standard `Paused(address)`/`Unpaused(address)`. |
+`settle`, `refund`, and the `OPERATOR_ROLE` constant itself are commented out
+(`docs/parked/OperatorFunctions.sol`), not part of the deployed ABI. Standard
+order operation needs no operator actions — settlement/matching isn't done
+on-chain. `OrderSettled`/`OrderRefunded` are likewise not emitted.
+`settleOffer` is different: it isn't parked, it's **retired** — its logic was
+merged into `acceptOffer` (above), which settles atomically on acceptance.
+`OfferSettled` **is still emitted**, just from `acceptOffer` now. `pause()`/
+`unpause()` moved to `DEFAULT_ADMIN_ROLE` (see below) rather than being parked,
+since a "stop the venue" lever is worth keeping active.
 
 ### Admin actions (`DEFAULT_ADMIN_ROLE`)
 
 | Function | Notes |
 |---|---|
-| `cancelOrderForUser(uint256 id, address recipient)` | Escape hatch for frozen/blacklisted makers. Emits `OrderForceCancelled`. |
-| `cancelOfferForUser(uint256 offerId, address makerRecipient, address takerRecipient)` | Works in any non-terminal state incl. `Accepted`. Emits `OfferForceCancelled`. |
+| `cancelOrderForUser(uint256 id, address recipient)` | Escape hatch for frozen makers. Emits `OrderForceCancelled`. |
+| `cancelOfferForUser(uint256 offerId, address makerRecipient, address takerRecipient)` | Only `Open`/`Countered` — `Accepted` is never a persisted state (`acceptOffer` settles atomically, AC-246). Emits `OfferForceCancelled`. |
 | `setAllowedCollector(address collector, bool allowed)` | Fee collector allowlist. Emits `CollectorAllowed`. |
 | `setComplianceRequired(Action action, bool required)` | Per-action KYC gating toggle. Emits `ComplianceRequiredSet`. |
-| `setBlacklisted(bytes32 hashedAccount, bool blocked)` | `hashedAccount = keccak256(abi.encodePacked(account))`, pseudonymised. Emits `BlacklistUpdated`. |
+| `pause()` / `unpause()` | Moved from `OPERATOR_ROLE` (AC-246). Gates `whenNotPaused` functions. Emits standard `Paused(address)`/`Unpaused(address)`. |
 | `upgradeToAndCall(address newImplementation, bytes data)` | Inherited UUPS; gated via `_authorizeUpgrade`. Emits standard `Upgraded(address)`. |
 
 ### Permissionless (anyone may call)
 
 | Function | Notes |
 |---|---|
-| `sweepExpired(uint256[] calldata ids)` | Batch-sweeps expired `Open` orders back to maker. Silently skips non-matching/blacklisted entries. Batch ids in chunks of ≤100. Emits `OrderExpired` per swept id. |
+| `sweepExpired(uint256[] calldata ids)` | Batch-sweeps expired `Open` orders back to maker. Silently skips non-matching entries. Batch ids in chunks of ≤100. Emits `OrderExpired` per swept id. |
 | `sweepExpiredOffers(uint256[] calldata ids)` | Same, for offers. Emits `OfferExpired` per swept id. |
 
 ### Views
 
 | Function | Returns |
 |---|---|
-| `getOrder(uint256 id)` | `Order` struct (see [§4](#order-struct)) |
-| `getOrders(uint256 start, uint256 count)` | `Order[]` page, 1-indexed, `start=0` treated as `1` |
-| `getOpenOrders()` | `Order[]` of all currently `Open` orders — **O(n) over all orders ever placed; do not use for large books, prefer `getOrders` pagination for backfill** |
+| `getOrder(uint256 id)` | `Order` struct (see [§4](#order-struct)) — point read only; enumeration/pagination is served off-chain by the indexer |
 | `getOffer(uint256 id)` | `Offer` struct |
 | `totalOrders()` / `totalOffers()` | `uint256` — highest assigned id (ids are `1..total`) |
 | `usedNonce(address account, uint256 nonce)` | `bool` — KYC nonce consumption state |
+| `usedFeeNonce(address account, uint256 nonce)` | `bool` — fee attestation nonce consumption state (separate namespace from `usedNonce`) |
 | `complianceRequired(Action action)` | `bool` — whether that action currently requires an attestation |
 | `allowedCollectors(address)` | `bool` |
 | `version()` | `string` |
@@ -108,9 +109,9 @@ All state-changing functions accept a `KycAttestation calldata att` (or two, for
 | 0 | `None` |
 | 1 | `Open` |
 | 2 | `Filled` |
-| 3 | `Settled` |
+| 3 | `Settled` — unreachable while `settle` is parked (AC-246) |
 | 4 | `Cancelled` |
-| 5 | `Refunded` |
+| 5 | `Refunded` — unreachable while `refund` is parked (AC-246) |
 | 6 | `ForceCancelled` |
 | 7 | `Expired` |
 
@@ -121,8 +122,8 @@ All state-changing functions accept a `KycAttestation calldata att` (or two, for
 | 0 | `None` |
 | 1 | `Open` |
 | 2 | `Countered` |
-| 3 | `Accepted` |
-| 4 | `Settled` |
+| 3 | `Accepted` — defined but never a persisted state (AC-246); `acceptOffer` settles atomically, writing `Settled` directly |
+| 4 | `Settled` — the reachable terminal state for a completed trade, written directly by `acceptOffer` (AC-246) |
 | 5 | `Cancelled` |
 | 6 | `ForceCancelled` |
 | 7 | `Expired` |
@@ -135,14 +136,13 @@ All state-changing functions accept a `KycAttestation calldata att` (or two, for
 | 1 | `Place` |
 | 2 | `Fill` |
 | 3 | `Settle` |
-| 4 | `Cancel` |
-| 5 | `MakeOffer` |
-| 6 | `ReplaceOffer` |
-| 7 | `AcceptOffer` |
-| 8 | `CancelOffer` |
-| 9 | `SettleOffer` |
+| 4 | `MakeOffer` |
+| 5 | `ReplaceOffer` |
+| 6 | `AcceptOffer` |
+| 7 | `CancelOffer` |
+| 8 | `SettleOffer` — unused (AC-246); kept for ordinal stability, never checked against any attestation. `acceptOffer` settles under its own `AcceptOffer` gate. |
 
-`CancelOffer`/`SettleOffer` are deliberately distinct from `Cancel`/`Settle` — an attestation for one cannot be replayed against the other.
+There is no order-level `Cancel` action — `cancelOrder` never requires (or consumes) a KYC attestation. `CancelOffer` is deliberately distinct from `Settle` — an attestation for one cannot be replayed against the other.
 
 ### `Order` struct
 
@@ -183,7 +183,7 @@ All state-changing functions accept a `KycAttestation calldata att` (or two, for
 
 ### `KycAttestation` (off-chain struct)
 
-Not stored on-chain; passed as calldata to state-changing calls and reflected into `KycConsumed`.
+Not stored on-chain; passed as calldata to state-changing calls and reflected into `KycConsumed`. Carries **no fee terms** — see `FeeAttestation` below.
 
 | Field | Type |
 |---|---|
@@ -193,21 +193,42 @@ Not stored on-chain; passed as calldata to state-changing calls and reflected in
 | `nonce` | `uint256` |
 | `deadline` | `uint256` |
 | `paramsHash` | `bytes32` |
+| `signature` | `bytes` |
+
+`KYC_TYPEHASH = 0x9d47d5391d5fdceebb227638b24f6b391e7e39fd6671f3b7478c9767dd1ba835`
+(`keccak256("KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint256 deadline,bytes32 paramsHash)")`)
+
+### `FeeAttestation` (off-chain struct)
+
+Not stored on-chain; required alongside a `KycAttestation` on `placeOrder`, `placeOrderWithPermit`, and `makeOffer` (the fee-setting actions), and reflected into `FeeConsumed`. Signed by a `FEE_OPERATOR_ROLE` holder (the fee service) — a separate signer from KYC. Has its own nonce namespace (`usedFeeNonce`, distinct from `usedNonce`). No `orderId` field: fee attestations only ever authorise Place/MakeOffer, both of which are bound via `orderId == 0`.
+
+The contract binds `feeAtt` to the paired `kycAtt` by checking both against the *same* `account`/`action`, and both `paramsHash` fields against the *same* on-chain-computed hash — so a fee attestation cannot be replayed against a different order/offer or paired with a mismatched KYC attestation.
+
+| Field | Type |
+|---|---|
+| `account` | `address` |
+| `action` | `Action` (`uint8`) — `Place` or `MakeOffer` |
+| `nonce` | `uint256` |
+| `deadline` | `uint256` |
+| `paramsHash` | `bytes32` — must equal the paired `KycAttestation.paramsHash` |
 | `makerFeeBps` | `uint16` |
 | `takerFeeBps` | `uint16` |
 | `feeCollector` | `address` |
 | `signature` | `bytes` |
 
-`KYC_TYPEHASH = 0x2bc2d563768338fb74d89d51a723dffab422263d3ac6a8caf9e0d41de82235d9`
-(`keccak256("KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector)")`)
+`FEE_TYPEHASH = 0xf16e0cd6fda16a8c595f563a1b6429cd3f4afc445eadd7aa847cee6a22c843ce`
+(`keccak256("FeeAttestation(address account,uint8 action,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector)")`)
+
+On-chain bounds (`MAX_FEE_BPS` cap, `allowedCollectors` allowlist check) are re-checked unconditionally on every fee-setting call regardless of `complianceRequired` gating — defence in depth against a compromised fee signer.
 
 ### Role constants (for decoding inherited `RoleGranted`/`RoleRevoked` events)
 
 | Role | Value |
 |---|---|
 | `DEFAULT_ADMIN_ROLE` | `0x0000000000000000000000000000000000000000000000000000000000000000` |
-| `OPERATOR_ROLE` | `0x97667070c54ef182b0f5858b034beac1b6f3089aa2d3188bb1e8929f4fa9b929` |
+| `OPERATOR_ROLE` | `0x97667070c54ef182b0f5858b034beac1b6f3089aa2d3188bb1e8929f4fa9b929` — parked (AC-246): not granted, `RoleGranted` for it should not appear post-deploy |
 | `KYC_OPERATOR_ROLE` | `0xdf54a8fce50b9de7187b8b9daaa3b95e6ef1bf1df5fe0a03ddea8faa73de2a10` |
+| `FEE_OPERATOR_ROLE` | `0x8efbb70a6b43a0e337cb93750666361f6a0fe46a0aee356063f13c9b68520bb7` |
 
 ---
 
@@ -218,24 +239,30 @@ Event summary:
 | Event | Emitted by |
 |---|---|
 | `OrderPlaced` | `placeOrder`, `placeOrderWithPermit` |
-| `OrderCancelled` | `cancelOrder`, `cancelOrderSelf` |
+| `OrderCancelled` | `cancelOrder` |
 | `OrderFilled` | `fillOrder` (full fill) |
 | `OrderPartiallyFilled` | `fillOrder` (partial fill) |
-| `OrderSettled` | `settle` |
-| `OrderRefunded` | `refund` |
 | `OrderForceCancelled` | `cancelOrderForUser` |
 | `OrderExpired` | `sweepExpired` (once per swept id) |
 | `CollectorAllowed` | `setAllowedCollector` |
 | `KycConsumed` | any KYC-gated action, on attestation consumption |
+| `FeeConsumed` | `placeOrder`, `placeOrderWithPermit`, `makeOffer`, on fee attestation consumption |
 | `ComplianceRequiredSet` | `setComplianceRequired` |
-| `BlacklistUpdated` | `setBlacklisted` |
 | `OfferMade` | `makeOffer` |
 | `OfferReplaced` | `replaceOffer` |
 | `OfferCancelled` | `cancelOffer` |
 | `OfferForceCancelled` | `cancelOfferForUser` |
 | `OfferExpired` | `sweepExpiredOffers` (once per swept id) |
 | `OfferAccepted` | `acceptOffer` |
-| `OfferSettled` | `settleOffer` |
+| `OfferSettled` | `acceptOffer` (emitted right after `OfferAccepted`, same transaction — AC-246) |
+
+`OrderSettled` (`settle`) and `OrderRefunded` (`refund`) are **not emitted** —
+their emitting functions are parked (AC-246). See
+[§5](#operator-functions-parked--offer-settlement-merged-into-acceptoffer-ac-246)
+below; their event detail sections further down are kept for reference
+(topic0/selector) in case of re-enable, not because they currently fire.
+`OfferSettled` is the exception — it fires again, just from `acceptOffer`
+instead of the now-retired `settleOffer`.
 
 Each `topic0` below (`keccak256` of the canonical signature) was computed independently against the current source, not the checked-in ABI JSON.
 
@@ -269,7 +296,7 @@ event OrderCancelled(uint256 indexed id, address indexed maker);
 - **Indexed:** `id`, `maker`
 - **Data:** *(none)*
 
-Shared between `cancelOrder` (KYC-gated) and `cancelOrderSelf` (unattested) — the two are **not** distinguishable from this event alone. Distinguish by correlating with a `KycConsumed(account, action=Cancel, orderId=id, ...)` event in the same transaction: present ⇒ `cancelOrder`; absent ⇒ `cancelOrderSelf`.
+Always unattested — `cancelOrder` never requires a KYC attestation, so no `KycConsumed` event accompanies it.
 
 ---
 
@@ -307,7 +334,7 @@ Same fee semantics as `OrderFilled`. Note the 5th field is `remainingQuantity` (
 
 ---
 
-### `OrderSettled`
+### `OrderSettled` (parked, AC-246 — not currently emitted; kept for reference)
 
 ```solidity
 event OrderSettled(uint256 indexed buyId, uint256 indexed sellId, address indexed operator, uint256 settledSellAmount, uint256 settledBuyAmount, uint256 buyMakerFeeAmount, uint256 sellMakerFeeAmount, address buyFeeCollector, address sellFeeCollector);
@@ -331,7 +358,7 @@ Both orders transition to `Settled`; both `remainingQuantity` become 0 regardles
 
 ---
 
-### `OrderRefunded`
+### `OrderRefunded` (parked, AC-246 — not currently emitted; kept for reference)
 
 ```solidity
 event OrderRefunded(uint256 indexed id, address indexed maker, address indexed operator, string reason);
@@ -353,7 +380,7 @@ event OrderForceCancelled(uint256 indexed id, address indexed maker, address rec
 - **Indexed:** `id`, `maker`, `admin`
 - **Data:** `recipient` — **note the non-indexed field sits between two indexed fields in declaration order**; decode by ABI position, not topic order.
 
-`recipient` may differ from `maker` (compliance-directed payout for a frozen/blacklisted account).
+`recipient` may differ from `maker` (compliance-directed payout for a frozen account).
 
 ---
 
@@ -392,7 +419,20 @@ event KycConsumed(address indexed account, Action indexed action, uint256 indexe
 - **Indexed:** `account`, `action`, `orderId`
 - **Data:** `nonce`
 
-Emitted **only** when `complianceRequired[action]` is `true` at call time (see `ComplianceRequiredSet`) — its absence in a trade tx means gating was disabled for that action, not that verification was skipped (blacklist checks are unconditional and still enforced). `orderId` is `0` for actions not bound to an existing order/offer id (e.g. `Place`, `MakeOffer`). Useful as the canonical "attestation was consumed" audit trail, and to disambiguate `OrderCancelled` as described above.
+Emitted **only** when `complianceRequired[action]` is `true` at call time (see `ComplianceRequiredSet`) — its absence in a trade tx means gating was disabled for that action, not that verification was skipped. `orderId` is `0` for actions not bound to an existing order/offer id (e.g. `Place`, `MakeOffer`). Useful as the canonical "attestation was consumed" audit trail, and to disambiguate `OrderCancelled` as described above.
+
+---
+
+### `FeeConsumed`
+
+```solidity
+event FeeConsumed(address indexed account, Action indexed action, uint256 nonce);
+```
+- **topic0:** `0xeaf112abadbe52fe1bec7bd8a3ce534907a37f5af958abdd0e957c64a11ddd27`
+- **Indexed:** `account`, `action`
+- **Data:** `nonce`
+
+Emitted alongside `KycConsumed` on `placeOrder`/`placeOrderWithPermit` (`action = Place`) and `makeOffer` (`action = MakeOffer`), same gating rule as `KycConsumed` (only emitted when `complianceRequired[action]` is `true`). No `orderId` field — fee attestations are only ever bound to `orderId == 0` (Place/MakeOffer). `nonce` is drawn from the separate `usedFeeNonce` namespace, not `usedNonce`.
 
 ---
 
@@ -404,19 +444,6 @@ event ComplianceRequiredSet(Action indexed action, bool required);
 - **topic0:** `0x9e21c2e33dd513cd0d70dfe567833a0857ea2998e4a82582cd046d9aa1ca8e41`
 - **Indexed:** `action`
 - **Data:** `required`
-
----
-
-### `BlacklistUpdated`
-
-```solidity
-event BlacklistUpdated(bytes32 indexed hashedAccount, bool blocked);
-```
-- **topic0:** `0xdcf7bb788a4c8c91f85b15fa04797101b624ce86f804c2ccc49d8474adeb90ba`
-- **Indexed:** `hashedAccount`
-- **Data:** `blocked`
-
-`hashedAccount = keccak256(abi.encodePacked(account))` — the plaintext address is **never** on-chain (pseudonymisation). An indexer cannot reverse this to an address; it can only confirm/deny membership for a specific address it already suspects, by hashing it client-side and comparing.
 
 ---
 
@@ -466,7 +493,7 @@ event OfferForceCancelled(uint256 indexed id, address indexed maker, address mak
 - **Indexed:** `id`, `maker`, `admin`
 - **Data:** `makerRecipient`, `takerRecipient`
 
-Both recipients are always present in the event even if only one side was actually escrowed (non-`Accepted` states) — check prior offer status via `getOffer`/state reconstruction if it matters which leg actually moved funds.
+Both recipients are always present in the event even though only one side is ever actually escrowed — `cancelOfferForUser` only accepts `Open`/`Countered` offers (AC-246: `Accepted` is never a persisted state, since `acceptOffer` settles atomically). Check `proposedBy` via `getOffer`/state reconstruction if it matters which leg actually moved funds.
 
 ---
 
@@ -496,11 +523,13 @@ event OfferAccepted(uint256 indexed id, address indexed by, uint256 makerAmount,
 
 ### `OfferSettled`
 
+Emitted by `acceptOffer` (AC-246), immediately after `OfferAccepted`, in the same transaction — not by a separate `settleOffer` call (retired). `by` is the accepting party (`_msgSender()`), not an operator.
+
 ```solidity
-event OfferSettled(uint256 indexed id, address indexed operator, uint256 makerReceived, uint256 takerReceived, uint256 makerFeeAmount, uint256 takerFeeAmount, address feeCollector);
+event OfferSettled(uint256 indexed id, address indexed by, uint256 makerReceived, uint256 takerReceived, uint256 makerFeeAmount, uint256 takerFeeAmount, address feeCollector);
 ```
-- **topic0:** `0xd56117b42362b08e3c76f631c76916c329307575ac77d99398dc012b03c26223`
-- **Indexed:** `id`, `operator`
+- **topic0:** `0xd56117b42362b08e3c76f631c76916c329307575ac77d99398dc012b03c26223` (unchanged — parameter *names* don't affect topic0, only ordered types, and the type signature is identical to before)
+- **Indexed:** `id`, `by`
 - **Data:** `makerReceived`, `takerReceived`, `makerFeeAmount`, `takerFeeAmount`, `feeCollector`
 
 ⚠️ **This topic0 differs from the previously-shipped ABI** — see below. `makerReceived`/`takerReceived` here are already **net of fee** (unlike `OrderSettled`'s gross amounts) — `makerReceived = takerAmount - makerFeeAmount`, `takerReceived = makerAmount - takerFeeAmount`.
@@ -529,6 +558,76 @@ Action items for indexer/API teams:
 
 All other events (`OrderPlaced`, `OrderFilled`, `OrderPartiallyFilled`, `OrderSettled`, etc.) are unchanged between the committed ABI and current source.
 
+### Fee decoupling (⚠️ off-chain-breaking, coordinated release)
+
+`makerFeeBps`/`takerFeeBps`/`feeCollector` were removed from `KycAttestation` and now travel in a separate `FeeAttestation`, signed by a new `FEE_OPERATOR_ROLE` holder (the fee service) instead of the KYC signer. This changes both the KYC EIP-712 typehash and the calldata shape of every fee-setting call — **backend signing code and this doc must deploy in lockstep**:
+
+| Item | Before | After |
+|---|---|---|
+| `KYC_TYPEHASH` | `keccak256("KycAttestation(...,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector)")`, 9 fields | `0x9d47d5391d5fdceebb227638b24f6b391e7e39fd6671f3b7478c9767dd1ba835`, 6 fields (fee fields removed) |
+| `FEE_TYPEHASH` | *(did not exist)* | `0xf16e0cd6fda16a8c595f563a1b6429cd3f4afc445eadd7aa847cee6a22c843ce` — new, signed by `FEE_OPERATOR_ROLE` |
+| `placeOrder` selector | `0x3a0bd1ce` | `0x1c17a0b2` — now takes `(KycAttestation, FeeAttestation)` |
+| `placeOrderWithPermit` selector | `0xfc71b24e` | `0xd6f26c85` — now takes `(..., KycAttestation, FeeAttestation)` |
+| `makeOffer` selector | `0x3e6f6a3a` | `0xc1155711` — now takes `(KycAttestation, FeeAttestation)` |
+| `initialize` selector | `0xc0c53b8b` (`admin,operator,kycSigner`) | `0xf8c8765e` — new required `feeSigner` param |
+
+Downstream actions (`fillOrder`, `cancelOrder`, `settle`, `acceptOffer`, `replaceOffer`, `cancelOffer`, `settleOffer`) are unaffected — they still take only `KycAttestation` and read fee terms already snapshotted on the `Order`/`Offer` at placement/offer-creation time. See [§3](#feeattestation-off-chain-struct) for the new struct and [§4](#feeconsumed) for the new `FeeConsumed` event.
+
+### Blacklist removal (⚠️ behavioral change — sweep now always refunds)
+
+The on-chain compliance blacklist (`setBlacklisted`, `BlacklistUpdated`, `AccountBlacklisted`) has been removed entirely. Freezing a user is now purely a backend decision (the KYC signer declines to sign); there is no on-chain enumerable/pseudonymised blocklist to index.
+
+- `setBlacklisted(bytes32,bool)` no longer exists — calling it reverts (function selector unrecognized).
+- `BlacklistUpdated(bytes32 indexed hashedAccount, bool blocked)` is no longer emitted.
+- `AccountBlacklisted()` is no longer a possible revert reason for any function.
+- **`sweepExpired`/`sweepExpiredOffers` behavior changed**: previously, expired orders/offers belonging to a blacklisted maker/proposer were silently skipped (funds stayed locked until `cancelOrderForUser`/`cancelOfferForUser`). Now expired orders/offers **always** sweep back to the maker/proposer once expired, regardless of KYC status. `cancelOrderForUser`/`cancelOfferForUser` remain available as an admin escape hatch to redirect funds to a compliance-chosen recipient while an order/offer is still `Open`/`Accepted` (before expiry).
+
+### Operator functions parked / offer settlement merged into acceptOffer (AC-246)
+
+Standard operation needs no operator actions — settlement/matching isn't done
+on-chain by an operator. Order-level `settle` and `refund` are parked
+(commented out in `docs/parked/OperatorFunctions.sol`, not deleted) so they can be
+re-enabled later via a single UUPS upgrade if ever needed. Offer-level
+`settleOffer` is **retired outright, not parked** — its transfer/fee logic was
+merged directly into `acceptOffer`, which now settles atomically on acceptance
+(no separate step, no operator attestation). `pause`/`unpause` moved from
+`OPERATOR_ROLE` to `DEFAULT_ADMIN_ROLE` rather than being parked — a "stop the
+venue" lever is worth keeping active. `cancelOrderForUser`/`cancelOfferForUser`
+(already `DEFAULT_ADMIN_ROLE`) remain the emergency-exit path — note
+`cancelOfferForUser` now only accepts `Open`/`Countered` offers, since
+`Accepted` is never a persisted state anymore (see below).
+
+- `settle(uint256,uint256,KycAttestation,KycAttestation)` and
+  `refund(uint256,string)` no longer exist on the deployed ABI — calling either
+  reverts (function selector unrecognized).
+- `settleOffer(uint256,KycAttestation,KycAttestation)` also no longer exists —
+  but unlike `settle`/`refund`, it isn't parked for later; its logic lives on
+  inside `acceptOffer` permanently.
+- `OrderSettled` and `OrderRefunded` are no longer emitted.
+  `OrderStatus.Settled`/`OrderStatus.Refunded` are still valid enum values but
+  are currently unreachable (their only transitions were through the now-parked
+  order functions).
+- **`OfferSettled` IS still emitted** — just from `acceptOffer` instead of a
+  separate `settleOffer` call, in the same transaction as `OfferAccepted`.
+  `OfferStatus.Settled` is very much reachable (it's now the terminal state
+  `acceptOffer` writes directly). `OfferStatus.Accepted` is defined in the enum
+  but is never a persisted state — don't expect to observe it via `getOffer`.
+- `NotComplementary`, `PriceNotCrossed` (order-side) are no longer possible
+  revert reasons for any reachable function — exclusive to parked `settle`.
+  `OfferNotAccepted` is no longer possible either, for a different reason:
+  `acceptOffer`'s precondition was always `OfferNotOpen`, and the retired
+  `settleOffer`'s own `OfferNotAccepted` check went with it.
+- `OPERATOR_ROLE()` getter no longer exists on the contract; the constant is
+  not granted during `initialize` (the `operator` constructor param is
+  retained but unused, for a signature-free re-enable path later — this only
+  applies to `settle`/`refund`, since `settleOffer` has no re-enable path).
+  Expect no `RoleGranted(OPERATOR_ROLE, ...)` event post-deploy.
+- **Reconciliation impact**: `OrderRefunded` is no longer one of the ways
+  escrow can leave the contract without a matching `Fill`. `OfferSettled`
+  remains one (now via `acceptOffer`, not a separate call). See
+  [§8](#8-backfill--reconciliation-notes) — the reconciliation note there is
+  updated accordingly.
+
 ---
 
 ## 6. Actor resolution (ERC-2771 meta-tx)
@@ -550,20 +649,19 @@ All reverts are custom errors (no revert strings). 4-byte selectors, for API lay
 | `SameToken()` | `0x201b580a` |
 | `OrderNotOpen(uint256)` | `0x410e0437` |
 | `NotMaker(uint256)` | `0x9f220883` |
-| `NotComplementary(uint256,uint256)` | `0x357d4e12` |
-| `PriceNotCrossed(uint256,uint256)` | `0x16c1ab33` |
+| `NotComplementary(uint256,uint256)` | `0x357d4e12` — parked (AC-246), unreachable |
+| `PriceNotCrossed(uint256,uint256)` | `0x16c1ab33` — parked (AC-246), unreachable |
 | `SelfTrade(uint256)` | `0x0d789560` |
 | `OrderIsExpired(uint256)` | `0xfcdee3a5` |
 | `InvalidExpiry()` | `0xd36c8500` |
 | `FillAmountZero()` | `0x7e3e9917` |
 | `FillExceedsRemaining(uint256,uint256)` | `0xbb86b38c` |
-| `AccountBlacklisted()` | `0x7d28af3f` |
 | `ParamsHashMismatch()` | `0xb1561fdb` |
 | `FeeCollectorNotAllowed(address)` | `0x4eda3f1b` |
 | `InvalidFee()` | `0x58d620b3` |
 | `OfferNotFound(uint256)` | `0x1f376e4c` |
 | `OfferNotOpen(uint256)` | `0xf270fad7` |
-| `OfferNotAccepted(uint256)` | `0x9c9407ec` |
+| `OfferNotAccepted(uint256)` | `0x9c9407ec` — retired (AC-246), no longer possible; was exclusive to the now-retired `settleOffer` |
 | `NotOfferParty(uint256)` | `0xfca59ad9` |
 | `OfferSelfTarget()` | `0xf5e59dba` |
 | `AcceptorIsProposer(uint256)` | `0xf39ecaf3` |
@@ -575,11 +673,17 @@ All reverts are custom errors (no revert strings). 4-byte selectors, for API lay
 | `KycTtlTooLong()` | `0x95b88c37` |
 | `KycNonceUsed()` | `0x6ad0f3dd` |
 | `KycBadSigner()` | `0x36c9d94d` |
+| `FeeAccountMismatch()` | `0x97e73bff` |
+| `FeeActionMismatch()` | `0x0e61c26a` |
+| `FeeExpired()` | `0x77fe4a46` |
+| `FeeTtlTooLong()` | `0x1a2d6586` |
+| `FeeNonceUsed()` | `0xd77d3a82` |
+| `FeeBadSigner()` | `0x26aa3fdd` |
 
 ---
 
 ## 8. Backfill / reconciliation notes
 
-- Orders and offers are 1-indexed; `totalOrders()`/`totalOffers()` give the current high-water mark. `getOrders(start, count)` paginates safely; `getOpenOrders()` is O(n) over all-time order count and should not be used once the book is large.
+- Orders and offers are 1-indexed; `totalOrders()`/`totalOffers()` give the current high-water mark. Enumeration/pagination (e.g. "all open orders") is served off-chain by the indexer / Marketplace API — the contract only exposes point reads (`getOrder`/`getOffer`).
 - Every state-changing path emits exactly one primary lifecycle event per order/offer per call, so a correct read model can be built purely from events without ever calling `getOrder`/`getOffer` — the view functions are for point-in-time reconciliation/debugging, not required for the primary indexing path.
-- `OrderRefunded`, `OrderForceCancelled`, and both `sweep*` events are the only ways escrow leaves the contract without a matching `Fill`/`Settle` — make sure these are included in any balance-reconciliation job, or on-chain token balance will not match the sum of indexed fills/settlements.
+- `OrderForceCancelled`, `OfferForceCancelled`, and both `sweep*` events are the only ways escrow leaves the contract without a matching `Fill`/`OfferSettled` — make sure these are included in any balance-reconciliation job, or on-chain token balance will not match the sum of indexed fills/settlements. (`OrderRefunded`/`OrderSettled` are not currently emitted — `refund`/`settle` are parked, AC-246. `OfferSettled` is the exception: it still fires, from `acceptOffer` rather than a separate `settleOffer` call — see [§5](#operator-functions-parked--offer-settlement-merged-into-acceptoffer-ac-246).)

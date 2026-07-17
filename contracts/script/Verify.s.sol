@@ -5,6 +5,7 @@ import {Script, console2} from "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {AsseteraExchange} from "../src/AsseteraExchange.sol";
+import {ExchangeTypes} from "../src/types/ExchangeTypes.sol";
 
 /// @notice Read-only post-deployment verification. Checks every governance
 ///         invariant: proxy wiring, role assignments, Safe as admin.
@@ -28,8 +29,9 @@ contract Verify is Script {
         address proxy = json.readAddress(".contracts.AsseteraExchange");
         address impl = json.readAddress(".implementations.AsseteraExchange");
         address adminAddr = json.readAddress(".metadata.admin");
-        address opAddr = json.readAddress(".metadata.operator");
+        // address opAddr = json.readAddress(".metadata.operator"); // unused while OPERATOR_ROLE is parked (AC-246)
         address kycAddr = json.readAddress(".metadata.kycSigner");
+        address feeAddr = json.readAddress(".metadata.feeSigner");
 
         AsseteraExchange exchange = AsseteraExchange(proxy);
 
@@ -67,12 +69,13 @@ contract Verify is Script {
             );
         }
 
-        // 5. Operator holds OPERATOR_ROLE.
-        _check(
-            "operator holds OPERATOR_ROLE",
-            exchange.hasRole(exchange.OPERATOR_ROLE(), opAddr),
-            string.concat("  ", vm.toString(opAddr), " does NOT hold OPERATOR_ROLE")
-        );
+        // 5. OPERATOR_ROLE is parked (AC-246) — see docs/parked/OperatorFunctions.sol.
+        //    No operator role check while parked; re-add when re-enabled:
+        //    _check(
+        //        "operator holds OPERATOR_ROLE",
+        //        exchange.hasRole(exchange.OPERATOR_ROLE(), opAddr),
+        //        string.concat("  ", vm.toString(opAddr), " does NOT hold OPERATOR_ROLE")
+        //    );
 
         // 6. KYC signer holds KYC_OPERATOR_ROLE.
         _check(
@@ -81,14 +84,20 @@ contract Verify is Script {
             string.concat("  ", vm.toString(kycAddr), " does NOT hold KYC_OPERATOR_ROLE")
         );
 
+        // 6b. Fee signer holds FEE_OPERATOR_ROLE.
+        _check(
+            "feeSigner holds FEE_OPERATOR_ROLE",
+            exchange.hasRole(exchange.FEE_OPERATOR_ROLE(), feeAddr),
+            string.concat("  ", vm.toString(feeAddr), " does NOT hold FEE_OPERATOR_ROLE")
+        );
+
         // 7. Compliance gating is on for all actions by default.
-        bool placeGated = exchange.complianceRequired(AsseteraExchange.Action.Place);
-        bool fillGated = exchange.complianceRequired(AsseteraExchange.Action.Fill);
-        bool settleGated = exchange.complianceRequired(AsseteraExchange.Action.Settle);
-        bool cancelGated = exchange.complianceRequired(AsseteraExchange.Action.Cancel);
+        bool placeGated = exchange.complianceRequired(ExchangeTypes.Action.Place);
+        bool fillGated = exchange.complianceRequired(ExchangeTypes.Action.Fill);
+        bool settleGated = exchange.complianceRequired(ExchangeTypes.Action.Settle);
         _check(
             "all actions KYC-gated by default",
-            placeGated && fillGated && settleGated && cancelGated,
+            placeGated && fillGated && settleGated,
             "  one or more actions not gated"
         );
 

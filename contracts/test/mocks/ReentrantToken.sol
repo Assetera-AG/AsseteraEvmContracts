@@ -2,15 +2,15 @@
 pragma solidity 0.8.28;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {AsseteraExchange} from "../../src/AsseteraExchange.sol";
 
-/// @notice Malicious ERC20 that attempts to re-enter the exchange during a
-///         transfer, used to prove the ReentrancyGuard holds. (Used with Fill
-///         gating disabled so the empty attestation passes and the reentry
-///         reaches the guard.)
+/// @notice Malicious ERC20 that attempts to re-enter an arbitrary call during
+///         a transfer, used to prove the exchange's shared ReentrancyGuard
+///         holds across every state-changing entry point. `arm` takes raw
+///         calldata (build it with `abi.encodeCall`) so the same mock can
+///         probe any function, not just one hardcoded reentry target.
 contract ReentrantToken is ERC20 {
-    address public exchange;
-    uint256 public targetOrderId;
+    address public target;
+    bytes public callData;
     bool public armed;
 
     constructor() ERC20("Reentrant", "REENT") {}
@@ -19,17 +19,26 @@ contract ReentrantToken is ERC20 {
         _mint(to, amount);
     }
 
-    function arm(address exchange_, uint256 orderId) external {
-        exchange = exchange_;
-        targetOrderId = orderId;
+    /// @param target_   Contract to reenter (the exchange under test).
+    /// @param callData_ Calldata for the reentrant call, e.g.
+    ///                  `abi.encodeCall(AsseteraExchange.cancelOrder, (id))`.
+    function arm(address target_, bytes calldata callData_) external {
+        target = target_;
+        callData = callData_;
         armed = true;
     }
 
     function _update(address from, address to, uint256 value) internal override {
-        if (armed && exchange != address(0)) {
+        if (armed && target != address(0)) {
             armed = false; // one-shot
-            AsseteraExchange.KycAttestation memory empty;
-            AsseteraExchange(exchange).fillOrder(targetOrderId, 1, empty); // 1 = minimal fill to hit guard
+            (bool ok, bytes memory ret) = target.call(callData);
+            if (!ok) {
+                // Bubble the original revert (e.g. ReentrancyGuardReentrantCall) unchanged so
+                // vm.expectRevert at the outer call site matches on it.
+                assembly {
+                    revert(add(ret, 32), mload(ret))
+                }
+            }
         }
         super._update(from, to, value);
     }

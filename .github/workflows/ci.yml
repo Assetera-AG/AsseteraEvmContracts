@@ -44,3 +44,32 @@ jobs:
         run: forge test -vvv
         env:
           FOUNDRY_PROFILE: ci # heavier fuzzing (see foundry.toml [profile.ci])
+
+  sdk:
+    # Build the generated TypeScript SDK (@asseteragmbh/evm-contracts). Needs Foundry because codegen runs
+    # `forge build` (wagmi/cli foundry plugin) to produce the ABIs.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive # the SDK codegen reads the contracts' build output
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - name: Generate (ABIs + deployments)
+        run: npm run generate -w @asseteragmbh/evm-contracts
+      - name: Typecheck
+        run: npm run typecheck -w @asseteragmbh/evm-contracts
+      - name: Build
+        run: npm run build -w @asseteragmbh/evm-contracts
+      - name: Build the Next.js example (proves the consumer story compiles against the package)
+        run: npm run build -w evm-contracts-example-nextjs

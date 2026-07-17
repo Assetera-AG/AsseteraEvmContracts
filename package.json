@@ -4,13 +4,20 @@
   "private": true,
   "description": "Workspace root for the Assetera EVM contracts + generated SDK (ADR-0026).",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "examples/*"
   ],
   "scripts": {
     "build": "npm run build -w @asseteragmbh/evm-contracts",
     "typecheck": "npm run typecheck -w @asseteragmbh/evm-contracts",
     "anvil": "anvil",
     "deploy:local": "bash scripts/deploy-local.sh",
-    "deploy:amoy": "cd contracts && forge script script/Deploy.s.sol:Deploy --rpc-url amoy --broadcast --verify"
+    "deploy:amoy": "cd contracts && forge script script/Deploy.s.sol:Deploy --rpc-url amoy --broadcast --verify",
+    "prepare": "husky || true"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.5.0",
+    "@commitlint/config-conventional": "^19.5.0",
+    "husky": "^9.1.0"
   }
 }
