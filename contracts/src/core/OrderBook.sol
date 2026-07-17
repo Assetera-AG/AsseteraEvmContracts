@@ -16,6 +16,9 @@ import {FeeMath} from "../libs/FeeMath.sol";
 abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
     using SafeERC20 for IERC20;
 
+    /// @dev Emitted when a new order is placed. Includes the fee terms snapshotted onto the
+    ///      order from the fee attestation (mirrors OfferMade, which carries its fee fields
+    ///      at creation too), rather than only surfacing them once the order fills.
     event OrderPlaced(
         uint256 indexed id,
         address indexed maker,
@@ -28,6 +31,8 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
         uint16 takerFeeBps,
         address feeCollector
     );
+    /// @dev Emitted on maker self-cancel. remainingQuantity is the sellToken amount refunded
+    ///      to the maker (mirrors OfferCancelled, which carries its refunded amounts too).
     event OrderCancelled(uint256 indexed id, address indexed maker, uint256 remainingQuantity);
     /// @dev Emitted when an order is completely filled (remainingQuantity == 0).
     ///      Includes fee amounts and collector for indexer/client cost disclosure.
@@ -185,7 +190,9 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
         });
 
         IERC20(sellToken).safeTransferFrom(maker, address(this), sellAmount);
-        emit OrderPlaced(id, maker, sellToken, sellAmount, buyToken, buyAmount, expireTs, makerFeeBps, takerFeeBps, feeCollector);
+        emit OrderPlaced(
+            id, maker, sellToken, sellAmount, buyToken, buyAmount, expireTs, makerFeeBps, takerFeeBps, feeCollector
+        );
     }
 
     /// @notice Maker self-cancel. Never requires a KYC attestation — a user must
