@@ -20,7 +20,7 @@ Source: `deployments/80002.json`. Confirm the current implementation address via
 abi/AsseteraExchange.json
 ```
 
-Regenerate after any contract change with `forge build` (emits `out/AsseteraExchange.sol/AsseteraExchange.json`, which should be copied/synced to `abi/`). **The current `abi/AsseteraExchange.json` predates the fee-enrichment of `OfferMade`/`OfferSettled` — do not rely on it for those two events until it is rebuilt.** All signatures, topics, and selectors in this document were computed directly from the current `src/AsseteraExchange.sol` source, independent of that file.
+Regenerate after any contract change with `forge build` (emits `out/AsseteraExchange.sol/AsseteraExchange.json`, which should be copied/synced to `abi/`). **The current `abi/AsseteraExchange.json` predates the fee-enrichment of `OfferMade`/`OfferSettled` and the `OrderPlaced`/`OrderCancelled` parity fields — do not rely on it for those four events until it is rebuilt.** All signatures, topics, and selectors in this document were computed directly from the current `src/AsseteraExchange.sol` source, independent of that file.
 
 ---
 
@@ -271,11 +271,11 @@ Each `topic0` below (`keccak256` of the canonical signature) was computed indepe
 ### `OrderPlaced`
 
 ```solidity
-event OrderPlaced(uint256 indexed id, address indexed maker, address sellToken, uint256 sellAmount, address buyToken, uint256 buyAmount, uint64 expireTs);
+event OrderPlaced(uint256 indexed id, address indexed maker, address sellToken, uint256 sellAmount, address buyToken, uint256 buyAmount, uint64 expireTs, uint16 makerFeeBps, uint16 takerFeeBps, address feeCollector);
 ```
-- **topic0:** `0x30b02d7ba46ca0b62bd7a8b61fa27bac46398a1017ac00cff82412e6c3a9b2eb`
+- **topic0:** `0x97355e9b15ceac24ea3e32052aed14133a1c3c5eb69ed02fb8134f509cc11225`
 - **Indexed:** `id`, `maker`
-- **Data:** `sellToken`, `sellAmount`, `buyToken`, `buyAmount`, `expireTs`
+- **Data:** `sellToken`, `sellAmount`, `buyToken`, `buyAmount`, `expireTs`, `makerFeeBps`, `takerFeeBps`, `feeCollector`
 
 | Field | Description |
 |---|---|
@@ -284,17 +284,22 @@ event OrderPlaced(uint256 indexed id, address indexed maker, address sellToken, 
 | `sellToken`, `sellAmount` | escrowed leg |
 | `buyToken`, `buyAmount` | desired leg at placement |
 | `expireTs` | `0` = no expiry |
+| `makerFeeBps`, `takerFeeBps`, `feeCollector` | fee terms snapshotted onto the order from the fee attestation (same fields `OfferMade` carries at creation) — mirrored back out in `OrderFilled`/`OrderPartiallyFilled` at fill time |
 
 ---
 
 ### `OrderCancelled`
 
 ```solidity
-event OrderCancelled(uint256 indexed id, address indexed maker);
+event OrderCancelled(uint256 indexed id, address indexed maker, uint256 remainingQuantity);
 ```
-- **topic0:** `0xc0362da6f2ff36b382b34aec0814f6b3cdf89f5ef282a1d1f114d0c0b036d596`
+- **topic0:** `0xc4058ebc534b64ecb27b2d4eaa1904f98997ec18ebe6ada4117593dde89478cc`
 - **Indexed:** `id`, `maker`
-- **Data:** *(none)*
+- **Data:** `remainingQuantity`
+
+| Field | Description |
+|---|---|
+| `remainingQuantity` | `sellToken` amount refunded to `maker` (the order's unfilled balance at cancellation) |
 
 Always unattested — `cancelOrder` never requires a KYC attestation, so no `KycConsumed` event accompanies it.
 
@@ -538,25 +543,31 @@ event OfferSettled(uint256 indexed id, address indexed by, uint256 makerReceived
 
 ## 5. Schema versioning — breaking change
 
-The checked-in `abi/AsseteraExchange.json` (last built before fee support was added to offers) has **stale topic0 hashes** for two events. If any indexer is currently subscribed to the old topics, it will silently stop matching once the enriched contract is deployed:
+The checked-in `abi/AsseteraExchange.json` (last built before fee support was added to offers, and before `OrderPlaced`/`OrderCancelled` were brought to parity with the offer-side events) has **stale topic0 hashes** for four events. If any indexer is currently subscribed to the old topics, it will silently stop matching once the enriched contract is deployed:
 
-| Event | Legacy topic0 (pre-fee, 8/4 params) | Current topic0 (post-fee) |
+| Event | Legacy topic0 | Current topic0 |
 |---|---|---|
 | `OfferMade` | `0x547283f9a0401a8e098b3155b4d4c0f9bf7869b8ecb4c52f21c976711e8c0d8d` | `0x9a2215dd4757ce4fb8f33ba1aa34263336106138872458642dd644b63b367aa0` |
 | `OfferSettled` | `0x0d2bd4eb3b4bff159e439b937b915dc9bf99da19cac03d49bfab382a2340154f` | `0xd56117b42362b08e3c76f631c76916c329307575ac77d99398dc012b03c26223` |
+| `OrderPlaced` | `0x30b02d7ba46ca0b62bd7a8b61fa27bac46398a1017ac00cff82412e6c3a9b2eb` | `0x97355e9b15ceac24ea3e32052aed14133a1c3c5eb69ed02fb8134f509cc11225` |
+| `OrderCancelled` | `0xc0362da6f2ff36b382b34aec0814f6b3cdf89f5ef282a1d1f114d0c0b036d596` | `0xc4058ebc534b64ecb27b2d4eaa1904f98997ec18ebe6ada4117593dde89478cc` |
 
 Legacy signatures (for reference, do not use going forward):
 ```solidity
 event OfferMade(uint256 indexed id, address indexed maker, address indexed taker, address makerToken, uint256 makerAmount, address takerToken, uint256 takerAmount, uint64 expireTs);
 event OfferSettled(uint256 indexed id, address indexed operator, uint256 makerReceived, uint256 takerReceived);
+event OrderPlaced(uint256 indexed id, address indexed maker, address sellToken, uint256 sellAmount, address buyToken, uint256 buyAmount, uint64 expireTs);
+event OrderCancelled(uint256 indexed id, address indexed maker);
 ```
+
+`OrderPlaced` gained `makerFeeBps`/`takerFeeBps`/`feeCollector` (parity with `OfferMade`, which already carried fee terms at creation). `OrderCancelled` gained `remainingQuantity` (parity with `OfferCancelled`, which already carried the refunded amounts).
 
 Action items for indexer/API teams:
 - Subscribe to the **current** topic0 values listed in §4, not the ones in the stale ABI file.
-- If backfilling historical logs across a deployment that was upgraded from a pre-fee implementation, both topics may appear in the log history — branch decoding on `topics[0]`.
+- If backfilling historical logs across a deployment that was upgraded from a pre-enrichment implementation, both topics may appear in the log history for each event above — branch decoding on `topics[0]`.
 - Rebuild `abi/AsseteraExchange.json` from source (`forge build`) before treating it as authoritative again; all other events/functions in the current committed ABI file match this document.
 
-All other events (`OrderPlaced`, `OrderFilled`, `OrderPartiallyFilled`, `OrderSettled`, etc.) are unchanged between the committed ABI and current source.
+All other events (`OrderFilled`, `OrderPartiallyFilled`, `OrderSettled`, etc.) are unchanged between the committed ABI and current source.
 
 ### Fee decoupling (⚠️ off-chain-breaking, coordinated release)
 

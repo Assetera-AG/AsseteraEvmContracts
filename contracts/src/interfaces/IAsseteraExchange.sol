@@ -41,9 +41,12 @@ interface IAsseteraExchange is IKycGate, IFeeGate {
         uint256 sellAmount,
         address buyToken,
         uint256 buyAmount,
-        uint64 expireTs
+        uint64 expireTs,
+        uint16 makerFeeBps,
+        uint16 takerFeeBps,
+        address feeCollector
     );
-    event OrderCancelled(uint256 indexed id, address indexed maker);
+    event OrderCancelled(uint256 indexed id, address indexed maker, uint256 remainingQuantity);
     event OrderFilled(
         uint256 indexed id,
         address indexed maker,

@@ -23,9 +23,12 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
         uint256 sellAmount,
         address buyToken,
         uint256 buyAmount,
-        uint64 expireTs
+        uint64 expireTs,
+        uint16 makerFeeBps,
+        uint16 takerFeeBps,
+        address feeCollector
     );
-    event OrderCancelled(uint256 indexed id, address indexed maker);
+    event OrderCancelled(uint256 indexed id, address indexed maker, uint256 remainingQuantity);
     /// @dev Emitted when an order is completely filled (remainingQuantity == 0).
     ///      Includes fee amounts and collector for indexer/client cost disclosure.
     event OrderFilled(
@@ -182,7 +185,7 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
         });
 
         IERC20(sellToken).safeTransferFrom(maker, address(this), sellAmount);
-        emit OrderPlaced(id, maker, sellToken, sellAmount, buyToken, buyAmount, expireTs);
+        emit OrderPlaced(id, maker, sellToken, sellAmount, buyToken, buyAmount, expireTs, makerFeeBps, takerFeeBps, feeCollector);
     }
 
     /// @notice Maker self-cancel. Never requires a KYC attestation — a user must
@@ -196,7 +199,7 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
 
         o.status = OrderStatus.Cancelled;
         IERC20(o.sellToken).safeTransfer(o.maker, o.remainingQuantity);
-        emit OrderCancelled(id, o.maker);
+        emit OrderCancelled(id, o.maker, o.remainingQuantity);
     }
 
     // --------------------------------------------------------------------- //
