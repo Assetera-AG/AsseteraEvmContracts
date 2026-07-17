@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.1](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v2.0.0...evm-contracts-v2.0.1) (2026-07-17)
+
+
+### Bug Fixes
+
+* **sdk:** redeploy AsseteraExchange to Amoy/Sepolia with order/offer event parity ([#33](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/33)) ([f37eebc](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/f37eebcb500a648a8d57bf3a74a20ce05c6b2634))
+
 ## [2.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v1.0.0...evm-contracts-v2.0.0) (2026-07-13)
 
 
