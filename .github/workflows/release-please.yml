@@ -22,7 +22,7 @@ jobs:
     outputs:
       release_created: ${{ steps.release.outputs['packages/sdk--release_created'] }}
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         id: release
         with:
           config-file: release-please-config.json
@@ -45,7 +45,7 @@ jobs:
         with:
           version: stable
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24 # ships npm >= 11.5.1 (required for OIDC); we still pin below to be safe
           registry-url: "https://registry.npmjs.org"

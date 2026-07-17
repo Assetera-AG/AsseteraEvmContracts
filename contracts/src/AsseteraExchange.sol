@@ -62,9 +62,9 @@ contract AsseteraExchange is
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         // OPERATOR_ROLE is not granted here — the operator param was dropped from this
-        // initializer (commit 78aee84). Re-enabling admin/OperatorFunctions.sol requires
+        // initializer (commit 78aee84). Re-enabling docs/parked/OperatorFunctions.sol requires
         // either a new initializer param (fresh deploy) or a reinitializer step to grant
-        // OPERATOR_ROLE on an existing proxy — see admin/OperatorFunctions.sol re-enable notes.
+        // OPERATOR_ROLE on an existing proxy — see docs/parked/OperatorFunctions.sol re-enable notes.
         _grantRole(KYC_OPERATOR_ROLE, kycSigner);
         _grantRole(FEE_OPERATOR_ROLE, feeSigner);
 

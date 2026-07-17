@@ -15,7 +15,7 @@ ERC-2771 meta-transactions. The contract is **UUPS-upgradeable** (ERC-1967) and 
 | Contract | Path | What it is |
 |---|---|---|
 | `AsseteraExchange` | [`src/AsseteraExchange.sol`](src/AsseteraExchange.sol) | The exchange. UUPS proxy; escrow limit orders + counter-offer negotiation; KYC-attestation gated; ERC-2771 gasless; per-pair maker/taker fees. |
-| `FaucetToken` | [`src/FaucetToken.sol`](src/FaucetToken.sol) | Minimal ERC20 + EIP-2612 permit with an open faucet — the mock `mUSDC` (6 dp) and `mRWA` (18 dp) test tokens. **Testnet only.** |
+| `FaucetToken` | [`test/mocks/FaucetToken.sol`](test/mocks/FaucetToken.sol) | Minimal ERC20 + EIP-2612 permit with an open faucet — the mock `mUSDC` (6 dp) and `mRWA` (18 dp) test tokens. **Testnet only, not part of the production `src/` surface.** |
 
 ### Roles
 
@@ -27,7 +27,7 @@ ERC-2771 meta-transactions. The contract is **UUPS-upgradeable** (ERC-1967) and 
 ## Layout
 
 ```
-src/       contracts (AsseteraExchange, FaucetToken)
+src/       production contract surface (AsseteraExchange)
 script/    Foundry deploy/verify/upgrade scripts
 test/      forge tests (+ test/mocks/)
 docs/      FUNCTIONAL_SPEC.md, INDEXER_EVENT_SCHEMA.md

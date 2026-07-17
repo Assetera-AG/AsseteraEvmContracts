@@ -7,11 +7,17 @@ import {KycGate} from "../gates/KycGate.sol";
 import {FeeMath} from "../libs/FeeMath.sol";
 
 // ============================================================================
-// PARKED (AC-246) — operator-role functions.
+// PARKED (AC-246) — operator-role functions. NOT COMPILED, NOT DEPLOYED.
+//
+// This file lives under `docs/parked/` on purpose: it is outside the Foundry
+// source tree (`src/`), so it is not compiled, not part of any deployed
+// bytecode, and explicitly out of audit scope (see `contracts/AUDIT-SCOPE.md`).
+// It is retained as a reference implementation, not live code — the import
+// paths above are written relative to its re-enable home (`src/admin/`).
 //
 // Standard operation needs no operator actions: settlement/matching isn't done
-// on-chain by an operator. `settle` and `refund` are parked here — commented
-// out, not deleted — so they can be re-enabled later via a single UUPS
+// on-chain by an operator. `settle` and `refund` are parked here — kept as a
+// reference, not deleted — so they can be re-enabled later via a single UUPS
 // upgrade if ever needed, without carrying live, reachable, rarely exercised
 // privileged code paths on the active surface today.
 //
@@ -28,16 +34,18 @@ import {FeeMath} from "../libs/FeeMath.sol";
 // cancel/return everyone's orders and offers — no operator role needed.
 //
 // To re-enable:
-//   1. Delete the `/*` / `*/` markers below to uncomment this whole block.
-//   2. Add `OperatorFunctions` to `OrderBook`'s `is` list (already inherits
+//   1. Move this file back to `src/admin/OperatorFunctions.sol` (the import
+//      paths above are already written relative to that location).
+//   2. Delete the `/*` / `*/` markers below to uncomment this whole block.
+//   3. Add `OperatorFunctions` to `OrderBook`'s `is` list (already inherits
 //      `KycGate`, so no further wiring is needed there).
-//   3. Grant `OPERATOR_ROLE` to the operator. The `operator` param was dropped
+//   4. Grant `OPERATOR_ROLE` to the operator. The `operator` param was dropped
 //      from `AsseteraExchange.sol::initialize` (commit 78aee84), so there is no
 //      commented-out grant line to uncomment — either add an `operator` param
 //      back to `initialize` (breaking initializer change, needs a fresh deploy
 //      like the `feeSigner` addition did) or add a `reinitializer` function that
 //      grants `OPERATOR_ROLE` on an already-initialized proxy.
-//   4. Deploy a new implementation and call `upgradeToAndCall`.
+//   5. Deploy a new implementation and call `upgradeToAndCall`.
 // ============================================================================
 
 /*
