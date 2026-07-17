@@ -166,7 +166,7 @@ interface IAsseteraExchange is IKycGate, IFeeGate {
     // --------------------------------------------------------------------- //
     //                           Admin escape hatch                           //
     // --------------------------------------------------------------------- //
-    // settle/refund are parked (AC-246) — see admin/OperatorFunctions.sol.
+    // settle/refund are parked (AC-246) — see docs/parked/OperatorFunctions.sol.
 
     function cancelOrderForUser(uint256 id, address recipient) external;
 

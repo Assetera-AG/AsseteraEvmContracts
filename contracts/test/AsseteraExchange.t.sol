@@ -12,7 +12,7 @@ import {IFeeGate} from "../src/interfaces/IFeeGate.sol";
 import {OrderBook} from "../src/core/OrderBook.sol";
 import {OfferBook} from "../src/core/OfferBook.sol";
 import {ExchangeAdmin} from "../src/admin/ExchangeAdmin.sol";
-import {FaucetToken} from "../src/FaucetToken.sol";
+import {FaucetToken} from "./mocks/FaucetToken.sol";
 import {AsseteraExchangeV2} from "./mocks/AsseteraExchangeV2.sol";
 import {ReentrantToken} from "./mocks/ReentrantToken.sol";
 import {FeeOnTransferToken} from "./mocks/FeeOnTransferToken.sol";

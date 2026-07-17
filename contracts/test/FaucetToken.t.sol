@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {FaucetToken} from "../src/FaucetToken.sol";
+import {FaucetToken} from "./mocks/FaucetToken.sol";
 
 contract FaucetTokenTest is Test {
     FaucetToken internal usdc; // 6 decimals

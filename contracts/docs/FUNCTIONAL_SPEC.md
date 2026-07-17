@@ -27,7 +27,7 @@ Identity is resolved via `_msgSender()` (ERC-2771), so callers can be plain EOAs
 | Actor | Role constant | Capabilities |
 |---|---|---|
 | **Admin (multisig)** | `DEFAULT_ADMIN_ROLE` | Upgrade proxy, manage roles, force-cancel orders/offers, toggle KYC gating per action, manage fee collector allowlist, pause/unpause venue |
-| **Operator** *(parked, AC-246)* | `OPERATOR_ROLE` | Not granted while parked. Previously: settle matched orders, refund orders. See `admin/OperatorFunctions.sol`. (Offer settlement is not part of this — `settleOffer` was retired outright, merged into `acceptOffer`.) |
+| **Operator** *(parked, AC-246)* | `OPERATOR_ROLE` | Not granted while parked. Previously: settle matched orders, refund orders. See `docs/parked/OperatorFunctions.sol`. (Offer settlement is not part of this — `settleOffer` was retired outright, merged into `acceptOffer`.) |
 | **KYC Backend** | `KYC_OPERATOR_ROLE` | Sign KYC attestations authorising user actions |
 | **Fee Service** | `FEE_OPERATOR_ROLE` | Sign fee attestations authorising per-pair fee terms on `placeOrder`/`placeOrderWithPermit`/`makeOffer` — a distinct signer from the KYC backend |
 | **Maker** | — | Place orders, place offers, cancel own orders (always unattested), cancel own offers (KYC-gated) |
@@ -236,7 +236,7 @@ Fees are taken from the order's snapshotted `makerFeeBps`/`takerFeeBps` (floor d
 - Both fee legs are paid to the order's `feeCollector`.
 
 #### `settle`, `refund` — parked (AC-246)
-Formerly operator-only (`settle` settled two complementary open orders; `refund` returned an open order's remaining escrow to the maker). Neither is reachable on the active contract — see `admin/OperatorFunctions.sol` for the parked implementations and re-enable steps.
+Formerly operator-only (`settle` settled two complementary open orders; `refund` returned an open order's remaining escrow to the maker). Neither is reachable on the active contract — see `docs/parked/OperatorFunctions.sol` for the parked implementations and re-enable steps.
 
 #### `cancelOrderForUser(id, recipient)`
 Admin-only. Force-cancels any open order and routes escrow to `recipient` (may differ from the maker for compliance routing). Emits `OrderForceCancelled`.
@@ -373,7 +373,7 @@ Each `Action` enum value maps to a boolean in `complianceRequired`. When `false`
 - Storage layout must be preserved across upgrades. The `__gap[42]` reserve leaves room for up to 42 additional storage slots in future versions of `AsseteraExchange` without colliding with inherited contract storage. (Restored from `[41]` after removing the `_blacklist` mapping freed one slot; `usedFeeNonce` still consumes one slot from the original `[42]` reserve.)
 - `initialize(admin, kycSigner, feeSigner)` takes a required `feeSigner` param (granted `FEE_OPERATOR_ROLE`); this is a breaking change to the initializer signature, coordinated with a fresh deploy rather than an in-place upgrade of an already-initialized proxy. The previously-present `operator` param was dropped entirely (commit `78aee84`) since `OPERATOR_ROLE` is unused while parked — see below.
 - If a future upgrade introduces new `complianceRequired` entries (new `Action` enum values), a `reinitializer` function must be included and called via `upgradeToAndCall` to initialise the new storage slots — they default to `false` and must be explicitly set.
-- **Order-level operator functions are parked (AC-246):** `settle`, `refund`, and the `OPERATOR_ROLE` constant are commented out in `admin/OperatorFunctions.sol`, not deleted. `initialize` no longer has an `operator` parameter (dropped in commit `78aee84`), so re-enabling needs either an initializer ABI change (add `operator` back, requiring a fresh deploy) or a `reinitializer` function that grants `OPERATOR_ROLE` on an already-initialized proxy — plus uncommenting the file and wiring `OperatorFunctions` into `OrderBook`'s inheritance, then deploying a new implementation via `upgradeToAndCall`.
+- **Order-level operator functions are parked (AC-246):** `settle`, `refund`, and the `OPERATOR_ROLE` constant are commented out in `docs/parked/OperatorFunctions.sol`, not deleted. `initialize` no longer has an `operator` parameter (dropped in commit `78aee84`), so re-enabling needs either an initializer ABI change (add `operator` back, requiring a fresh deploy) or a `reinitializer` function that grants `OPERATOR_ROLE` on an already-initialized proxy — plus uncommenting the file and wiring `OperatorFunctions` into `OrderBook`'s inheritance, then deploying a new implementation via `upgradeToAndCall`.
 - **`settleOffer` is retired, not parked (AC-246):** its logic is merged into `acceptOffer`, which settles atomically on acceptance. There is nothing to re-enable via upgrade — reintroducing a separate offer-level operator settle step would require new code, not an uncomment.
 
 ---

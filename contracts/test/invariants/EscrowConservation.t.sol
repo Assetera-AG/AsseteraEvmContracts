@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {AsseteraExchange} from "../../src/AsseteraExchange.sol";
 import {ExchangeTypes} from "../../src/types/ExchangeTypes.sol";
-import {FaucetToken} from "../../src/FaucetToken.sol";
+import {FaucetToken} from "../mocks/FaucetToken.sol";
 import {EscrowHandler} from "./EscrowHandler.sol";
 
 /// @notice I-2(b): escrow-conservation invariant/fuzz suite for the security
