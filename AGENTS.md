@@ -66,8 +66,26 @@ so a fresh clone and CI build deterministically. Add/bump with `forge install <o
 `contracts/`) and commit the updated `.gitmodules` + `foundry.lock` + gitlink. Dependabot proposes
 submodule bumps weekly. TypeScript deps are managed by npm workspaces from the repo root.
 
+### Dependency-bump policy (upgradeable contracts)
+
+The exchange is a **UUPS upgradeable proxy**, so a dependency bump is an upgrade-safety question, not just
+a version number. Rules:
+
+- **Never blind-merge a submodule bump.** Dependabot's `gitsubmodule` ecosystem tracks each submodule's
+  default-branch HEAD, so it can propose **non-stable commits (RCs / master)** — check the bump lands on a
+  real, stable release tag; if not, re-pin to the latest stable tag instead of merging the proposed commit.
+- **OZ moves as a pair.** `openzeppelin-contracts` and `openzeppelin-contracts-upgradeable` must always be
+  the **same version** (Dependabot groups them into one PR; keep it that way).
+- **Freeze deps during an external audit** — auditors sign off on a pinned set.
+- **The safety net:** `contracts/script/storage-layout.sh` (a committed storage-layout snapshot, checked in
+  CI) plus `test_Upgrade_PreservesAllStorageAcrossEverySlot` make an OZ bump an *evidenced* decision. OZ v5
+  bases use ERC-7201 namespaced storage, so a clean minor bump yields a **zero-line** layout diff — any diff
+  on a dep bump is a red flag. After an *intended* storage change, re-baseline with
+  `bash script/storage-layout.sh write`.
+
 ## CI
 
 `.github/workflows/ci.yml` runs on every PR: `forge fmt --check` → `solhint` → `forge build` →
-`forge test` (in `contracts/`, via the job's `working-directory`). The **`build`** job is the required
-status check wired into branch protection. Keep it green.
+**storage-layout guard** (`script/storage-layout.sh`) → `forge test` (in `contracts/`, via the job's
+`working-directory`). The **`build`** job is the required status check wired into branch protection. Keep
+it green.

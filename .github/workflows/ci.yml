@@ -40,6 +40,11 @@ jobs:
       - name: Build
         run: forge build --sizes
 
+      - name: Storage layout (upgrade-safety guard)
+        # Fails if the proxy's storage layout drifts from the committed snapshot — including
+        # drift introduced indirectly by a dependency bump. See script/storage-layout.sh.
+        run: bash script/storage-layout.sh
+
       - name: Test
         run: forge test -vvv
         env:

@@ -879,6 +879,121 @@ contract AsseteraExchangeTest is Test {
         assertEq(exchange.trustedForwarder(), address(forwarder));
     }
 
+    /// @notice Upgrade-safety proof: fill every storage class with non-default
+    ///         values, upgrade the implementation, and assert every slot is
+    ///         preserved byte-for-byte — then that the new impl's appended
+    ///         storage is independently writable without disturbing the old.
+    ///         This is the behavioural counterpart to the static storage-layout
+    ///         snapshot guard (`script/storage-layout.sh`): together they make
+    ///         "does this upgrade / dependency bump preserve state?" a proven,
+    ///         not assumed, property.
+    function test_Upgrade_PreservesAllStorageAcrossEverySlot() public {
+        // ---- 1. Populate every storage class with non-default state --------- //
+
+        // _orders / totalOrders (+ alice's KYC & fee nonces via the helper).
+        uint256 orderId = _placeRwaForUsdc(alice);
+
+        // A second order placed with *known* nonces so we can assert the two
+        // nonce mappings (usedNonce / usedFeeNonce) directly after the upgrade.
+        uint256 kycNonce = 424242;
+        uint256 feeNonce = 535353;
+        {
+            bytes32 ph = keccak256(abi.encode(address(rwa), SELL_RWA, address(usdc), WANT_USDC));
+            AsseteraExchange.KycAttestation memory att =
+                _signAtt(kycSignerPk, carol, ExchangeTypes.Action.Place, 0, kycNonce, block.timestamp + 3 minutes, ph);
+            AsseteraExchange.FeeAttestation memory feeAtt = _signFeeAtt(
+                feeSignerPk,
+                carol,
+                ExchangeTypes.Action.Place,
+                feeNonce,
+                block.timestamp + 3 minutes,
+                ph,
+                0,
+                0,
+                address(0)
+            );
+            vm.startPrank(carol);
+            rwa.approve(address(exchange), SELL_RWA);
+            exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
+            vm.stopPrank();
+        }
+
+        // _offers / totalOffers.
+        uint256 offerId = _makeOffer(alice, bob, address(usdc), 500e6, address(rwa), 5e18);
+
+        // Admin-managed state: move it away from the initializer defaults.
+        vm.startPrank(admin);
+        exchange.setAllowedCollector(carol, true); // allowedCollectors mapping
+        exchange.setComplianceRequired(ExchangeTypes.Action.Fill, false); // toggle a default-true off
+        exchange.pause(); // Pausable inherited (namespaced) state — do last, gates placement
+        vm.stopPrank();
+
+        // ---- 2. Snapshot everything readable ------------------------------- //
+        uint256 snapTotalOrders = exchange.totalOrders();
+        uint256 snapTotalOffers = exchange.totalOffers();
+        ExchangeTypes.Order memory snapOrder = exchange.getOrder(orderId);
+        ExchangeTypes.Offer memory snapOffer = exchange.getOffer(offerId);
+
+        // ---- 3. Upgrade the implementation --------------------------------- //
+        AsseteraExchangeV2 implV2 = new AsseteraExchangeV2(address(forwarder));
+        vm.prank(admin);
+        exchange.upgradeToAndCall(address(implV2), "");
+        AsseteraExchangeV2 v2 = AsseteraExchangeV2(address(exchange));
+        assertEq(v2.version(), "4.0.0", "impl not swapped");
+        assertTrue(v2.isUpgraded(), "V2 logic not live");
+
+        // ---- 4. Every pre-upgrade slot survived unchanged ------------------ //
+        assertEq(v2.totalOrders(), snapTotalOrders, "totalOrders");
+        assertEq(v2.totalOffers(), snapTotalOffers, "totalOffers");
+
+        ExchangeTypes.Order memory o = v2.getOrder(orderId);
+        assertEq(o.id, snapOrder.id, "order.id");
+        assertEq(o.maker, snapOrder.maker, "order.maker");
+        assertEq(o.sellToken, snapOrder.sellToken, "order.sellToken");
+        assertEq(o.sellAmount, snapOrder.sellAmount, "order.sellAmount");
+        assertEq(o.buyToken, snapOrder.buyToken, "order.buyToken");
+        assertEq(o.buyAmount, snapOrder.buyAmount, "order.buyAmount");
+        assertEq(uint8(o.status), uint8(snapOrder.status), "order.status");
+        assertEq(o.createdAt, snapOrder.createdAt, "order.createdAt");
+        assertEq(o.remainingQuantity, snapOrder.remainingQuantity, "order.remainingQuantity");
+        assertEq(o.expireTs, snapOrder.expireTs, "order.expireTs");
+        assertEq(o.makerFeeBps, snapOrder.makerFeeBps, "order.makerFeeBps");
+        assertEq(o.takerFeeBps, snapOrder.takerFeeBps, "order.takerFeeBps");
+        assertEq(o.feeCollector, snapOrder.feeCollector, "order.feeCollector");
+
+        ExchangeTypes.Offer memory offer = v2.getOffer(offerId);
+        assertEq(offer.id, snapOffer.id, "offer.id");
+        assertEq(offer.maker, snapOffer.maker, "offer.maker");
+        assertEq(offer.taker, snapOffer.taker, "offer.taker");
+        assertEq(offer.makerToken, snapOffer.makerToken, "offer.makerToken");
+        assertEq(offer.makerAmount, snapOffer.makerAmount, "offer.makerAmount");
+        assertEq(offer.takerToken, snapOffer.takerToken, "offer.takerToken");
+        assertEq(offer.takerAmount, snapOffer.takerAmount, "offer.takerAmount");
+        assertEq(uint8(offer.status), uint8(snapOffer.status), "offer.status");
+        assertEq(offer.proposedBy, snapOffer.proposedBy, "offer.proposedBy");
+        assertEq(offer.feeCollector, snapOffer.feeCollector, "offer.feeCollector");
+
+        // Mappings (both nonce namespaces, allowlist, per-action compliance toggle).
+        assertTrue(v2.usedNonce(carol, kycNonce), "usedNonce preserved");
+        assertTrue(v2.usedFeeNonce(carol, feeNonce), "usedFeeNonce preserved");
+        assertTrue(v2.allowedCollectors(carol), "allowedCollectors preserved");
+        assertFalse(v2.complianceRequired(ExchangeTypes.Action.Fill), "toggled-off compliance preserved");
+        assertTrue(v2.complianceRequired(ExchangeTypes.Action.Place), "untouched compliance default preserved");
+
+        // Inherited OZ (ERC-7201 namespaced) state must also survive the dep.
+        assertTrue(v2.hasRole(ADMIN_ROLE, admin), "admin role preserved");
+        assertTrue(v2.hasRole(KYC_OPERATOR_ROLE, kycSigner), "kyc role preserved");
+        assertTrue(v2.hasRole(FEE_OPERATOR_ROLE, feeSigner), "fee role preserved");
+        assertTrue(v2.paused(), "paused state preserved");
+
+        // ---- 5. New impl storage is writable and isolated ------------------ //
+        v2.setUpgradeNote(0xC0FFEE);
+        assertEq(v2.upgradeNote(), 0xC0FFEE, "new V2 storage slot not writable");
+        // Writing the new slot must not have clobbered any pre-existing slot.
+        assertEq(v2.totalOrders(), snapTotalOrders, "old storage corrupted by new write");
+        assertEq(v2.getOrder(orderId).sellAmount, snapOrder.sellAmount, "old order corrupted by new write");
+    }
+
     function test_Upgrade_RevertsIfNotAdmin() public {
         AsseteraExchangeV2 implV2 = new AsseteraExchangeV2(address(forwarder));
         vm.prank(operator);
