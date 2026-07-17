@@ -62,7 +62,10 @@ contract AsseteraExchangeTest is Test {
         uint256 sellAmount,
         address buyToken,
         uint256 buyAmount,
-        uint64 expireTs
+        uint64 expireTs,
+        uint16 makerFeeBps,
+        uint16 takerFeeBps,
+        address feeCollector
     );
     event OrderForceCancelled(uint256 indexed id, address indexed maker, address recipient, address indexed admin);
 
@@ -301,7 +304,7 @@ contract AsseteraExchangeTest is Test {
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
         vm.expectEmit(true, true, false, true, address(exchange));
-        emit OrderPlaced(1, alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0);
+        emit OrderPlaced(1, alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, 0, 0, address(0));
         uint256 id = exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
 
