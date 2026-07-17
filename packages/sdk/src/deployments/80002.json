@@ -8,12 +8,12 @@
     "MockUSDC": "0xf4e1049Ec8b2C8CD2e5a6554acA3f5c267951043"
   },
   "implementations": {
-    "AsseteraExchange": "0xFF1299F40672B546B19A3939f1eB5Dad3Bf15B48"
+    "AsseteraExchange": "0x4744B45bBe402F87b90E4c2926D82f506BFDb09D"
   },
   "metadata": {
     "admin": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",
-    "deployBlock": 42134204,
-    "deployTimestamp": 1783952602,
+    "deployBlock": 42470077,
+    "deployTimestamp": 1784288475,
     "deployer": "0x5Bf64d5d83636fb1773811DA467f8f1c6bE7a283",
     "feeSigner": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",
     "kycSigner": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",
