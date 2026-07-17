@@ -38,7 +38,7 @@ if [[ ! -f "$SNAPSHOT" ]]; then
   exit 1
 fi
 
-if diff -u "$SNAPSHOT" "$CURRENT"; then
+if diff -u <(tr -d '\r' <"$SNAPSHOT") <(tr -d '\r' <"$CURRENT"); then
   echo "✅ ${CONTRACT} storage layout unchanged"
 else
   cat >&2 <<'EOF'
