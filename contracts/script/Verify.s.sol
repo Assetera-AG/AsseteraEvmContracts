@@ -69,7 +69,7 @@ contract Verify is Script {
             );
         }
 
-        // 5. OPERATOR_ROLE is parked (AC-246) — see admin/OperatorFunctions.sol.
+        // 5. OPERATOR_ROLE is parked (AC-246) — see docs/parked/OperatorFunctions.sol.
         //    No operator role check while parked; re-add when re-enabled:
         //    _check(
         //        "operator holds OPERATOR_ROLE",
