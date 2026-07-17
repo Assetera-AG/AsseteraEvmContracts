@@ -61,7 +61,10 @@ contract AsseteraExchange is
         __EIP712_init("AsseteraExchange", "1");
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
-        // _grantRole(OPERATOR_ROLE, operator); // parked (AC-246) — see admin/OperatorFunctions.sol
+        // OPERATOR_ROLE is not granted here — the operator param was dropped from this
+        // initializer (commit 78aee84). Re-enabling docs/parked/OperatorFunctions.sol requires
+        // either a new initializer param (fresh deploy) or a reinitializer step to grant
+        // OPERATOR_ROLE on an existing proxy — see docs/parked/OperatorFunctions.sol re-enable notes.
         _grantRole(KYC_OPERATOR_ROLE, kycSigner);
         _grantRole(FEE_OPERATOR_ROLE, feeSigner);
 

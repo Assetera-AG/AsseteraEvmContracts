@@ -54,7 +54,7 @@ All state-changing functions accept a `KycAttestation calldata att` (or two, for
 ### Operator actions (`OPERATOR_ROLE`) — order-level parked, offer-level retired (AC-246)
 
 `settle`, `refund`, and the `OPERATOR_ROLE` constant itself are commented out
-(`src/admin/OperatorFunctions.sol`), not part of the deployed ABI. Standard
+(`docs/parked/OperatorFunctions.sol`), not part of the deployed ABI. Standard
 order operation needs no operator actions — settlement/matching isn't done
 on-chain. `OrderSettled`/`OrderRefunded` are likewise not emitted.
 `settleOffer` is different: it isn't parked, it's **retired** — its logic was
@@ -586,7 +586,7 @@ The on-chain compliance blacklist (`setBlacklisted`, `BlacklistUpdated`, `Accoun
 
 Standard operation needs no operator actions — settlement/matching isn't done
 on-chain by an operator. Order-level `settle` and `refund` are parked
-(commented out in `src/admin/OperatorFunctions.sol`, not deleted) so they can be
+(commented out in `docs/parked/OperatorFunctions.sol`, not deleted) so they can be
 re-enabled later via a single UUPS upgrade if ever needed. Offer-level
 `settleOffer` is **retired outright, not parked** — its transfer/fee logic was
 merged directly into `acceptOffer`, which now settles atomically on acceptance

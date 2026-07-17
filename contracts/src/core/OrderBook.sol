@@ -12,7 +12,7 @@ import {FeeMath} from "../libs/FeeMath.sol";
 /// @title OrderBook
 /// @notice Order lifecycle: place, self-cancel, fill, and permissionless sweep
 ///         of expired orders. Operator-only settle/refund are parked — see
-///         admin/OperatorFunctions.sol (AC-246).
+///         docs/parked/OperatorFunctions.sol (AC-246).
 abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
     using SafeERC20 for IERC20;
 
