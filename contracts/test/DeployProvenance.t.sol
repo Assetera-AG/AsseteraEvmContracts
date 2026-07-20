@@ -39,9 +39,7 @@ contract DeployProvenanceTest is Test {
     function _writeFixture(string memory path, uint256 blk, uint256 ts) internal {
         vm.writeFile(
             path,
-            string.concat(
-                '{"metadata":{"deployBlock":', vm.toString(blk), ',"deployTimestamp":', vm.toString(ts), "}}"
-            )
+            string.concat('{"metadata":{"deployBlock":', vm.toString(blk), ',"deployTimestamp":', vm.toString(ts), "}}")
         );
     }
 
