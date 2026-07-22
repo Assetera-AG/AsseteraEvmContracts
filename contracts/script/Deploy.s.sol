@@ -98,12 +98,16 @@ contract Deploy is DeployBase {
         //    front-run window and the address is identical across chains and across future upgrades).
         bytes32 proxySalt = _salt(deployer, "AsseteraExchange.proxy");
         exchangeProxy = computeCreate3Address(proxySalt, deployer);
+        // Only a fresh proxy deployment sets the recorded creation block/timestamp; an upgrade or no-op re-run
+        // must PRESERVE the existing provenance (see DeployBase._provenance / AC-665).
+        bool proxyCreated = false;
         if (!_hasCode(exchangeProxy)) {
             bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, kycSigner, feeSigner));
             bytes memory proxyInit =
                 abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(exchangeImpl, initData));
             address deployed = create3(proxySalt, proxyInit);
             require(deployed == exchangeProxy, "proxy create3 mismatch");
+            proxyCreated = true;
             console2.log("AsseteraExchange proxy deployed:", exchangeProxy);
             console2.log("  admin:", admin);
         } else if (_currentImpl(exchangeProxy) != exchangeImpl) {
@@ -117,7 +121,7 @@ contract Deploy is DeployBase {
 
         vm.stopBroadcast();
 
-        _save(deployer);
+        _save(deployer, proxyCreated);
 
         console2.log("");
         console2.log("=== Deployment summary (chainId %s) ===", chainId);

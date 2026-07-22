@@ -104,8 +104,35 @@ abstract contract DeployBase is CreateXScript {
         return (deployed, true);
     }
 
-    /// @dev Serialize and write the full deployment file (chainId/CAIP-2 at the top level).
-    function _save(address deployer) internal {
+    /// @dev The exchange PROXY's creation block/timestamp — the indexer's start cursor (ADR-0006). Because the
+    ///      proxy is a CREATE3 address that survives implementation upgrades, an upgrade re-run leaves the proxy
+    ///      untouched, so its provenance MUST NOT move. Stamp the current block ONLY when the proxy was actually
+    ///      created this run; otherwise preserve whatever the deployment file already records.
+    ///
+    ///      This closes AC-665: the previous `_save` wrote `block.number`/`block.timestamp` unconditionally, so
+    ///      every impl upgrade silently pushed `deployBlock` forward to the upgrade block. Consumers that start
+    ///      indexing at `deployBlock` (the live indexer + the reconcile job) then skipped all history between the
+    ///      real proxy-creation block and the upgrade — surfacing as an incomplete activity ledger.
+    function _provenance(bool proxyCreated) internal view returns (uint256 deployBlock, uint256 deployTimestamp) {
+        if (!proxyCreated && vm.exists(deploymentPath)) {
+            string memory prior = vm.readFile(deploymentPath);
+            // Preserve prior values when present; fall back to the current block only if the file predates
+            // these fields (older records / a first save that never wrote them).
+            deployBlock = vm.keyExistsJson(prior, ".metadata.deployBlock")
+                ? vm.parseJsonUint(prior, ".metadata.deployBlock")
+                : block.number;
+            deployTimestamp = vm.keyExistsJson(prior, ".metadata.deployTimestamp")
+                ? vm.parseJsonUint(prior, ".metadata.deployTimestamp")
+                : block.timestamp;
+            return (deployBlock, deployTimestamp);
+        }
+        return (block.number, block.timestamp);
+    }
+
+    /// @dev Serialize and write the full deployment file (chainId/CAIP-2 at the top level). `proxyCreated` is
+    ///      true only when the exchange proxy was newly deployed this run (not an impl upgrade or a no-op re-run);
+    ///      it gates whether `deployBlock`/`deployTimestamp` are re-stamped or preserved (see `_provenance`).
+    function _save(address deployer, bool proxyCreated) internal {
         // MockUSDC/MockRWA only exist on testnets (see `_isTestnet`); omit their keys entirely on chains
         // where the faucet wasn't deployed rather than recording a misleading 0x0. AsseteraExchange is
         // serialized last so its return value carries the full "contracts" object regardless.
@@ -118,6 +145,8 @@ abstract contract DeployBase is CreateXScript {
         string memory im = "implementations";
         string memory imJson = vm.serializeAddress(im, "AsseteraExchange", exchangeImpl);
 
+        (uint256 deployBlock, uint256 deployTimestamp) = _provenance(proxyCreated);
+
         string memory m = "metadata";
         vm.serializeAddress(m, "deployer", deployer);
         vm.serializeAddress(m, "admin", admin);
@@ -125,8 +154,8 @@ abstract contract DeployBase is CreateXScript {
         vm.serializeAddress(m, "kycSigner", kycSigner);
         vm.serializeAddress(m, "feeSigner", feeSigner);
         vm.serializeAddress(m, "relayer", relayer);
-        vm.serializeUint(m, "deployBlock", block.number);
-        string memory mJson = vm.serializeUint(m, "deployTimestamp", block.timestamp);
+        vm.serializeUint(m, "deployBlock", deployBlock);
+        string memory mJson = vm.serializeUint(m, "deployTimestamp", deployTimestamp);
 
         string memory root = "root";
         vm.serializeUint(root, "chainId", chainId);

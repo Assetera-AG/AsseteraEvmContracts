@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.2](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v2.0.1...evm-contracts-v2.0.2) (2026-07-20)
+
+
+### Bug Fixes
+
+* **deploy:** preserve proxy deployBlock across impl upgrades (AC-668) ([#35](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/35)) ([f432035](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/f43203544bff20bcc9765eaae02cba47baba8dca))
+
 ## [2.0.1](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v2.0.0...evm-contracts-v2.0.1) (2026-07-17)
 
 
