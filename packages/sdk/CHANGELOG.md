@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v2.0.2...evm-contracts-v3.0.0) (2026-07-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **exchange:** FEE_TYPEHASH gains `address feeToken`, so the fee service must sign the new type. Fill/settle events carry gross amounts plus feeToken; OrderPartiallyFilled additionally carries filledBuyAmount.
+
+### Features
+
+* **exchange:** denominate both fees in the settlement currency, exclusive on the payer (AC-833) ([#39](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/39)) ([8360e3d](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/8360e3d74e87f9ef9ee7085ff4bf48d874d34e7c))
+
 ## [2.0.2](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v2.0.1...evm-contracts-v2.0.2) (2026-07-20)
 
 
