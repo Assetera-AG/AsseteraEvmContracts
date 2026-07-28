@@ -1588,7 +1588,10 @@ contract AsseteraExchangeTest is Test {
             maker, taker, makerToken, makerAmt, takerToken, takerAmt, makerFeeBps, takerFeeBps, feeCollector
         );
         vm.startPrank(maker);
-        FaucetToken(makerToken).approve(address(exchange), makerAmt);
+        // AC-833: when the maker proposes the CURRENCY leg they are the currency payer,
+        // so the escrow is makerAmt + their own fee. Approving only makerAmt is exactly
+        // the shortfall the front-ends have to fix too.
+        FaucetToken(makerToken).approve(address(exchange), makerAmt + (makerAmt * makerFeeBps) / 10_000);
         id = exchange.makeOffer(taker, makerToken, makerAmt, takerToken, takerAmt, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -3330,6 +3333,339 @@ contract AsseteraExchangeTest is Test {
         assertEq(usdc.balanceOf(carol) - carolUsdcBefore, takerFeeAmt, "carol gets taker fee in USDC");
         assertEq(rwa.balanceOf(carol) - carolRwaBefore, 0, "carol gets no RWA");
         assertEq(usdc.balanceOf(alice), aliceUsdcBefore + WANT_USDC, "maker receives full USDC (no maker fee)");
+    }
+
+    // ===================================================================== //
+    //     AC-833 — currency-denominated, payer-exclusive fee model          //
+    // ===================================================================== //
+
+    uint256 internal constant AC833_RWA = 10e18; // the asset leg
+    uint256 internal constant AC833_USDC = 100e6; // the notional, in settlement currency
+    uint16 internal constant AC833_BPS = 100; // 1 %
+
+    /// Place a BUY-SIDE order: the maker sells the CURRENCY and buys the asset, which
+    /// makes them the currency payer — so placement must escrow notional + maker fee.
+    function _placeUsdcForRwaWithFee(
+        address maker,
+        uint256 usdcAmt,
+        uint256 rwaWant,
+        uint16 makerFeeBps,
+        uint16 takerFeeBps,
+        address feeCollector
+    ) internal returns (uint256 id) {
+        AsseteraExchange.KycAttestation memory att = _attestPlace(maker, address(usdc), usdcAmt, address(rwa), rwaWant);
+        AsseteraExchange.FeeAttestation memory feeAtt = _feePlaceWithFee(
+            maker, address(usdc), usdcAmt, address(rwa), rwaWant, makerFeeBps, takerFeeBps, feeCollector
+        );
+        vm.startPrank(maker);
+        usdc.approve(address(exchange), usdcAmt + (usdcAmt * makerFeeBps) / 10_000);
+        id = exchange.placeOrder(address(usdc), usdcAmt, address(rwa), rwaWant, 0, att, feeAtt);
+        vm.stopPrank();
+    }
+
+    /// The worked example from the ticket, asserted to the wei on every account.
+    /// Maker sells 10 mRWA wanting 100 mUSDC, 1 % / 1 %, taker fills fully.
+    function test_AC833_CanonicalExample_ExactLedgerOnEveryAccount() public {
+        vm.prank(admin);
+        exchange.setAllowedCollector(carol, true);
+
+        AsseteraExchange.KycAttestation memory placeAtt =
+            _attestPlace(alice, address(rwa), AC833_RWA, address(usdc), AC833_USDC);
+        AsseteraExchange.FeeAttestation memory placeFee =
+            _feePlaceWithFee(alice, address(rwa), AC833_RWA, address(usdc), AC833_USDC, AC833_BPS, AC833_BPS, carol);
+        vm.startPrank(alice);
+        rwa.approve(address(exchange), AC833_RWA);
+        uint256 id = exchange.placeOrder(address(rwa), AC833_RWA, address(usdc), AC833_USDC, 0, placeAtt, placeFee);
+        vm.stopPrank();
+
+        uint256 aliceUsdc = usdc.balanceOf(alice);
+        uint256 aliceRwa = rwa.balanceOf(alice);
+        uint256 bobUsdc = usdc.balanceOf(bob);
+        uint256 bobRwa = rwa.balanceOf(bob);
+        uint256 carolUsdc = usdc.balanceOf(carol);
+        uint256 carolRwa = rwa.balanceOf(carol);
+
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
+        vm.startPrank(bob);
+        usdc.approve(address(exchange), 101e6);
+        exchange.fillOrder(id, AC833_RWA, att);
+        vm.stopPrank();
+
+        // maker +99 USDC / −10 RWA (the RWA left escrow at placement, so no delta here)
+        assertEq(usdc.balanceOf(alice), aliceUsdc + 99e6, "maker +99 USDC");
+        assertEq(rwa.balanceOf(alice), aliceRwa, "maker RWA already escrowed");
+        // taker −101 USDC / +10 RWA
+        assertEq(usdc.balanceOf(bob), bobUsdc - 101e6, "taker -101 USDC");
+        assertEq(rwa.balanceOf(bob), bobRwa + 10e18, "taker +10 RWA");
+        // collector +2 USDC / +0 RWA — the whole point of the ticket
+        assertEq(usdc.balanceOf(carol), carolUsdc + 2e6, "collector +2 USDC");
+        assertEq(rwa.balanceOf(carol), carolRwa, "collector +0 RWA");
+        // and the venue keeps nothing
+        assertEq(usdc.balanceOf(address(exchange)), 0, "no USDC residue");
+        assertEq(rwa.balanceOf(address(exchange)), 0, "no RWA residue");
+    }
+
+    function test_AC833_BuySideOrder_EscrowsNotionalPlusMakerFee() public {
+        vm.prank(admin);
+        exchange.setAllowedCollector(carol, true);
+
+        uint256 before = usdc.balanceOf(alice);
+        uint256 id = _placeUsdcForRwaWithFee(alice, AC833_USDC, AC833_RWA, AC833_BPS, AC833_BPS, carol);
+
+        assertEq(usdc.balanceOf(alice), before - AC833_USDC - 1e6, "maker paid notional + own fee");
+        assertEq(usdc.balanceOf(address(exchange)), AC833_USDC + 1e6, "exchange holds both");
+        assertEq(exchange.getOrder(id).escrowedFee, 1e6, "escrowedFee tracked explicitly");
+        assertEq(exchange.getOrder(id).remainingQuantity, AC833_USDC, "notional unchanged by the fee");
+    }
+
+    /// The mirror image of the canonical case: the MAKER is the currency payer.
+    function test_AC833_BuySideOrder_Fill_AssetGross_CurrencyNetToTaker() public {
+        vm.prank(admin);
+        exchange.setAllowedCollector(carol, true);
+        uint256 id = _placeUsdcForRwaWithFee(alice, AC833_USDC, AC833_RWA, AC833_BPS, AC833_BPS, carol);
+
+        uint256 aliceRwa = rwa.balanceOf(alice);
+        uint256 bobUsdc = usdc.balanceOf(bob);
+        uint256 bobRwa = rwa.balanceOf(bob);
+        uint256 carolUsdc = usdc.balanceOf(carol);
+
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
+        vm.startPrank(bob);
+        rwa.approve(address(exchange), AC833_RWA);
+        exchange.fillOrder(id, AC833_USDC, att); // fill is denominated in the sell leg = USDC
+        vm.stopPrank();
+
+        assertEq(rwa.balanceOf(alice), aliceRwa + AC833_RWA, "maker receives the asset GROSS");
+        assertEq(rwa.balanceOf(bob), bobRwa - AC833_RWA, "taker gave the asset gross");
+        assertEq(usdc.balanceOf(bob), bobUsdc + 99e6, "taker receives notional - own fee");
+        assertEq(usdc.balanceOf(carol), carolUsdc + 2e6, "collector takes both fees in USDC");
+        assertEq(usdc.balanceOf(address(exchange)), 0, "escrow fully drained, no fee residue");
+        assertEq(rwa.balanceOf(address(exchange)), 0, "no asset residue");
+    }
+
+    /// The acceptance criterion: an untouched buy-side order returns the maker to
+    /// their EXACT starting balance — the escrowed fee is theirs until a fill earns it.
+    function test_AC833_BuySideOrder_CancelUntouched_ReturnsExactStartingBalance() public {
+        vm.prank(admin);
+        exchange.setAllowedCollector(carol, true);
+
+        uint256 before = usdc.balanceOf(alice);
+        uint256 id = _placeUsdcForRwaWithFee(alice, AC833_USDC, AC833_RWA, AC833_BPS, AC833_BPS, carol);
+        assertLt(usdc.balanceOf(alice), before, "escrow really moved");
+
+        vm.prank(alice);
+        exchange.cancelOrder(id);
+
+        assertEq(usdc.balanceOf(alice), before, "maker made whole to the wei");
+        assertEq(usdc.balanceOf(address(exchange)), 0, "contract holds no residue");
+        assertEq(exchange.getOrder(id).escrowedFee, 0, "escrowedFee cleared");
+    }
+
+    function test_AC833_BuySideOrder_SweepExpired_RefundsEscrowedFee() public {
+        vm.prank(admin);
+        exchange.setAllowedCollector(carol, true);
+
+        uint256 before = usdc.balanceOf(alice);
+        uint64 expireTs = uint64(block.timestamp + 1 hours);
+        AsseteraExchange.KycAttestation memory att =
+            _attestPlace(alice, address(usdc), AC833_USDC, address(rwa), AC833_RWA);
+        AsseteraExchange.FeeAttestation memory feeAtt =
+            _feePlaceWithFee(alice, address(usdc), AC833_USDC, address(rwa), AC833_RWA, AC833_BPS, AC833_BPS, carol);
+        vm.startPrank(alice);
+        usdc.approve(address(exchange), AC833_USDC + 1e6);
+        uint256 id = exchange.placeOrder(address(usdc), AC833_USDC, address(rwa), AC833_RWA, expireTs, att, feeAtt);
+        vm.stopPrank();
+
+        vm.warp(expireTs + 1);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        exchange.sweepExpired(ids);
+
+        assertEq(usdc.balanceOf(alice), before, "sweep made the maker whole");
+        assertEq(usdc.balanceOf(address(exchange)), 0, "no residue after sweep");
+    }
+
+    function test_AC833_BuySideOrder_ForceCancel_RefundsEscrowedFee() public {
+        vm.prank(admin);
+        exchange.setAllowedCollector(carol, true);
+        uint256 id = _placeUsdcForRwaWithFee(alice, AC833_USDC, AC833_RWA, AC833_BPS, AC833_BPS, carol);
+
+        address recipient = makeAddr("ac833-compliance-recipient");
+        uint256 recipientBefore = usdc.balanceOf(recipient);
+        vm.prank(admin);
+        exchange.cancelOrderForUser(id, recipient);
+
+        assertEq(usdc.balanceOf(recipient), recipientBefore + AC833_USDC + 1e6, "full escrow incl. fee released");
+        assertEq(usdc.balanceOf(address(exchange)), 0, "nothing stranded");
+    }
+
+    /// Conservation across an arbitrary partial-fill sequence: whatever the rounding
+    /// does, the contract must end holding nothing and the maker must not be short.
+    function test_AC833_BuySideOrder_PartialFillsThenCancel_NoResidueNoShortfall() public {
+        vm.prank(admin);
+        exchange.setAllowedCollector(carol, true);
+
+        // Amounts chosen so the per-fill fee floors and leaves dust in escrow.
+        uint256 notional = 333e6;
+        uint256 makerFeeTotal = (notional * AC833_BPS) / 10_000;
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        uint256 id = _placeUsdcForRwaWithFee(alice, notional, AC833_RWA, AC833_BPS, AC833_BPS, carol);
+
+        // Three uneven partial fills, then cancel the remainder.
+        uint256[3] memory fills = [uint256(7e6), 111e6, 5e6];
+        for (uint256 i = 0; i < fills.length; i++) {
+            AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
+            vm.startPrank(bob);
+            rwa.approve(address(exchange), AC833_RWA);
+            exchange.fillOrder(id, fills[i], att);
+            vm.stopPrank();
+        }
+        vm.prank(alice);
+        exchange.cancelOrder(id);
+
+        // The maker's total outlay is the filled notional plus ONLY the fee actually
+        // earned on it — never more than the fee they escrowed.
+        uint256 filled = fills[0] + fills[1] + fills[2];
+        uint256 feePaid = aliceBefore - usdc.balanceOf(alice) - filled;
+        assertLe(feePaid, makerFeeTotal, "maker never overpays the escrowed fee");
+        assertEq(
+            feePaid,
+            (fills[0] * AC833_BPS) / 10_000 + (fills[1] * AC833_BPS) / 10_000 + (fills[2] * AC833_BPS) / 10_000,
+            "maker paid exactly the per-fill fees"
+        );
+        assertEq(usdc.balanceOf(address(exchange)), 0, "contract holds no residue");
+        assertEq(rwa.balanceOf(address(exchange)), 0, "contract holds no asset residue");
+    }
+
+    /// A full fill leaves rounding dust in the fee escrow; it must go back to the maker.
+    function test_AC833_BuySideOrder_FullFillInParts_ReturnsFeeDustToMaker() public {
+        vm.prank(admin);
+        exchange.setAllowedCollector(carol, true);
+
+        // 1 bps on small odd fills floors to zero repeatedly, stranding dust.
+        uint256 notional = 20_000;
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        uint256 id = _placeUsdcForRwaWithFee(alice, notional, AC833_RWA, 1, 1, carol);
+        uint256 escrowed = exchange.getOrder(id).escrowedFee;
+        assertEq(escrowed, 2, "1 bps of 20000 = 2");
+
+        for (uint256 i = 0; i < 4; i++) {
+            AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
+            vm.startPrank(bob);
+            rwa.approve(address(exchange), AC833_RWA);
+            exchange.fillOrder(id, notional / 4, att); // 5000 each → 1 bps floors to 0
+            vm.stopPrank();
+        }
+
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Filled), "fully filled");
+        assertEq(exchange.getOrder(id).escrowedFee, 0, "escrow cleared");
+        assertEq(usdc.balanceOf(address(exchange)), 0, "dust not retained by the contract");
+        // Maker paid the notional and, because every per-fill fee floored to zero, no fee.
+        assertEq(aliceBefore - usdc.balanceOf(alice), notional, "unearned fee dust returned");
+    }
+
+    function test_AC833_FeeTokenNotALeg_Reverts() public {
+        address notALeg = makeAddr("some-other-token");
+        AsseteraExchange.KycAttestation memory att =
+            _attestPlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory feeAtt =
+            _feePlaceWithFeeToken(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, 0, address(0), notALeg);
+        vm.startPrank(alice);
+        rwa.approve(address(exchange), SELL_RWA);
+        vm.expectRevert(abi.encodeWithSelector(IFeeGate.FeeTokenNotALeg.selector, notALeg));
+        exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
+        vm.stopPrank();
+    }
+
+    function test_AC833_FeeTokenIsSignedOverAndCannotBeTampered() public {
+        AsseteraExchange.KycAttestation memory att =
+            _attestPlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
+        AsseteraExchange.FeeAttestation memory feeAtt =
+            _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
+        // Swap the denomination to the OTHER leg after signing — still a valid leg, so
+        // it passes _validateFees and can only be caught by the signature itself.
+        feeAtt.feeToken = address(rwa);
+
+        vm.startPrank(alice);
+        rwa.approve(address(exchange), SELL_RWA);
+        vm.expectRevert(IFeeGate.FeeBadSigner.selector);
+        exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
+        vm.stopPrank();
+    }
+
+    /// Orders written under the pre-AC-833 layout read `feeToken == address(0)`. They
+    /// must be un-fillable (their fees have no denomination) but still fully exitable.
+    /// The order is aged by zeroing that one field in storage — `_orders` is slot 0 and
+    /// `feeToken` is the 10th word of the struct; the read-back asserts we hit it.
+    function test_AC833_LegacyOrder_CannotBeFilled_ButCanStillBeCancelled() public {
+        uint256 id = _placeRwaForUsdc(alice);
+        bytes32 base = keccak256(abi.encode(id, uint256(0)));
+        vm.store(address(exchange), bytes32(uint256(base) + 9), bytes32(0));
+
+        AsseteraExchange.Order memory o = exchange.getOrder(id);
+        assertEq(o.feeToken, address(0), "poked the feeToken field");
+        assertEq(o.remainingQuantity, SELL_RWA, "and nothing else");
+        assertEq(o.maker, alice, "and nothing else");
+
+        AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
+        vm.startPrank(bob);
+        usdc.approve(address(exchange), WANT_USDC);
+        vm.expectRevert(abi.encodeWithSelector(OrderBook.LegacyOrderMustBeUnwound.selector, id));
+        exchange.fillOrder(id, SELL_RWA, att);
+        vm.stopPrank();
+
+        // …but the maker can always get their money out.
+        uint256 rwaBefore = rwa.balanceOf(alice);
+        vm.prank(alice);
+        exchange.cancelOrder(id);
+        assertEq(rwa.balanceOf(alice), rwaBefore + SELL_RWA, "legacy order still exitable");
+    }
+
+    /// Offers: the fee follows the CURRENCY leg, not the maker/taker role. Here the
+    /// maker proposes the currency side, so the maker escrows notional + their own fee.
+    function test_AC833_Offer_MakerProposesCurrency_EscrowsOwnFee_AndRefundsOnCancel() public {
+        vm.prank(admin);
+        exchange.setAllowedCollector(carol, true);
+
+        uint256 before = usdc.balanceOf(alice);
+        uint256 id = _makeOfferWithFee(
+            alice, bob, address(usdc), AC833_USDC, address(rwa), AC833_RWA, AC833_BPS, AC833_BPS, carol
+        );
+
+        assertEq(exchange.getOffer(id).escrowedFee, 1e6, "proposer escrowed their own fee");
+        assertEq(usdc.balanceOf(alice), before - AC833_USDC - 1e6, "notional + fee left the maker");
+
+        AsseteraExchange.KycAttestation memory att = _attestCancelOffer(alice, id, AC833_USDC, AC833_RWA);
+        vm.prank(alice);
+        exchange.cancelOffer(id, att);
+
+        assertEq(usdc.balanceOf(alice), before, "cancel returns the maker to their exact balance");
+        assertEq(usdc.balanceOf(address(exchange)), 0, "no residue");
+    }
+
+    /// `replaceOffer` swaps BOTH halves — it refunds the outgoing proposer's escrowed
+    /// fee and escrows a fresh one for the incoming proposer at the new amounts.
+    function test_AC833_Offer_Replace_RefundsOldFeeEscrow_AndTakesNew() public {
+        vm.prank(admin);
+        exchange.setAllowedCollector(carol, true);
+
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        uint256 id = _makeOfferWithFee(
+            alice, bob, address(usdc), AC833_USDC, address(rwa), AC833_RWA, AC833_BPS, AC833_BPS, carol
+        );
+
+        // Bob counters: he now proposes, escrowing the ASSET leg — which carries no fee.
+        uint256 newUsdc = 200e6;
+        AsseteraExchange.KycAttestation memory att = _attestReplaceOffer(bob, id, newUsdc, AC833_RWA);
+        vm.startPrank(bob);
+        rwa.approve(address(exchange), AC833_RWA);
+        exchange.replaceOffer(id, newUsdc, AC833_RWA, 0, att);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), aliceBefore, "outgoing proposer fully refunded, fee included");
+        assertEq(exchange.getOffer(id).escrowedFee, 0, "asset-side proposer escrows no fee");
+        assertEq(usdc.balanceOf(address(exchange)), 0, "no currency left in escrow");
+        assertEq(rwa.balanceOf(address(exchange)), AC833_RWA, "asset leg now escrowed");
     }
 
     function _signPermit(
