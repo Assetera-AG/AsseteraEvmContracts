@@ -27,28 +27,38 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         uint64 expireTs,
         uint16 makerFeeBps,
         uint16 takerFeeBps,
-        address feeCollector
+        address feeCollector,
+        address feeToken
     );
     event OfferReplaced(
         uint256 indexed id, address indexed by, uint256 newMakerAmount, uint256 newTakerAmount, uint64 expireTs
     );
     event OfferCancelled(uint256 indexed id, address indexed by, uint256 makerAmount, uint256 takerAmount);
+    /// @dev `amountReturned` includes the proposer's unconsumed escrowed fee (AC-833).
     event OfferExpired(uint256 indexed id, address indexed proposedBy, uint256 amountReturned);
     event OfferAccepted(uint256 indexed id, address indexed by, uint256 makerAmount, uint256 takerAmount);
+    /// @dev Amounts are GROSS (AC-833) — the agreed leg amounts, before either fee.
+    ///      Both fees are denominated in `feeToken`, so net received is simply
+    ///      `makerAmountGross − makerFeeAmount` / `takerAmountGross − takerFeeAmount`
+    ///      on whichever leg is the currency; the asset leg moves gross and untouched.
     event OfferSettled(
         uint256 indexed id,
         address indexed by,
-        uint256 makerReceived,
-        uint256 takerReceived,
+        uint256 makerAmountGross,
+        uint256 takerAmountGross,
         uint256 makerFeeAmount,
         uint256 takerFeeAmount,
-        address feeCollector
+        address feeCollector,
+        address feeToken
     );
 
     error NotOfferParty(uint256 id);
     error OfferSelfTarget();
     error AcceptorIsProposer(uint256 id);
     error OfferIsExpired(uint256 id);
+    /// @dev An offer made before the AC-833 upgrade carries no settlement currency, so
+    ///      its fees cannot be denominated. Unwind paths still work; accept does not.
+    error LegacyOfferMustBeUnwound(uint256 id);
 
     /// @notice Create a targeted offer. Maker escrows makerToken; only the
     ///         nominated taker can respond. KYC-gated on the maker.
@@ -78,11 +88,14 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
             if (att.paramsHash != paramsHash) revert ParamsHashMismatch();
             if (feeAtt.paramsHash != paramsHash) revert ParamsHashMismatch();
         }
-        _validateFees(feeAtt.makerFeeBps, feeAtt.takerFeeBps, feeAtt.feeCollector);
+        _validateFees(feeAtt, makerToken, takerToken);
         _consumeKycAndFee(maker, Action.MakeOffer, 0, att, feeAtt);
 
         id = _storeOffer(maker, taker, makerToken, makerAmount, takerToken, takerAmount, expireTs, feeAtt);
-        IERC20(makerToken).safeTransferFrom(maker, address(this), makerAmount);
+        // The maker escrows their leg, plus their own fee when that leg is the
+        // settlement currency — they are then the currency payer (AC-833).
+        uint256 escrowedFee = _proposerFee(makerToken, makerAmount, feeAtt.feeToken, feeAtt.makerFeeBps);
+        IERC20(makerToken).safeTransferFrom(maker, address(this), makerAmount + escrowedFee);
         emit OfferMade(
             id,
             maker,
@@ -94,8 +107,21 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
             expireTs,
             feeAtt.makerFeeBps,
             feeAtt.takerFeeBps,
-            feeAtt.feeCollector
+            feeAtt.feeCollector,
+            feeAtt.feeToken
         );
+    }
+
+    /// @dev The fee a proposer must escrow alongside their leg: non-zero only when the
+    ///      leg they are escrowing IS the settlement currency, making them the currency
+    ///      payer. When they escrow the asset, it moves gross and they owe nothing extra.
+    function _proposerFee(address proposerToken, uint256 proposerAmount, address feeToken, uint16 bps)
+        internal
+        pure
+        returns (uint256)
+    {
+        if (proposerToken != feeToken) return 0;
+        return FeeMath.feeAmount(proposerAmount, bps);
     }
 
     function _storeOffer(
@@ -123,7 +149,9 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
             proposedBy: maker,
             makerFeeBps: feeAtt.makerFeeBps,
             takerFeeBps: feeAtt.takerFeeBps,
-            feeCollector: feeAtt.feeCollector
+            feeCollector: feeAtt.feeCollector,
+            feeToken: feeAtt.feeToken,
+            escrowedFee: _proposerFee(makerToken, makerAmount, feeAtt.feeToken, feeAtt.makerFeeBps)
         });
     }
 
@@ -140,6 +168,9 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         Offer storage o = _offers[offerId];
         if (o.id == 0) revert OfferNotFound(offerId);
         if (o.status != OfferStatus.Open && o.status != OfferStatus.Countered) revert OfferNotOpen(offerId);
+        // A pre-AC-833 offer can only be unwound, never re-proposed — countering it
+        // would keep an unacceptable offer alive indefinitely.
+        if (o.feeToken == address(0)) revert LegacyOfferMustBeUnwound(offerId);
         if (o.expireTs != 0 && block.timestamp > o.expireTs) revert OfferIsExpired(offerId);
         if (newMakerAmount == 0 || newTakerAmount == 0) revert ZeroAmount();
         if (expireTs != 0 && expireTs <= block.timestamp) revert InvalidExpiry();
@@ -161,6 +192,14 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         uint256 prevMakerAmount = o.makerAmount;
         address prevTakerToken = o.takerToken;
         uint256 prevTakerAmount = o.takerAmount;
+        // BOTH halves of the swap carry a fee (AC-833): the outgoing proposer gets their
+        // unconsumed escrowed fee back, and the incoming one escrows a fee recomputed on
+        // the NEW amounts — which may be a different party, side and token than before.
+        uint256 prevEscrowedFee = o.escrowedFee;
+        bool callerIsMaker = (caller == o.maker);
+        uint256 newEscrowedFee = callerIsMaker
+            ? _proposerFee(o.makerToken, newMakerAmount, o.feeToken, o.makerFeeBps)
+            : _proposerFee(o.takerToken, newTakerAmount, o.feeToken, o.takerFeeBps);
 
         // Effects.
         o.makerAmount = newMakerAmount;
@@ -168,19 +207,20 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         o.expireTs = expireTs;
         o.proposedBy = caller;
         o.status = OfferStatus.Countered;
+        o.escrowedFee = newEscrowedFee;
 
-        // Return previous proposer's escrow.
+        // Return previous proposer's escrow — their leg plus their escrowed fee.
         if (prevProposedBy == o.maker) {
-            IERC20(prevMakerToken).safeTransfer(o.maker, prevMakerAmount);
+            IERC20(prevMakerToken).safeTransfer(o.maker, prevMakerAmount + prevEscrowedFee);
         } else {
-            IERC20(prevTakerToken).safeTransfer(o.taker, prevTakerAmount);
+            IERC20(prevTakerToken).safeTransfer(o.taker, prevTakerAmount + prevEscrowedFee);
         }
 
-        // Escrow caller's side at the new amounts.
-        if (caller == o.maker) {
-            IERC20(o.makerToken).safeTransferFrom(o.maker, address(this), newMakerAmount);
+        // Escrow caller's side at the new amounts, plus their own fee if it's the currency.
+        if (callerIsMaker) {
+            IERC20(o.makerToken).safeTransferFrom(o.maker, address(this), newMakerAmount + newEscrowedFee);
         } else {
-            IERC20(o.takerToken).safeTransferFrom(o.taker, address(this), newTakerAmount);
+            IERC20(o.takerToken).safeTransferFrom(o.taker, address(this), newTakerAmount + newEscrowedFee);
         }
 
         emit OfferReplaced(offerId, caller, newMakerAmount, newTakerAmount, expireTs);
@@ -212,13 +252,17 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         uint256 makerAmount = o.makerAmount;
         address takerToken = o.takerToken;
         uint256 takerAmount = o.takerAmount;
+        uint256 escrowedFee = o.escrowedFee;
 
         o.status = OfferStatus.Cancelled;
+        o.escrowedFee = 0;
 
+        // The proposer's escrowed fee rides back with their leg (AC-833), so cancelling
+        // an untouched offer returns them to their exact starting balance.
         if (proposedBy == o.maker) {
-            IERC20(makerToken).safeTransfer(o.maker, makerAmount);
+            IERC20(makerToken).safeTransfer(o.maker, makerAmount + escrowedFee);
         } else {
-            IERC20(takerToken).safeTransfer(o.taker, takerAmount);
+            IERC20(takerToken).safeTransfer(o.taker, takerAmount + escrowedFee);
         }
 
         emit OfferCancelled(offerId, caller, makerAmount, takerAmount);
@@ -237,6 +281,7 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         Offer storage o = _offers[offerId];
         if (o.id == 0) revert OfferNotFound(offerId);
         if (o.status != OfferStatus.Open && o.status != OfferStatus.Countered) revert OfferNotOpen(offerId);
+        if (o.feeToken == address(0)) revert LegacyOfferMustBeUnwound(offerId);
         if (o.expireTs != 0 && block.timestamp > o.expireTs) revert OfferIsExpired(offerId);
 
         address caller = _msgSender();
@@ -251,42 +296,66 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         }
         _consumeKyc(caller, Action.AcceptOffer, offerId, att);
 
-        // Cache terms before state change (CEI) — also needed post-transfer for fee math.
-        uint256 makerAmount = o.makerAmount;
-        uint256 takerAmount = o.takerAmount;
-        address makerToken = o.makerToken;
-        address takerToken = o.takerToken;
+        emit OfferAccepted(offerId, caller, o.makerAmount, o.takerAmount);
+        _settleOffer(o, offerId, caller);
+    }
+
+    /// @dev Atomic offer settlement under the AC-833 fee model. Exactly one leg is the
+    ///      settlement currency `feeToken`; BOTH fees are denominated in it. The party
+    ///      PAYING currency pays `cAmount + their own fee`, the party RECEIVING currency
+    ///      gets `cAmount − their own fee`, and the asset leg moves gross.
+    ///
+    ///      The books balance exactly without any extra escrow from the asset side: the
+    ///      currency receiver's own fee cancels out —
+    ///      `(cAmount − receiverFee) + (makerFee + takerFee) == cAmount + payerFee`.
+    ///
+    ///      Split out of `acceptOffer` to keep the stack shallow.
+    function _settleOffer(Offer storage o, uint256 offerId, address caller) private {
         address maker = o.maker;
         address taker = o.taker;
-
-        // Fees deducted from what each party receives at settlement (same
-        // formula as the retired settleOffer).
-        uint256 makerFeeAmount = FeeMath.feeAmount(takerAmount, o.makerFeeBps);
-        uint256 takerFeeAmount = FeeMath.feeAmount(makerAmount, o.takerFeeBps);
-        uint256 makerReceived = takerAmount - makerFeeAmount;
-        uint256 takerReceived = makerAmount - takerFeeAmount;
+        address makerToken = o.makerToken;
+        address takerToken = o.takerToken;
+        uint256 makerAmount = o.makerAmount;
+        uint256 takerAmount = o.takerAmount;
         address collector = o.feeCollector;
 
-        // Effects before interactions (CEI).
+        // Which leg is money? That decides who pays and who receives, not maker/taker.
+        bool makerLegIsCurrency = (makerToken == o.feeToken);
+        uint256 cAmount = makerLegIsCurrency ? makerAmount : takerAmount;
+
+        uint256 makerFeeAmount = FeeMath.feeAmount(cAmount, o.makerFeeBps);
+        uint256 takerFeeAmount = FeeMath.feeAmount(cAmount, o.takerFeeBps);
+        uint256 collectorTake = makerFeeAmount + takerFeeAmount;
+
+        // Effects before interactions (CEI). The proposer's escrow is fully consumed
+        // here — offers are all-or-nothing, so there is no remainder to carry.
         o.status = OfferStatus.Settled;
+        o.escrowedFee = 0;
 
-        emit OfferAccepted(offerId, caller, makerAmount, takerAmount);
-
-        // Escrow the accepting party's side — the other side is already held
-        // from makeOffer/replaceOffer.
+        // The accepting party brings in their leg — plus their OWN fee if that leg is
+        // the currency. The other side is already escrowed from makeOffer/replaceOffer.
         if (caller == taker) {
-            IERC20(takerToken).safeTransferFrom(taker, address(this), takerAmount);
+            IERC20(takerToken)
+                .safeTransferFrom(taker, address(this), takerAmount + (makerLegIsCurrency ? 0 : takerFeeAmount));
         } else {
-            IERC20(makerToken).safeTransferFrom(maker, address(this), makerAmount);
+            IERC20(makerToken)
+                .safeTransferFrom(maker, address(this), makerAmount + (makerLegIsCurrency ? makerFeeAmount : 0));
         }
 
-        // Release both sides to their counterparties.
-        IERC20(takerToken).safeTransfer(maker, makerReceived);
-        if (makerFeeAmount > 0) IERC20(takerToken).safeTransfer(collector, makerFeeAmount);
-        IERC20(makerToken).safeTransfer(taker, takerReceived);
-        if (takerFeeAmount > 0) IERC20(makerToken).safeTransfer(collector, takerFeeAmount);
+        // Release: currency net to its receiver, both fees to the collector, asset gross.
+        if (makerLegIsCurrency) {
+            IERC20(takerToken).safeTransfer(maker, takerAmount); // asset, gross
+            IERC20(makerToken).safeTransfer(taker, cAmount - takerFeeAmount); // currency, net
+            if (collectorTake > 0) IERC20(makerToken).safeTransfer(collector, collectorTake);
+        } else {
+            IERC20(takerToken).safeTransfer(maker, cAmount - makerFeeAmount); // currency, net
+            if (collectorTake > 0) IERC20(takerToken).safeTransfer(collector, collectorTake);
+            IERC20(makerToken).safeTransfer(taker, makerAmount); // asset, gross
+        }
 
-        emit OfferSettled(offerId, caller, makerReceived, takerReceived, makerFeeAmount, takerFeeAmount, collector);
+        emit OfferSettled(
+            offerId, caller, makerAmount, takerAmount, makerFeeAmount, takerFeeAmount, collector, o.feeToken
+        );
     }
 
     /// @notice Anyone can sweep a batch of expired offers, returning the current
@@ -312,8 +381,11 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
                 token = o.takerToken;
                 amount = o.takerAmount;
             }
+            // Unconsumed escrowed fee goes back with the leg it was escrowed against.
+            amount += o.escrowedFee;
 
             o.status = OfferStatus.Expired;
+            o.escrowedFee = 0;
 
             IERC20(token).safeTransfer(proposedBy, amount);
             emit OfferExpired(ids[i], proposedBy, amount);

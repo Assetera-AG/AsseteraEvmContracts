@@ -52,7 +52,7 @@ contract AsseteraExchangeTest is Test {
     );
 
     bytes32 internal constant FEE_TYPEHASH = keccak256(
-        "FeeAttestation(address account,uint8 action,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector)"
+        "FeeAttestation(address account,uint8 action,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector,address feeToken)"
     );
 
     event OrderPlaced(
@@ -65,7 +65,8 @@ contract AsseteraExchangeTest is Test {
         uint64 expireTs,
         uint16 makerFeeBps,
         uint16 takerFeeBps,
-        address feeCollector
+        address feeCollector,
+        address feeToken
     );
     event OrderForceCancelled(uint256 indexed id, address indexed maker, address recipient, address indexed admin);
 
@@ -145,7 +146,8 @@ contract AsseteraExchangeTest is Test {
         bytes32 paramsHash,
         uint16 makerFeeBps,
         uint16 takerFeeBps,
-        address feeCollector
+        address feeCollector,
+        address feeToken
     ) internal view returns (AsseteraExchange.FeeAttestation memory att) {
         bytes32 domain = keccak256(
             abi.encode(
@@ -166,7 +168,8 @@ contract AsseteraExchangeTest is Test {
                 paramsHash,
                 makerFeeBps,
                 takerFeeBps,
-                feeCollector
+                feeCollector,
+                feeToken
             )
         );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domain, structHash));
@@ -180,8 +183,17 @@ contract AsseteraExchangeTest is Test {
             makerFeeBps: makerFeeBps,
             takerFeeBps: takerFeeBps,
             feeCollector: feeCollector,
+            feeToken: feeToken,
             signature: abi.encodePacked(r, s, v)
         });
+    }
+
+    /// The settlement currency for a token pair in these fixtures: `usdc` is the money
+    /// leg whenever it's present (AC-833 requires `feeToken` ∈ {legA, legB} on EVERY
+    /// order, zero-fee included), otherwise fall back to the counter-leg.
+    function _defaultFeeToken(address legA, address legB) internal view returns (address) {
+        if (legA == address(usdc) || legB == address(usdc)) return address(usdc);
+        return legB;
     }
 
     /// A valid, fresh attestation for non-Place actions (paramsHash = 0).
@@ -212,7 +224,8 @@ contract AsseteraExchangeTest is Test {
         return _feePlaceWithFee(account, sellToken, sellAmount, buyToken, buyAmount, 0, 0, address(0));
     }
 
-    /// A valid, fresh Place-bound Fee attestation with explicit fee parameters.
+    /// A valid, fresh Place-bound Fee attestation with explicit fee parameters, using
+    /// the fixtures' default settlement currency.
     function _feePlaceWithFee(
         address account,
         address sellToken,
@@ -222,6 +235,32 @@ contract AsseteraExchangeTest is Test {
         uint16 makerFeeBps,
         uint16 takerFeeBps,
         address feeCollector
+    ) internal returns (AsseteraExchange.FeeAttestation memory) {
+        return _feePlaceWithFeeToken(
+            account,
+            sellToken,
+            sellAmount,
+            buyToken,
+            buyAmount,
+            makerFeeBps,
+            takerFeeBps,
+            feeCollector,
+            _defaultFeeToken(sellToken, buyToken)
+        );
+    }
+
+    /// As `_feePlaceWithFee`, but with an explicit settlement currency — for the AC-833
+    /// tests that pin the fee denomination or deliberately attest a bad one.
+    function _feePlaceWithFeeToken(
+        address account,
+        address sellToken,
+        uint256 sellAmount,
+        address buyToken,
+        uint256 buyAmount,
+        uint16 makerFeeBps,
+        uint16 takerFeeBps,
+        address feeCollector,
+        address feeToken
     ) internal returns (AsseteraExchange.FeeAttestation memory) {
         bytes32 ph = keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount));
         return _signFeeAtt(
@@ -233,7 +272,8 @@ contract AsseteraExchangeTest is Test {
             ph,
             makerFeeBps,
             takerFeeBps,
-            feeCollector
+            feeCollector,
+            feeToken
         );
     }
 
@@ -304,7 +344,7 @@ contract AsseteraExchangeTest is Test {
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
         vm.expectEmit(true, true, false, true, address(exchange));
-        emit OrderPlaced(1, alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, 0, 0, address(0));
+        emit OrderPlaced(1, alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, 0, 0, address(0), address(usdc));
         uint256 id = exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
 
@@ -445,12 +485,17 @@ contract AsseteraExchangeTest is Test {
         vm.prank(admin);
         exchange.setComplianceRequired(ExchangeTypes.Action.Place, false);
         AsseteraExchange.KycAttestation memory empty; // garbage / empty
-        AsseteraExchange.FeeAttestation memory emptyFee; // garbage / empty
+        AsseteraExchange.FeeAttestation memory emptyFee; // garbage / empty — but see below
+        // AC-833: `feeToken` is validated unconditionally, NOT behind the compliance
+        // toggle, because it is what makes the order's fee denomination well-defined.
+        // Turning gating off skips signature/nonce checks, not the denomination.
+        emptyFee.feeToken = address(usdc);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
         uint256 id = exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, empty, emptyFee);
         vm.stopPrank();
         assertEq(id, 1);
+        assertEq(exchange.getOrder(id).feeToken, address(usdc));
     }
 
     function test_PlaceOrder_RevertsOnZeroAmount() public {
@@ -910,7 +955,8 @@ contract AsseteraExchangeTest is Test {
                 ph,
                 0,
                 0,
-                address(0)
+                address(0),
+                address(usdc)
             );
             vm.startPrank(carol);
             rwa.approve(address(exchange), SELL_RWA);
@@ -1392,7 +1438,8 @@ contract AsseteraExchangeTest is Test {
         return _feeMakeOfferWithFee(maker, taker, makerToken, makerAmt, takerToken, takerAmt, 0, 0, address(0));
     }
 
-    /// A valid, fresh MakeOffer-bound Fee attestation with explicit fee parameters.
+    /// A valid, fresh MakeOffer-bound Fee attestation with explicit fee parameters,
+    /// using the fixtures' default settlement currency.
     function _feeMakeOfferWithFee(
         address maker,
         address taker,
@@ -1404,6 +1451,33 @@ contract AsseteraExchangeTest is Test {
         uint16 takerFeeBps,
         address feeCollector
     ) internal returns (AsseteraExchange.FeeAttestation memory) {
+        return _feeMakeOfferWithFeeToken(
+            maker,
+            taker,
+            makerToken,
+            makerAmt,
+            takerToken,
+            takerAmt,
+            makerFeeBps,
+            takerFeeBps,
+            feeCollector,
+            _defaultFeeToken(makerToken, takerToken)
+        );
+    }
+
+    /// As `_feeMakeOfferWithFee`, but with an explicit settlement currency (AC-833).
+    function _feeMakeOfferWithFeeToken(
+        address maker,
+        address taker,
+        address makerToken,
+        uint256 makerAmt,
+        address takerToken,
+        uint256 takerAmt,
+        uint16 makerFeeBps,
+        uint16 takerFeeBps,
+        address feeCollector,
+        address feeToken
+    ) internal returns (AsseteraExchange.FeeAttestation memory) {
         bytes32 ph = keccak256(abi.encodePacked(taker, makerToken, makerAmt, takerToken, takerAmt));
         return _signFeeAtt(
             feeSignerPk,
@@ -1414,7 +1488,8 @@ contract AsseteraExchangeTest is Test {
             ph,
             makerFeeBps,
             takerFeeBps,
-            feeCollector
+            feeCollector,
+            feeToken
         );
     }
 
@@ -1544,7 +1619,8 @@ contract AsseteraExchangeTest is Test {
             ph,
             0,
             0,
-            address(0)
+            address(0),
+            address(usdc)
         );
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
@@ -1558,7 +1634,16 @@ contract AsseteraExchangeTest is Test {
             _attestPlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         bytes32 ph = keccak256(abi.encode(address(rwa), SELL_RWA, address(usdc), WANT_USDC));
         AsseteraExchange.FeeAttestation memory feeAtt = _signFeeAtt(
-            feeSignerPk, alice, ExchangeTypes.Action.Place, _freshNonce(), block.timestamp + 100, ph, 0, 0, address(0)
+            feeSignerPk,
+            alice,
+            ExchangeTypes.Action.Place,
+            _freshNonce(),
+            block.timestamp + 100,
+            ph,
+            0,
+            0,
+            address(0),
+            address(usdc)
         );
         vm.warp(block.timestamp + 101);
         vm.startPrank(alice);
@@ -1581,7 +1666,8 @@ contract AsseteraExchangeTest is Test {
             ph,
             0,
             0,
-            address(0)
+            address(0),
+            address(usdc)
         );
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
@@ -1814,16 +1900,17 @@ contract AsseteraExchangeTest is Test {
         exchange.setAllowedCollector(carol, true);
         uint256 id = _makeOfferWithFee(alice, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 100, 50, carol);
 
+        // AC-833: BOTH fees are charged on the currency leg (usdc), never on the asset.
+        // The event now reports GROSS leg amounts — net is gross − that party's own fee.
         uint256 makerFeeAmt = (WANT_USDC * 100) / 10_000;
-        uint256 takerFeeAmt = (SELL_RWA * 50) / 10_000;
+        uint256 takerFeeAmt = (WANT_USDC * 50) / 10_000;
         AsseteraExchange.KycAttestation memory att = _attestAcceptOffer(bob, id, SELL_RWA, WANT_USDC);
 
         vm.startPrank(bob);
-        usdc.approve(address(exchange), WANT_USDC);
+        // Bob is the currency payer: he owes the notional PLUS his own fee.
+        usdc.approve(address(exchange), WANT_USDC + takerFeeAmt);
         vm.expectEmit(true, true, false, true);
-        emit OfferBook.OfferSettled(
-            id, bob, WANT_USDC - makerFeeAmt, SELL_RWA - takerFeeAmt, makerFeeAmt, takerFeeAmt, carol
-        );
+        emit OfferBook.OfferSettled(id, bob, SELL_RWA, WANT_USDC, makerFeeAmt, takerFeeAmt, carol, address(usdc));
         exchange.acceptOffer(id, att);
         vm.stopPrank();
     }
@@ -2762,19 +2849,25 @@ contract AsseteraExchangeTest is Test {
         uint256 carolRwa = rwa.balanceOf(carol);
         AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
-        usdc.approve(address(exchange), WANT_USDC);
+        usdc.approve(address(exchange), WANT_USDC + (WANT_USDC * 30) / 10_000);
         exchange.fillOrder(id, SELL_RWA, att);
         vm.stopPrank();
 
-        // Carol received fees even after allowlist removal.
-        assertGt(usdc.balanceOf(carol), carolUsdc); // makerFee in USDC
-        assertGt(rwa.balanceOf(carol), carolRwa); // takerFee in RWA
+        // Carol received BOTH fees even after allowlist removal — and both in USDC,
+        // the settlement currency. The collector never touches the security token.
+        assertEq(usdc.balanceOf(carol), carolUsdc + (WANT_USDC * 80) / 10_000, "both fees in USDC");
+        assertEq(rwa.balanceOf(carol), carolRwa, "collector holds zero RWA");
     }
 
     // --- fill fee deduction ---------------------------------------------- //
 
-    function test_Fee_Fill_MakerAndTakerFeesDeducted() public {
-        // makerFeeBps = 50 (0.5%) on buyToken (USDC), takerFeeBps = 30 (0.3%) on sellToken (RWA).
+    /// AC-833 — the canonical assertion, and the exact inversion of the old
+    /// `test_Fee_Fill_MakerAndTakerFeesDeducted`, which asserted that each party's fee
+    /// was skimmed off the leg they RECEIVED (so the collector ended up holding RWA).
+    /// Both fees are charged on the notional, in the settlement currency, and are
+    /// exclusive on the payer: the taker pays MORE, rather than receiving less.
+    function test_Fee_Fill_BothFeesInSettlementCurrency_ExclusiveOnTaker() public {
+        // makerFeeBps = 50 (0.5%), takerFeeBps = 30 (0.3%) — BOTH on the USDC notional.
         vm.prank(admin);
         exchange.setAllowedCollector(carol, true);
 
@@ -2782,23 +2875,29 @@ contract AsseteraExchangeTest is Test {
 
         uint256 aliceUsdcBefore = usdc.balanceOf(alice);
         uint256 bobRwaBefore = rwa.balanceOf(bob);
+        uint256 bobUsdcBefore = usdc.balanceOf(bob);
         uint256 carolUsdcBefore = usdc.balanceOf(carol);
         uint256 carolRwaBefore = rwa.balanceOf(carol);
 
+        uint256 expectedMakerFee = (WANT_USDC * 50) / 10_000; // 0.5% of the notional
+        uint256 expectedTakerFee = (WANT_USDC * 30) / 10_000; // 0.3% of the notional
+
         AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
-        usdc.approve(address(exchange), WANT_USDC);
+        // The taker must approve notional + their OWN fee. Approving only the notional
+        // is exactly the bug this model change surfaces in the front-ends.
+        usdc.approve(address(exchange), WANT_USDC + expectedTakerFee);
         exchange.fillOrder(id, SELL_RWA, att);
         vm.stopPrank();
 
-        // Expected fee amounts.
-        uint256 expectedMakerFee = (WANT_USDC * 50) / 10_000; // 0.5% of 1000 USDC = 5 USDC
-        uint256 expectedTakerFee = (SELL_RWA * 30) / 10_000; // 0.3% of 10 RWA = 0.03 RWA
-
+        // Maker: receives notional − own fee, gives the asset gross.
         assertEq(usdc.balanceOf(alice), aliceUsdcBefore + WANT_USDC - expectedMakerFee, "maker USDC net");
-        assertEq(rwa.balanceOf(bob), bobRwaBefore + SELL_RWA - expectedTakerFee, "taker RWA net");
-        assertEq(usdc.balanceOf(carol), carolUsdcBefore + expectedMakerFee, "collector makerFee");
-        assertEq(rwa.balanceOf(carol), carolRwaBefore + expectedTakerFee, "collector takerFee");
+        // Taker: pays notional + own fee, receives the asset GROSS — no RWA skim.
+        assertEq(usdc.balanceOf(bob), bobUsdcBefore - WANT_USDC - expectedTakerFee, "taker USDC paid");
+        assertEq(rwa.balanceOf(bob), bobRwaBefore + SELL_RWA, "taker receives full RWA");
+        // Collector: both fees, one currency, zero security-token dust.
+        assertEq(usdc.balanceOf(carol), carolUsdcBefore + expectedMakerFee + expectedTakerFee, "both fees in USDC");
+        assertEq(rwa.balanceOf(carol), carolRwaBefore, "collector holds zero RWA");
     }
 
     function test_Fee_Fill_ZeroFees_NoCollectorTransfer() public {
@@ -2847,15 +2946,17 @@ contract AsseteraExchangeTest is Test {
         uint256 carolUsdcBefore = usdc.balanceOf(carol);
         uint256 carolRwaBefore = rwa.balanceOf(carol);
 
+        // AC-833: the taker fee is denominated in USDC and paid ON TOP of the notional.
+        uint256 expectedTakerFee = (WANT_USDC * 100) / 10_000;
+
         AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
-        usdc.approve(address(exchange), WANT_USDC);
+        usdc.approve(address(exchange), WANT_USDC + expectedTakerFee);
         exchange.fillOrder(id, SELL_RWA, att);
         vm.stopPrank();
 
-        uint256 expectedTakerFee = (SELL_RWA * 100) / 10_000;
-        assertEq(usdc.balanceOf(carol), carolUsdcBefore, "no makerFee (USDC)");
-        assertEq(rwa.balanceOf(carol), carolRwaBefore + expectedTakerFee, "takerFee in RWA");
+        assertEq(usdc.balanceOf(carol), carolUsdcBefore + expectedTakerFee, "takerFee in USDC");
+        assertEq(rwa.balanceOf(carol), carolRwaBefore, "never in RWA");
     }
 
     function test_Fee_PartialFill_FeesProportional() public {
@@ -2870,18 +2971,21 @@ contract AsseteraExchangeTest is Test {
 
         uint256 carolUsdcBefore = usdc.balanceOf(carol);
         uint256 carolRwaBefore = rwa.balanceOf(carol);
+        uint256 bobRwaBefore = rwa.balanceOf(bob);
+
+        // AC-833: both fees scale with THIS fill's notional, both in USDC.
+        uint256 expectedMakerFee = (halfUsdc * 50) / 10_000;
+        uint256 expectedTakerFee = (halfUsdc * 30) / 10_000;
 
         AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
-        usdc.approve(address(exchange), halfUsdc);
+        usdc.approve(address(exchange), halfUsdc + expectedTakerFee);
         exchange.fillOrder(id, halfRwa, att);
         vm.stopPrank();
 
-        uint256 expectedMakerFee = (halfUsdc * 50) / 10_000;
-        uint256 expectedTakerFee = (halfRwa * 30) / 10_000;
-
-        assertEq(usdc.balanceOf(carol), carolUsdcBefore + expectedMakerFee);
-        assertEq(rwa.balanceOf(carol), carolRwaBefore + expectedTakerFee);
+        assertEq(usdc.balanceOf(carol), carolUsdcBefore + expectedMakerFee + expectedTakerFee, "both fees in USDC");
+        assertEq(rwa.balanceOf(carol), carolRwaBefore, "collector holds zero RWA");
+        assertEq(rwa.balanceOf(bob), bobRwaBefore + halfRwa, "taker receives the filled RWA gross");
         // Order stays Open.
         assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Open));
     }
@@ -2971,14 +3075,18 @@ contract AsseteraExchangeTest is Test {
         exchange.setAllowedCollector(carol, true);
         uint256 id = _placeRwaForUsdcWithFee(alice, 50, 30, carol);
 
+        // AC-833: both fees are charged on the notional, in usdc — the taker fee is no
+        // longer skimmed off the RWA the taker receives.
         uint256 expectedMakerFee = (WANT_USDC * 50) / 10_000;
-        uint256 expectedTakerFee = (SELL_RWA * 30) / 10_000;
+        uint256 expectedTakerFee = (WANT_USDC * 30) / 10_000;
 
         AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
-        usdc.approve(address(exchange), WANT_USDC);
+        usdc.approve(address(exchange), WANT_USDC + expectedTakerFee);
         vm.expectEmit(true, true, true, true);
-        emit OrderBook.OrderFilled(id, alice, bob, SELL_RWA, WANT_USDC, expectedMakerFee, expectedTakerFee, carol);
+        emit OrderBook.OrderFilled(
+            id, alice, bob, SELL_RWA, WANT_USDC, expectedMakerFee, expectedTakerFee, carol, address(usdc)
+        );
         exchange.fillOrder(id, SELL_RWA, att);
         vm.stopPrank();
     }
@@ -2990,16 +3098,27 @@ contract AsseteraExchangeTest is Test {
 
         uint256 halfRwa = SELL_RWA / 2;
         uint256 halfUsdc = (halfRwa * WANT_USDC + SELL_RWA - 1) / SELL_RWA;
+        // AC-833: both fees are on this fill's notional (halfUsdc), in usdc.
         uint256 expectedMakerFee = (halfUsdc * 50) / 10_000;
-        uint256 expectedTakerFee = (halfRwa * 30) / 10_000;
+        uint256 expectedTakerFee = (halfUsdc * 30) / 10_000;
         uint256 expectedRemaining = SELL_RWA - halfRwa;
 
         AsseteraExchange.KycAttestation memory att = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
-        usdc.approve(address(exchange), halfUsdc);
+        usdc.approve(address(exchange), halfUsdc + expectedTakerFee);
         vm.expectEmit(true, true, true, true);
+        // The event now carries filledBuyAmount, so consumers don't re-derive the ceil-div.
         emit OrderBook.OrderPartiallyFilled(
-            id, alice, bob, halfRwa, expectedRemaining, expectedMakerFee, expectedTakerFee, carol
+            id,
+            alice,
+            bob,
+            halfRwa,
+            halfUsdc,
+            expectedRemaining,
+            expectedMakerFee,
+            expectedTakerFee,
+            carol,
+            address(usdc)
         );
         exchange.fillOrder(id, halfRwa, att);
         vm.stopPrank();
@@ -3019,7 +3138,8 @@ contract AsseteraExchangeTest is Test {
         // First half.
         AsseteraExchange.KycAttestation memory att1 = _attest(bob, ExchangeTypes.Action.Fill, id);
         vm.startPrank(bob);
-        usdc.approve(address(exchange), WANT_USDC); // covers both fills
+        // Covers both fills, fee-inclusive (AC-833): the taker pays notional + own fee.
+        usdc.approve(address(exchange), WANT_USDC + (WANT_USDC * 30) / 10_000);
         exchange.fillOrder(id, halfRwa, att1);
         vm.stopPrank();
 
@@ -3032,11 +3152,12 @@ contract AsseteraExchangeTest is Test {
 
         assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Filled), "fully filled");
 
-        uint256 totalMakerFee = (halfUsdc * 50) / 10_000 + (halfUsdc * 50) / 10_000;
-        uint256 totalTakerFee = (halfRwa * 30) / 10_000 + (halfRwa * 30) / 10_000;
+        // Both fees accrue per fill, both in USDC, both on that fill's notional.
+        uint256 totalMakerFee = 2 * ((halfUsdc * 50) / 10_000);
+        uint256 totalTakerFee = 2 * ((halfUsdc * 30) / 10_000);
 
-        assertEq(usdc.balanceOf(carol), carolUsdcBefore + totalMakerFee, "accumulated makerFee USDC");
-        assertEq(rwa.balanceOf(carol), carolRwaBefore + totalTakerFee, "accumulated takerFee RWA");
+        assertEq(usdc.balanceOf(carol), carolUsdcBefore + totalMakerFee + totalTakerFee, "accumulated fees in USDC");
+        assertEq(rwa.balanceOf(carol), carolRwaBefore, "collector holds zero RWA");
     }
 
     function test_Fee_TamperedFeeBps_Reverts() public {
@@ -3130,8 +3251,8 @@ contract AsseteraExchangeTest is Test {
     // --- fee deduction on accept (settles atomically, AC-246) ------------ //
 
     function test_Offer_Fee_AcceptSettles_FeesDeducted() public {
-        // makerFeeBps=100 (1%) applied to what maker receives (USDC = takerAmount).
-        // takerFeeBps=50  (0.5%) applied to what taker receives (RWA = makerAmount).
+        // AC-833: BOTH fees are charged on the currency leg (USDC = takerAmount here),
+        // exclusive on whoever pays currency. The RWA leg moves gross either way.
         uint16 makerFeeBps = 100;
         uint16 takerFeeBps = 50;
 
@@ -3147,21 +3268,22 @@ contract AsseteraExchangeTest is Test {
         uint256 carolUsdcBefore = usdc.balanceOf(carol);
         uint256 carolRwaBefore = rwa.balanceOf(carol);
 
-        // Bob accepts — settles atomically, no separate operator step.
+        uint256 makerFeeAmt = (WANT_USDC * makerFeeBps) / 10_000;
+        uint256 takerFeeAmt = (WANT_USDC * takerFeeBps) / 10_000;
+
+        // Bob accepts — settles atomically, no separate operator step. He is the
+        // currency payer, so he brings notional + his OWN fee.
         AsseteraExchange.KycAttestation memory acceptAtt = _attestAcceptOffer(bob, id, SELL_RWA, WANT_USDC);
         vm.startPrank(bob);
-        usdc.approve(address(exchange), WANT_USDC);
+        usdc.approve(address(exchange), WANT_USDC + takerFeeAmt);
         exchange.acceptOffer(id, acceptAtt);
         vm.stopPrank();
 
-        uint256 makerFeeAmt = (WANT_USDC * makerFeeBps) / 10_000;
-        uint256 takerFeeAmt = (SELL_RWA * takerFeeBps) / 10_000;
-
         assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Settled));
-        assertEq(usdc.balanceOf(alice), aliceUsdcBefore + WANT_USDC - makerFeeAmt, "maker receives USDC minus fee");
-        assertEq(rwa.balanceOf(bob), bobRwaBefore + SELL_RWA - takerFeeAmt, "taker receives RWA minus fee");
-        assertEq(usdc.balanceOf(carol), carolUsdcBefore + makerFeeAmt, "carol receives maker fee in USDC");
-        assertEq(rwa.balanceOf(carol), carolRwaBefore + takerFeeAmt, "carol receives taker fee in RWA");
+        assertEq(usdc.balanceOf(alice), aliceUsdcBefore + WANT_USDC - makerFeeAmt, "maker receives USDC minus own fee");
+        assertEq(rwa.balanceOf(bob), bobRwaBefore + SELL_RWA, "taker receives RWA GROSS");
+        assertEq(usdc.balanceOf(carol), carolUsdcBefore + makerFeeAmt + takerFeeAmt, "carol receives both fees in USDC");
+        assertEq(rwa.balanceOf(carol), carolRwaBefore, "carol receives zero RWA");
         assertEq(rwa.balanceOf(address(exchange)), 0, "exchange holds no RWA");
         assertEq(usdc.balanceOf(address(exchange)), 0, "exchange holds no USDC");
     }
@@ -3196,16 +3318,18 @@ contract AsseteraExchangeTest is Test {
         uint256 carolRwaBefore = rwa.balanceOf(carol);
         uint256 carolUsdcBefore = usdc.balanceOf(carol);
 
+        // AC-833: the taker's fee is in USDC and paid ON TOP — never skimmed off the RWA.
+        uint256 takerFeeAmt = (WANT_USDC * 150) / 10_000;
+
         AsseteraExchange.KycAttestation memory acceptAtt = _attestAcceptOffer(bob, id, SELL_RWA, WANT_USDC);
         vm.startPrank(bob);
-        usdc.approve(address(exchange), WANT_USDC);
+        usdc.approve(address(exchange), WANT_USDC + takerFeeAmt);
         exchange.acceptOffer(id, acceptAtt);
         vm.stopPrank();
 
-        uint256 takerFeeAmt = (SELL_RWA * 150) / 10_000;
-        assertEq(rwa.balanceOf(carol) - carolRwaBefore, takerFeeAmt, "carol gets taker fee in RWA");
-        assertEq(usdc.balanceOf(carol) - carolUsdcBefore, 0, "carol gets no USDC (no maker fee)");
-        assertEq(usdc.balanceOf(alice), aliceUsdcBefore + WANT_USDC, "maker receives full USDC");
+        assertEq(usdc.balanceOf(carol) - carolUsdcBefore, takerFeeAmt, "carol gets taker fee in USDC");
+        assertEq(rwa.balanceOf(carol) - carolRwaBefore, 0, "carol gets no RWA");
+        assertEq(usdc.balanceOf(alice), aliceUsdcBefore + WANT_USDC, "maker receives full USDC (no maker fee)");
     }
 
     function _signPermit(

@@ -19,6 +19,9 @@ interface IFeeGate {
     error FeeBadSigner();
     error InvalidFee();
     error FeeCollectorNotAllowed(address collector);
+    /// @dev The attested settlement currency is not one of the two legs of this
+    ///      order/offer, so both fees could not be denominated in it (AC-833).
+    error FeeTokenNotALeg(address feeToken);
 
     function FEE_OPERATOR_ROLE() external view returns (bytes32);
     function FEE_TYPEHASH() external view returns (bytes32);
