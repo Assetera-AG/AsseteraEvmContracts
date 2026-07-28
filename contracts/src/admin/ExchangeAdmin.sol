@@ -54,8 +54,14 @@ abstract contract ExchangeAdmin is ExchangeStorage {
         if (recipient == address(0)) revert ZeroAddress();
         Order storage o = _orders[id];
         if (o.status != OrderStatus.Open) revert OrderNotOpen(id);
+        // Releases the FULL escrow: remaining quantity plus any unconsumed escrowed fee
+        // (AC-833) — the fee is the maker's money until a fill earns it, so a frozen
+        // user's exit must not leave a fraction of it stranded in the contract.
+        uint256 refunded = o.remainingQuantity + o.escrowedFee;
         o.status = OrderStatus.ForceCancelled;
-        IERC20(o.sellToken).safeTransfer(recipient, o.remainingQuantity);
+        o.remainingQuantity = 0;
+        o.escrowedFee = 0;
+        IERC20(o.sellToken).safeTransfer(recipient, refunded);
         emit OrderForceCancelled(id, o.maker, recipient, _msgSender());
     }
 
@@ -85,14 +91,18 @@ abstract contract ExchangeAdmin is ExchangeStorage {
         uint256 makerAmount = o.makerAmount;
         address takerToken = o.takerToken;
         uint256 takerAmount = o.takerAmount;
+        // The proposer's escrowed fee rides along with their escrowed side (AC-833) —
+        // it is denominated in feeToken, which is the leg they escrowed when non-zero.
+        uint256 escrowedFee = o.escrowedFee;
 
         o.status = OfferStatus.ForceCancelled;
+        o.escrowedFee = 0;
 
         // Only the current proposer's side is held in escrow.
         if (o.proposedBy == o.maker) {
-            IERC20(makerToken).safeTransfer(makerRecipient, makerAmount);
+            IERC20(makerToken).safeTransfer(makerRecipient, makerAmount + escrowedFee);
         } else {
-            IERC20(takerToken).safeTransfer(takerRecipient, takerAmount);
+            IERC20(takerToken).safeTransfer(takerRecipient, takerAmount + escrowedFee);
         }
 
         emit OfferForceCancelled(offerId, o.maker, makerRecipient, takerRecipient, _msgSender());

@@ -32,11 +32,38 @@ contract EscrowHandler is Test {
     ExchangeTypes.KycAttestation internal EMPTY_KYC;
     ExchangeTypes.FeeAttestation internal EMPTY_FEE;
 
-    constructor(AsseteraExchange exchange_, FaucetToken tokenA_, FaucetToken tokenB_, address[3] memory actors_) {
+    /// @dev AC-833: tokenB is the settlement currency for every order/offer this handler
+    ///      drives, and fees are NON-ZERO — otherwise the escrowed-fee path (which is the
+    ///      whole reason the invariant had to change) would never be exercised. Attestation
+    ///      signatures are still skipped: gating is off, so `_verifyFee` returns early while
+    ///      `_validateFees` — which enforces the denomination — still runs.
+    uint16 internal constant MAKER_BPS = 100; // 1 %
+    uint16 internal constant TAKER_BPS = 50; // 0.5 %
+    address public immutable collector;
+
+    constructor(
+        AsseteraExchange exchange_,
+        FaucetToken tokenA_,
+        FaucetToken tokenB_,
+        address[3] memory actors_,
+        address collector_
+    ) {
         exchange = exchange_;
         tokenA = tokenA_;
         tokenB = tokenB_;
         actors = actors_;
+        collector = collector_;
+        EMPTY_FEE.feeToken = address(tokenB_);
+        EMPTY_FEE.makerFeeBps = MAKER_BPS;
+        EMPTY_FEE.takerFeeBps = TAKER_BPS;
+        EMPTY_FEE.feeCollector = collector_;
+    }
+
+    /// @dev What a maker/proposer must escrow on top of their leg: their own fee, but
+    ///      only when the leg they escrow IS the settlement currency.
+    function _ownFee(address token, uint256 amount, uint16 bps) internal view returns (uint256) {
+        if (token != address(tokenB)) return 0;
+        return (amount * bps) / 10_000;
     }
 
     // --------------------------------------------------------------------- //
@@ -58,9 +85,10 @@ contract EscrowHandler is Test {
         FaucetToken buyToken = sellIsA ? tokenB : tokenA;
         uint64 expireTs = withExpiry ? uint64(block.timestamp + bound(expiryOffsetSeed, 1, 7 days)) : 0;
 
+        uint256 escrow = sellAmount + _ownFee(address(sellToken), sellAmount, MAKER_BPS);
         vm.startPrank(maker);
-        sellToken.mint(maker, sellAmount);
-        sellToken.approve(address(exchange), sellAmount);
+        sellToken.mint(maker, escrow);
+        sellToken.approve(address(exchange), escrow);
         try exchange.placeOrder(
             address(sellToken), sellAmount, address(buyToken), buyAmount, expireTs, EMPTY_KYC, EMPTY_FEE
         ) returns (
@@ -84,10 +112,12 @@ contract EscrowHandler is Test {
         uint256 fillAmt = bound(fillSeed, 1, o.remainingQuantity);
         uint256 buyAmountDue = (fillAmt * o.buyAmount + o.sellAmount - 1) / o.sellAmount; // ceil-div, mirrors FeeMath
 
+        // AC-833: when the taker pays the currency leg they owe notional + their own fee.
+        uint256 takerOutlay = buyAmountDue + _ownFee(o.buyToken, buyAmountDue, TAKER_BPS);
         FaucetToken buyToken = FaucetToken(o.buyToken);
         vm.startPrank(taker);
-        buyToken.mint(taker, buyAmountDue);
-        buyToken.approve(address(exchange), buyAmountDue);
+        buyToken.mint(taker, takerOutlay);
+        buyToken.approve(address(exchange), takerOutlay);
         try exchange.fillOrder(o.id, fillAmt, EMPTY_KYC) {} catch {}
         vm.stopPrank();
     }
@@ -127,9 +157,10 @@ contract EscrowHandler is Test {
         FaucetToken takerToken = makerIsA ? tokenB : tokenA;
         uint64 expireTs = withExpiry ? uint64(block.timestamp + bound(expiryOffsetSeed, 1, 7 days)) : 0;
 
+        uint256 offerEscrow = makerAmount + _ownFee(address(makerToken), makerAmount, MAKER_BPS);
         vm.startPrank(maker);
-        makerToken.mint(maker, makerAmount);
-        makerToken.approve(address(exchange), makerAmount);
+        makerToken.mint(maker, offerEscrow);
+        makerToken.approve(address(exchange), offerEscrow);
         try exchange.makeOffer(
             taker, address(makerToken), makerAmount, address(takerToken), takerAmount, expireTs, EMPTY_KYC, EMPTY_FEE
         ) returns (
@@ -154,9 +185,12 @@ contract EscrowHandler is Test {
         FaucetToken callerToken = FaucetToken(callerIsMaker ? o.makerToken : o.takerToken);
         uint256 callerAmount = callerIsMaker ? newMakerAmount : newTakerAmount;
 
+        // The incoming proposer escrows their leg plus their OWN fee at the NEW amounts.
+        uint256 callerEscrow =
+            callerAmount + _ownFee(address(callerToken), callerAmount, callerIsMaker ? MAKER_BPS : TAKER_BPS);
         vm.startPrank(caller);
-        callerToken.mint(caller, callerAmount);
-        callerToken.approve(address(exchange), callerAmount);
+        callerToken.mint(caller, callerEscrow);
+        callerToken.approve(address(exchange), callerEscrow);
         try exchange.replaceOffer(o.id, newMakerAmount, newTakerAmount, o.expireTs, EMPTY_KYC) {} catch {}
         vm.stopPrank();
     }
@@ -181,9 +215,12 @@ contract EscrowHandler is Test {
         FaucetToken callerToken = FaucetToken(callerIsTaker ? o.takerToken : o.makerToken);
         uint256 callerAmount = callerIsTaker ? o.takerAmount : o.makerAmount;
 
+        // The acceptor brings their leg plus their own fee when that leg is the currency.
+        uint256 acceptorOutlay =
+            callerAmount + _ownFee(address(callerToken), callerAmount, callerIsTaker ? TAKER_BPS : MAKER_BPS);
         vm.startPrank(caller);
-        callerToken.mint(caller, callerAmount);
-        callerToken.approve(address(exchange), callerAmount);
+        callerToken.mint(caller, acceptorOutlay);
+        callerToken.approve(address(exchange), acceptorOutlay);
         try exchange.acceptOffer(o.id, EMPTY_KYC) {} catch {}
         vm.stopPrank();
     }
@@ -208,20 +245,29 @@ contract EscrowHandler is Test {
     ///         order/offer this handler ever created, read fresh via the
     ///         real getters — not a ghost counter mirroring the contract's
     ///         own bookkeeping.
+    ///
+    ///         AC-833: escrow is no longer just the traded leg. A maker/proposer
+    ///         who escrows the SETTLEMENT CURRENCY also escrows their own fee,
+    ///         held as `escrowedFee` in the same token, and owed back to them on
+    ///         every unwind path. Omitting it here would make the invariant pass
+    ///         while the contract silently retained (or under-refunded) the fee —
+    ///         precisely the failure this suite exists to rule out.
     function expectedEscrowed(address token) external view returns (uint256 total) {
         for (uint256 i = 0; i < orderIds.length; i++) {
             ExchangeTypes.Order memory o = exchange.getOrder(orderIds[i]);
             if (o.status == ExchangeTypes.OrderStatus.Open && o.sellToken == token) {
-                total += o.remainingQuantity;
+                total += o.remainingQuantity + o.escrowedFee;
             }
         }
         for (uint256 i = 0; i < offerIds.length; i++) {
             ExchangeTypes.Offer memory o = exchange.getOffer(offerIds[i]);
             if (o.status == ExchangeTypes.OfferStatus.Open || o.status == ExchangeTypes.OfferStatus.Countered) {
+                // escrowedFee is denominated in feeToken, which is the proposer's own
+                // leg whenever it is non-zero — so it always rides with that leg.
                 if (o.proposedBy == o.maker) {
-                    if (o.makerToken == token) total += o.makerAmount;
+                    if (o.makerToken == token) total += o.makerAmount + o.escrowedFee;
                 } else {
-                    if (o.takerToken == token) total += o.takerAmount;
+                    if (o.takerToken == token) total += o.takerAmount + o.escrowedFee;
                 }
             }
         }

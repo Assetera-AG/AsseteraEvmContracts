@@ -19,8 +19,11 @@ abstract contract FeeGate is KycGate, IFeeGate {
     ///         accepted. Managed by the admin multisig.
     bytes32 public constant FEE_OPERATOR_ROLE = keccak256("FEE_OPERATOR_ROLE");
 
+    /// @dev `feeToken` is the final field (AC-833). Adding it CHANGES the digest, so the
+    ///      fee service must sign the new type — an attestation signed under the old
+    ///      typehash recovers to a different signer and is rejected by `FeeBadSigner`.
     bytes32 public constant FEE_TYPEHASH = keccak256(
-        "FeeAttestation(address account,uint8 action,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector)"
+        "FeeAttestation(address account,uint8 action,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector,address feeToken)"
     );
 
     /// @notice Hard cap on fee attestation freshness, mirroring MAX_KYC_TTL for
@@ -55,7 +58,8 @@ abstract contract FeeGate is KycGate, IFeeGate {
                 att.paramsHash,
                 att.makerFeeBps,
                 att.takerFeeBps,
-                att.feeCollector
+                att.feeCollector,
+                att.feeToken
             )
         );
         address signer = ECDSA.recover(_hashTypedDataV4(structHash), att.signature);
@@ -85,13 +89,20 @@ abstract contract FeeGate is KycGate, IFeeGate {
         }
     }
 
-    /// @dev Fee bounds — always enforced (defence in depth) so a compromised fee
-    ///      signer cannot set extreme fees or route to an unlisted collector.
-    function _validateFees(uint16 makerFeeBps, uint16 takerFeeBps, address feeCollector) internal view {
-        if (makerFeeBps > MAX_FEE_BPS || takerFeeBps > MAX_FEE_BPS) revert InvalidFee();
-        if (makerFeeBps > 0 || takerFeeBps > 0) {
-            if (feeCollector == address(0)) revert ZeroAddress();
-            if (!allowedCollectors[feeCollector]) revert FeeCollectorNotAllowed(feeCollector);
+    /// @dev Fee bounds + denomination — always enforced (defence in depth) so a
+    ///      compromised fee signer cannot set extreme fees, route to an unlisted
+    ///      collector, or denominate fees in a token that isn't part of the trade.
+    /// @param legA One of the two legs (sellToken / makerToken).
+    /// @param legB The other leg (buyToken / takerToken).
+    function _validateFees(FeeAttestation calldata att, address legA, address legB) internal view {
+        if (att.makerFeeBps > MAX_FEE_BPS || att.takerFeeBps > MAX_FEE_BPS) revert InvalidFee();
+        // Required even for a zero-fee order (AC-833): it pins the settlement currency
+        // for the order's whole lifetime, and keeps `feeToken == address(0)` meaning
+        // exactly one thing — a legacy order placed before this upgrade.
+        if (att.feeToken != legA && att.feeToken != legB) revert FeeTokenNotALeg(att.feeToken);
+        if (att.makerFeeBps > 0 || att.takerFeeBps > 0) {
+            if (att.feeCollector == address(0)) revert ZeroAddress();
+            if (!allowedCollectors[att.feeCollector]) revert FeeCollectorNotAllowed(att.feeCollector);
         }
     }
 }

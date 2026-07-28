@@ -23,6 +23,7 @@ contract EscrowConservationInvariantTest is Test {
     EscrowHandler internal handler;
 
     address internal admin = makeAddr("invariant-admin");
+    address internal collector = makeAddr("invariant-collector");
 
     function setUp() public {
         tokenA = new FaucetToken("Token A", "TKA", 18);
@@ -36,8 +37,12 @@ contract EscrowConservationInvariantTest is Test {
         // Escrow conservation is a pure token-accounting property, independent
         // of KYC/fee attestation gating (which has its own dedicated coverage
         // in AsseteraExchange.t.sol) — disable it so the handler can drive
-        // every action freely with empty attestations.
+        // every action freely with unsigned attestations. The fee TERMS on those
+        // attestations are still honoured (AC-833): `_validateFees` runs
+        // unconditionally, so the handler trades at real, non-zero fees and the
+        // escrowed-fee path is genuinely exercised rather than sitting at zero.
         vm.startPrank(admin);
+        exchange.setAllowedCollector(collector, true);
         exchange.setComplianceRequired(ExchangeTypes.Action.Place, false);
         exchange.setComplianceRequired(ExchangeTypes.Action.Fill, false);
         exchange.setComplianceRequired(ExchangeTypes.Action.MakeOffer, false);
@@ -47,7 +52,7 @@ contract EscrowConservationInvariantTest is Test {
         vm.stopPrank();
 
         address[3] memory actors = [makeAddr("h-alice"), makeAddr("h-bob"), makeAddr("h-carol")];
-        handler = new EscrowHandler(exchange, tokenA, tokenB, actors);
+        handler = new EscrowHandler(exchange, tokenA, tokenB, actors, collector);
 
         targetContract(address(handler));
     }

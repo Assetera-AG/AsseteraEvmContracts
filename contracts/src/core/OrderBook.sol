@@ -29,13 +29,16 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
         uint64 expireTs,
         uint16 makerFeeBps,
         uint16 takerFeeBps,
-        address feeCollector
+        address feeCollector,
+        address feeToken
     );
-    /// @dev Emitted on maker self-cancel. remainingQuantity is the sellToken amount refunded
-    ///      to the maker (mirrors OfferCancelled, which carries its refunded amounts too).
-    event OrderCancelled(uint256 indexed id, address indexed maker, uint256 remainingQuantity);
+    /// @dev Emitted on maker self-cancel. `refunded` is the total sellToken amount returned to
+    ///      the maker — remaining escrow PLUS any unconsumed escrowed fee (AC-833).
+    event OrderCancelled(uint256 indexed id, address indexed maker, uint256 refunded);
     /// @dev Emitted when an order is completely filled (remainingQuantity == 0).
-    ///      Includes fee amounts and collector for indexer/client cost disclosure.
+    ///      All amounts are GROSS (pre-fee); both fees are denominated in `feeToken`
+    ///      (AC-833), so the collector's take is exactly makerFeeAmount + takerFeeAmount
+    ///      in that one token.
     event OrderFilled(
         uint256 indexed id,
         address indexed maker,
@@ -44,21 +47,31 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
         uint256 filledBuyAmount,
         uint256 makerFeeAmount,
         uint256 takerFeeAmount,
-        address feeCollector
+        address feeCollector,
+        address feeToken
     );
-    /// @dev Emitted on a partial fill (remainingQuantity > 0 after the fill).
-    ///      Includes fee amounts and collector for indexer/client cost disclosure.
+    /// @dev Emitted on a partial fill (remainingQuantity > 0 after the fill). Carries
+    ///      `filledBuyAmount` (the gross notional for THIS fill) so consumers no longer
+    ///      have to re-derive it by mirroring the contract's ceil-division (AC-833).
     event OrderPartiallyFilled(
         uint256 indexed id,
         address indexed maker,
         address indexed taker,
         uint256 filledSellAmount,
+        uint256 filledBuyAmount,
         uint256 remainingQuantity,
         uint256 makerFeeAmount,
         uint256 takerFeeAmount,
-        address feeCollector
+        address feeCollector,
+        address feeToken
     );
-    event OrderExpired(uint256 indexed id, address indexed maker, uint256 remainingQuantity);
+    /// @dev `refunded` is remaining escrow plus any unconsumed escrowed fee (AC-833).
+    event OrderExpired(uint256 indexed id, address indexed maker, uint256 refunded);
+
+    /// @dev An order placed before the AC-833 upgrade carries no settlement currency
+    ///      (`feeToken == address(0)`), so its fees cannot be denominated correctly.
+    ///      Such orders can still be cancelled/swept — they just cannot be traded.
+    error LegacyOrderMustBeUnwound(uint256 id);
 
     error NotMaker(uint256 id);
     error SelfTrade(uint256 id);
@@ -95,20 +108,12 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
             if (att.paramsHash != paramsHash) revert ParamsHashMismatch();
             if (feeAtt.paramsHash != paramsHash) revert ParamsHashMismatch();
         }
-        // Fee bounds — always enforced (defence in depth) so a compromised fee
-        // signer cannot set extreme fees or route to an unlisted collector.
-        _validateFees(feeAtt.makerFeeBps, feeAtt.takerFeeBps, feeAtt.feeCollector);
+        // Fee bounds + denomination — always enforced (defence in depth) so a compromised
+        // fee signer cannot set extreme fees, route to an unlisted collector, or
+        // denominate the fees in a token that isn't part of this trade.
+        _validateFees(feeAtt, sellToken, buyToken);
         _consumeKycAndFee(_msgSender(), Action.Place, 0, att, feeAtt);
-        return _placeOrder(
-            sellToken,
-            sellAmount,
-            buyToken,
-            buyAmount,
-            expireTs,
-            feeAtt.makerFeeBps,
-            feeAtt.takerFeeBps,
-            feeAtt.feeCollector
-        );
+        return _placeOrder(sellToken, sellAmount, buyToken, buyAmount, expireTs, feeAtt);
     }
 
     /// @param expireTs Unix timestamp after which the order can be swept; 0 = no expiry.
@@ -140,19 +145,12 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
             if (att.paramsHash != paramsHash) revert ParamsHashMismatch();
             if (feeAtt.paramsHash != paramsHash) revert ParamsHashMismatch();
         }
-        _validateFees(feeAtt.makerFeeBps, feeAtt.takerFeeBps, feeAtt.feeCollector);
+        _validateFees(feeAtt, sellToken, buyToken);
         _consumeKycAndFee(_msgSender(), Action.Place, 0, att, feeAtt);
-        _tryPermit(sellToken, sellAmount, permitDeadline, v, r, s);
-        return _placeOrder(
-            sellToken,
-            sellAmount,
-            buyToken,
-            buyAmount,
-            expireTs,
-            feeAtt.makerFeeBps,
-            feeAtt.takerFeeBps,
-            feeAtt.feeCollector
-        );
+        // Permit must cover the FULL escrow, which on a buy-side order is
+        // sellAmount + the maker's escrowed fee — see `_placeOrder`.
+        _tryPermit(sellToken, _escrowTotal(sellToken, sellAmount, feeAtt), permitDeadline, v, r, s);
+        return _placeOrder(sellToken, sellAmount, buyToken, buyAmount, expireTs, feeAtt);
     }
 
     function _tryPermit(address token, uint256 amount, uint256 deadline, uint8 v, bytes32 r, bytes32 s) private {
@@ -161,17 +159,39 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
         try IERC20Permit(token).permit(_msgSender(), address(this), amount, deadline, v, r, s) {} catch {}
     }
 
+    /// @dev The maker's escrowed fee (AC-833). Non-zero only when the maker is selling
+    ///      the SETTLEMENT CURRENCY (a buy-side order): they are the currency payer, so
+    ///      their fee must be escrowed up front alongside the notional. When the maker
+    ///      sells the asset, their fee is instead withheld from the currency the taker
+    ///      pays in, and nothing extra is escrowed.
+    function _makerEscrowedFee(address sellToken, uint256 sellAmount, FeeAttestation calldata feeAtt)
+        private
+        pure
+        returns (uint256)
+    {
+        if (feeAtt.feeToken != sellToken) return 0;
+        return FeeMath.feeAmount(sellAmount, feeAtt.makerFeeBps);
+    }
+
+    /// @dev Total the maker must transfer in at placement: notional + escrowed fee.
+    function _escrowTotal(address sellToken, uint256 sellAmount, FeeAttestation calldata feeAtt)
+        private
+        pure
+        returns (uint256)
+    {
+        return sellAmount + _makerEscrowedFee(sellToken, sellAmount, feeAtt);
+    }
+
     function _placeOrder(
         address sellToken,
         uint256 sellAmount,
         address buyToken,
         uint256 buyAmount,
         uint64 expireTs,
-        uint16 makerFeeBps,
-        uint16 takerFeeBps,
-        address feeCollector
+        FeeAttestation calldata feeAtt
     ) private returns (uint256 id) {
         address maker = _msgSender();
+        uint256 escrowedFee = _makerEscrowedFee(sellToken, sellAmount, feeAtt);
         id = ++totalOrders;
         _orders[id] = Order({
             id: id,
@@ -184,14 +204,26 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
             createdAt: uint64(block.timestamp),
             remainingQuantity: sellAmount,
             expireTs: expireTs,
-            makerFeeBps: makerFeeBps,
-            takerFeeBps: takerFeeBps,
-            feeCollector: feeCollector
+            makerFeeBps: feeAtt.makerFeeBps,
+            takerFeeBps: feeAtt.takerFeeBps,
+            feeCollector: feeAtt.feeCollector,
+            feeToken: feeAtt.feeToken,
+            escrowedFee: escrowedFee
         });
 
-        IERC20(sellToken).safeTransferFrom(maker, address(this), sellAmount);
+        IERC20(sellToken).safeTransferFrom(maker, address(this), sellAmount + escrowedFee);
         emit OrderPlaced(
-            id, maker, sellToken, sellAmount, buyToken, buyAmount, expireTs, makerFeeBps, takerFeeBps, feeCollector
+            id,
+            maker,
+            sellToken,
+            sellAmount,
+            buyToken,
+            buyAmount,
+            expireTs,
+            feeAtt.makerFeeBps,
+            feeAtt.takerFeeBps,
+            feeAtt.feeCollector,
+            feeAtt.feeToken
         );
     }
 
@@ -204,9 +236,14 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
         if (o.status != OrderStatus.Open) revert OrderNotOpen(id);
         if (o.maker != _msgSender()) revert NotMaker(id);
 
+        // The escrowed fee is the maker's money until a fill earns it (AC-833), so an
+        // untouched order returns the maker to their exact starting balance.
+        uint256 refunded = o.remainingQuantity + o.escrowedFee;
         o.status = OrderStatus.Cancelled;
-        IERC20(o.sellToken).safeTransfer(o.maker, o.remainingQuantity);
-        emit OrderCancelled(id, o.maker, o.remainingQuantity);
+        o.remainingQuantity = 0;
+        o.escrowedFee = 0;
+        IERC20(o.sellToken).safeTransfer(o.maker, refunded);
+        emit OrderCancelled(id, o.maker, refunded);
     }
 
     // --------------------------------------------------------------------- //
@@ -218,6 +255,15 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
     ///         buyToken amount is charged; the order stays Open if partially filled.
     ///         KYC-gated on the taker.
     ///
+    ///         Fees (AC-833): both are denominated in the order's `feeToken` — the
+    ///         settlement currency — and are EXCLUSIVE on the payer. The party paying
+    ///         currency pays `notional + their own fee`; the party receiving currency
+    ///         receives `notional − their own fee`; the ASSET LEG MOVES GROSS.
+    ///
+    ///         So a taker filling "10 A for 100 C" at 1 %/1 % pays **101 C** and
+    ///         receives the full **10 A**; the maker receives **99 C**; the collector
+    ///         takes **2 C** and zero A.
+    ///
     /// @param fillSellAmount Amount of sellToken to take from this order.
     ///        Pass `order.remainingQuantity` to fully fill.
     function fillOrder(uint256 id, uint256 fillSellAmount, KycAttestation calldata att)
@@ -227,6 +273,9 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
     {
         Order storage o = _orders[id];
         if (o.status != OrderStatus.Open) revert OrderNotOpen(id);
+        // Pre-AC-833 orders have no settlement currency, so their fees cannot be
+        // denominated. They remain cancellable/sweepable, but never fillable.
+        if (o.feeToken == address(0)) revert LegacyOrderMustBeUnwound(id);
         if (o.expireTs != 0 && block.timestamp > o.expireTs) revert OrderIsExpired(id);
         if (fillSellAmount == 0) revert FillAmountZero();
         if (fillSellAmount > o.remainingQuantity) revert FillExceedsRemaining(id, o.remainingQuantity);
@@ -239,30 +288,78 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
         // Ceiling division: taker always pays at least the proportional buyAmount.
         // This protects the maker from rounding loss on partial fills.
         uint256 buyAmountDue = FeeMath.ceilDiv(fillSellAmount * o.buyAmount, o.sellAmount);
+        _settleFill(o, id, taker, fillSellAmount, buyAmountDue);
+    }
 
-        // Compute fees. Floor division benefits maker/taker over the collector.
-        uint256 makerFeeAmount = FeeMath.feeAmount(buyAmountDue, o.makerFeeBps);
-        uint256 takerFeeAmount = FeeMath.feeAmount(fillSellAmount, o.takerFeeBps);
+    /// @dev Split out of `fillOrder` to keep the two settlement directions legible
+    ///      (and the stack shallow). `o` is a storage pointer — effects are written
+    ///      here, before any token interaction (CEI).
+    function _settleFill(Order storage o, uint256 id, address taker, uint256 fillSellAmount, uint256 buyAmountDue)
+        private
+    {
+        // The notional `N` is always the CURRENCY leg of this fill, whichever side it is.
+        bool makerSellsCurrency = (o.sellToken == o.feeToken);
+        uint256 notional = makerSellsCurrency ? fillSellAmount : buyAmountDue;
+
+        // Floor division: rounding favours maker/taker over the collector.
+        uint256 makerFeeAmount = FeeMath.feeAmount(notional, o.makerFeeBps);
+        uint256 takerFeeAmount = FeeMath.feeAmount(notional, o.takerFeeBps);
+        uint256 collectorTake = makerFeeAmount + takerFeeAmount;
         address collector = o.feeCollector;
+        address maker = o.maker;
 
+        // ---- Effects (CEI) --------------------------------------------------- //
         o.remainingQuantity -= fillSellAmount;
         bool fullFill = (o.remainingQuantity == 0);
         if (fullFill) o.status = OrderStatus.Filled;
 
-        // Taker pays buyAmountDue: (buyAmountDue - makerFeeAmount) to maker, remainder to collector.
-        IERC20(o.buyToken).safeTransferFrom(taker, o.maker, buyAmountDue - makerFeeAmount);
-        if (makerFeeAmount > 0) IERC20(o.buyToken).safeTransferFrom(taker, collector, makerFeeAmount);
-        // Taker receives fillSellAmount minus takerFeeAmount; takerFeeAmount goes to collector.
-        IERC20(o.sellToken).safeTransfer(taker, fillSellAmount - takerFeeAmount);
-        if (takerFeeAmount > 0) IERC20(o.sellToken).safeTransfer(collector, takerFeeAmount);
+        uint256 feeDust;
+        if (makerSellsCurrency) {
+            // The maker's fee was escrowed at placement; this fill earns part of it.
+            // Safe by construction: the per-fill fee is floor(fᵢ·bps) over fills whose
+            // fᵢ sum to sellAmount, and Σfloor(x) ≤ floor(Σx) = escrowedFee.
+            o.escrowedFee -= makerFeeAmount;
+            // On the last fill, rounding dust left in escrow goes back to the maker —
+            // it is their money and the contract must not retain a residue.
+            if (fullFill) {
+                feeDust = o.escrowedFee;
+                o.escrowedFee = 0;
+            }
+        }
+
+        // ---- Interactions ---------------------------------------------------- //
+        if (makerSellsCurrency) {
+            // Buy-side order: maker is the currency payer (already escrowed notional +
+            // fee); taker is the currency receiver. Asset moves gross to the maker.
+            IERC20(o.buyToken).safeTransferFrom(taker, maker, buyAmountDue);
+            IERC20(o.sellToken).safeTransfer(taker, fillSellAmount - takerFeeAmount);
+            if (collectorTake > 0) IERC20(o.sellToken).safeTransfer(collector, collectorTake);
+            if (feeDust > 0) IERC20(o.sellToken).safeTransfer(maker, feeDust);
+        } else {
+            // Sell-side order: taker is the currency payer — they pay notional + their
+            // OWN fee, and receive the full asset amount. Maker receives notional less
+            // the maker fee. Nothing is ever withheld from the asset leg.
+            IERC20(o.buyToken).safeTransferFrom(taker, maker, notional - makerFeeAmount);
+            if (collectorTake > 0) IERC20(o.buyToken).safeTransferFrom(taker, collector, collectorTake);
+            IERC20(o.sellToken).safeTransfer(taker, fillSellAmount);
+        }
 
         if (fullFill) {
             emit OrderFilled(
-                id, o.maker, taker, fillSellAmount, buyAmountDue, makerFeeAmount, takerFeeAmount, collector
+                id, maker, taker, fillSellAmount, buyAmountDue, makerFeeAmount, takerFeeAmount, collector, o.feeToken
             );
         } else {
             emit OrderPartiallyFilled(
-                id, o.maker, taker, fillSellAmount, o.remainingQuantity, makerFeeAmount, takerFeeAmount, collector
+                id,
+                maker,
+                taker,
+                fillSellAmount,
+                buyAmountDue,
+                o.remainingQuantity,
+                makerFeeAmount,
+                takerFeeAmount,
+                collector,
+                o.feeToken
             );
         }
     }
@@ -272,8 +369,9 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
     // --------------------------------------------------------------------- //
 
     /// @notice Anyone can sweep a batch of expired orders, returning each order's
-    ///         remaining escrow to the maker. Orders that are not Open, lack an
-    ///         expireTs, or have not yet expired are silently skipped.
+    ///         remaining escrow — plus any unconsumed escrowed fee (AC-833) — to the
+    ///         maker. Orders that are not Open, lack an expireTs, or have not yet
+    ///         expired are silently skipped.
     ///         Callers should batch `ids` in chunks of at most 100 to avoid out-of-gas reverts.
     function sweepExpired(uint256[] calldata ids) external nonReentrant {
         for (uint256 i = 0; i < ids.length; i++) {
@@ -281,14 +379,15 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
             if (o.status != OrderStatus.Open) continue;
             if (o.expireTs == 0 || block.timestamp <= o.expireTs) continue;
 
-            uint256 remaining = o.remainingQuantity;
+            uint256 refunded = o.remainingQuantity + o.escrowedFee;
             address maker = o.maker;
             address token = o.sellToken;
             o.status = OrderStatus.Expired;
             o.remainingQuantity = 0;
+            o.escrowedFee = 0;
 
-            IERC20(token).safeTransfer(maker, remaining);
-            emit OrderExpired(ids[i], maker, remaining);
+            IERC20(token).safeTransfer(maker, refunded);
+            emit OrderExpired(ids[i], maker, refunded);
         }
     }
 

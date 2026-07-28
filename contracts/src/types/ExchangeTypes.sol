@@ -62,9 +62,21 @@ abstract contract ExchangeTypes {
         uint256 remainingQuantity; // remaining sellAmount not yet filled/settled
         uint64 expireTs; // unix expiry; 0 = never expires
         // Fee snapshot — set at placement, immutable for the lifetime of the order.
-        uint16 makerFeeBps; // fee deducted from what maker receives (in buyToken)
-        uint16 takerFeeBps; // fee deducted from what taker receives (in sellToken)
+        // BOTH fees are denominated in `feeToken` (the settlement currency) and are
+        // EXCLUSIVE on the payer: the currency payer pays notional + their own fee,
+        // the currency receiver receives notional − their own fee, and the asset leg
+        // always moves gross. See AC-833.
+        uint16 makerFeeBps; // maker's fee, charged on the notional, in feeToken
+        uint16 takerFeeBps; // taker's fee, charged on the notional, in feeToken
         address feeCollector; // allowlisted recipient of collected fees
+        // --- appended (AC-833); append-only, `Order` is stored in a mapping ---
+        address feeToken; // the settlement currency; asserted ∈ {sellToken, buyToken}
+        /// @dev Unconsumed maker-fee escrow, denominated in `feeToken`. Non-zero only
+        ///      when the maker escrows the CURRENCY (sellToken == feeToken, a buy-side
+        ///      order): placement escrows `sellAmount + fee(sellAmount, makerFeeBps)`.
+        ///      It is the MAKER'S MONEY until a fill earns it, so every unwind path —
+        ///      and the final fill — must return whatever remains.
+        uint256 escrowedFee;
     }
 
     struct Offer {
@@ -79,9 +91,18 @@ abstract contract ExchangeTypes {
         uint64 createdAt;
         uint64 expireTs;
         address proposedBy; // who made the current round's proposal (their tokens are escrowed)
-        uint16 makerFeeBps; // fee deducted from what maker receives at settlement
-        uint16 takerFeeBps; // fee deducted from what taker receives at settlement
+        // Both fees are denominated in `feeToken` and exclusive on the payer — see `Order`.
+        uint16 makerFeeBps; // maker's fee, charged on the currency leg, in feeToken
+        uint16 takerFeeBps; // taker's fee, charged on the currency leg, in feeToken
         address feeCollector; // allowlisted recipient; address(0) when no fee
+        // --- appended (AC-833); append-only, `Offer` is stored in a mapping ---
+        address feeToken; // the settlement currency; asserted ∈ {makerToken, takerToken}
+        /// @dev Unconsumed fee escrow of the CURRENT proposer, in `feeToken`. Non-zero
+        ///      only when the proposer's own leg is the currency. Offers are
+        ///      all-or-nothing, so this is either fully consumed by a settlement or
+        ///      fully refunded — including by `replaceOffer`, which unwinds the
+        ///      previous proposer and re-escrows the caller at the new amounts.
+        uint256 escrowedFee;
     }
 
     /// @notice A single-use KYC authorization. The first five fields are EIP-712
@@ -112,9 +133,16 @@ abstract contract ExchangeTypes {
         uint256 nonce; // single-use, per-account, separate from KYC nonces
         uint256 deadline; // unix expiry (fee service sets ~3 min)
         bytes32 paramsHash; // must equal the paired KycAttestation's paramsHash
-        uint16 makerFeeBps; // fee the maker pays from what they receive
-        uint16 takerFeeBps; // fee the taker pays from what they receive
+        uint16 makerFeeBps; // maker's fee on the notional, denominated in feeToken
+        uint16 takerFeeBps; // taker's fee on the notional, denominated in feeToken
         address feeCollector; // must be in the on-chain allowlist when non-zero fees
+        /// @dev The settlement currency both fees are denominated in (AC-833). The fee
+        ///      service resolves it from the catalog (`token_pairs.settlement_currency_id`)
+        ///      — the contract knows tokens, not markets, so it cannot infer which leg is
+        ///      money. Asserted on-chain to be one of the two legs; required even when
+        ///      both bps are zero, so that a legacy (pre-AC-833) order stays
+        ///      distinguishable by `feeToken == address(0)`.
+        address feeToken;
         bytes signature; // fee operator's EIP-712 signature over the above
     }
 }
