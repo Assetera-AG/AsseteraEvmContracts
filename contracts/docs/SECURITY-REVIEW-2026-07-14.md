@@ -1,9 +1,9 @@
-# AsseteraExchange — Security Review
+# AsseteraECS — Security Review
 
 **Date:** 2026-07-14
 **Reviewer:** Internal (Claude Code, Trail of Bits `building-secure-contracts` skill set)
 **Commit:** `b2ca27f` (`chore: release main (#23)`), branch `adr/AC-93-security-review`
-**Scope:** `contracts/src/**` — the live AsseteraExchange surface (14 source files, ~1,680 LoC)
+**Scope:** `contracts/src/**` — the live AsseteraECS surface (14 source files, ~1,680 LoC)
 **Out of scope:** `test/`, `script/`, `lib/`, `packages/sdk/`, `examples/`; the parked
 `admin/OperatorFunctions.sol` (fully commented out — not on the deployed surface)
 **Methodology:** entry-point mapping → line-by-line context build → Slither detector suite →
@@ -42,7 +42,7 @@ controlled on mainnet.
 
 ## 2. Entry-point map (attack surface)
 
-All state-changing external functions on the assembled `AsseteraExchange` (view/pure excluded).
+All state-changing external functions on the assembled `AsseteraECS` (view/pure excluded).
 
 ### Public (permissionless)
 | Function | Gate | Notes |
@@ -174,7 +174,7 @@ current signature is `initialize(admin, kycSigner, feeSigner)` (the `operator` p
 > `initialize(admin, kycSigner, feeSigner)` with no `operator` param, and to describe re-enabling
 > `OPERATOR_ROLE` as requiring either a new initializer param (fresh deploy) or a `reinitializer` step,
 > rather than "uncomment a retained param" (which was no longer true). Also fixed two stale comments that
-> had the same drift: `AsseteraExchange.sol::initialize`'s commented-out `_grantRole(OPERATOR_ROLE,
+> had the same drift: `AsseteraECS.sol::initialize`'s commented-out `_grantRole(OPERATOR_ROLE,
 > operator)` line (referenced a param that no longer exists) and the re-enable instructions atop
 > `admin/OperatorFunctions.sol`. Original finding text above left unmodified for the audit trail.
 
@@ -191,7 +191,7 @@ Line coverage is excellent (~95–100% on core), but **branch coverage is 58–7
 > **Status: Resolved 2026-07-15.**
 > - (a) `test_TokenSafety_FeeOnTransfer_EscrowOverstatedAtPlacement`, `test_TokenSafety_FeeOnTransfer_PoolInsolvency_LastCancellerReverts`,
 >   `test_TokenSafety_FeeOnTransfer_AcceptOfferShortfall`, `test_TokenSafety_Rebasing_NegativeRebaseCausesInsolvency` in
->   `test/AsseteraExchange.t.sol`, backed by new `test/mocks/{FeeOnTransferToken,RebasingToken}.sol` — prove the M-1
+>   `test/AsseteraECS.t.sol`, backed by new `test/mocks/{FeeOnTransferToken,RebasingToken}.sol` — prove the M-1
 >   insolvency scenario directly.
 > - (b) `test/invariants/{EscrowHandler,EscrowConservation}.t.sol` — a handler-driven invariant suite that
 >   independently recomputes Σ escrowed (from ground-truth `getOrder`/`getOffer` state, not a ghost mirror of the

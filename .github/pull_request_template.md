@@ -17,5 +17,5 @@ Closes AC-
 - [ ] `forge build` compiles
 - [ ] `forge test -vvv` green; new/changed behaviour is covered by tests
 - [ ] Events touched? `docs/INDEXER_EVENT_SCHEMA.md` updated
-- [ ] Storage layout of upgradeable contracts preserved (append-only) for `AsseteraExchange`
+- [ ] Storage layout of upgradeable contracts preserved (append-only) for `AsseteraECS`
 - [ ] Docs / NatSpec updated where relevant

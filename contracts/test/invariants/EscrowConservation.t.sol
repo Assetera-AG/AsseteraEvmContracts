@@ -3,7 +3,7 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {AsseteraExchange} from "../../src/AsseteraExchange.sol";
+import {AsseteraECS} from "../../src/AsseteraECS.sol";
 import {ExchangeTypes} from "../../src/types/ExchangeTypes.sol";
 import {FaucetToken} from "../mocks/FaucetToken.sol";
 import {EscrowHandler} from "./EscrowHandler.sol";
@@ -14,10 +14,10 @@ import {EscrowHandler} from "./EscrowHandler.sol";
 ///         the exchange's actual on-chain token balance always exactly equals
 ///         the sum of currently-escrowed amounts across every open order and
 ///         offer — the positive-case counterpart to the M-1/I-2(a) tests in
-///         AsseteraExchange.t.sol, which prove that same accounting *breaks*
+///         AsseteraECS.t.sol, which prove that same accounting *breaks*
 ///         for non-standard tokens by design.
 contract EscrowConservationInvariantTest is Test {
-    AsseteraExchange internal exchange;
+    AsseteraECS internal exchange;
     FaucetToken internal tokenA;
     FaucetToken internal tokenB;
     EscrowHandler internal handler;
@@ -29,14 +29,14 @@ contract EscrowConservationInvariantTest is Test {
         tokenA = new FaucetToken("Token A", "TKA", 18);
         tokenB = new FaucetToken("Token B", "TKB", 6);
 
-        AsseteraExchange impl = new AsseteraExchange(address(0)); // no meta-tx forwarder needed
+        AsseteraECS impl = new AsseteraECS(address(0)); // no meta-tx forwarder needed
         bytes memory initData =
-            abi.encodeCall(AsseteraExchange.initialize, (admin, makeAddr("invariant-kyc"), makeAddr("invariant-fee")));
-        exchange = AsseteraExchange(address(new ERC1967Proxy(address(impl), initData)));
+            abi.encodeCall(AsseteraECS.initialize, (admin, makeAddr("invariant-kyc"), makeAddr("invariant-fee")));
+        exchange = AsseteraECS(address(new ERC1967Proxy(address(impl), initData)));
 
         // Escrow conservation is a pure token-accounting property, independent
         // of KYC/fee attestation gating (which has its own dedicated coverage
-        // in AsseteraExchange.t.sol) — disable it so the handler can drive
+        // in AsseteraECS.t.sol) — disable it so the handler can drive
         // every action freely with unsigned attestations. The fee TERMS on those
         // attestations are still honoured (AC-833): `_validateFees` runs
         // unconditionally, so the handler trades at real, non-zero fees and the

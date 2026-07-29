@@ -6,7 +6,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {ERC2771Forwarder} from "@openzeppelin/contracts/metatx/ERC2771Forwarder.sol";
 import {DeployBase} from "./DeployBase.sol";
-import {AsseteraExchange} from "../src/AsseteraExchange.sol";
+import {AsseteraECS} from "../src/AsseteraECS.sol";
 import {FaucetToken} from "../test/mocks/FaucetToken.sol";
 
 /// @notice Deterministically deploys (or upgrades) the exchange stack via CreateX and records the
@@ -86,37 +86,41 @@ contract Deploy is DeployBase {
         // 3. Exchange implementation — CREATE2 keyed on the initcode, so unchanged bytecode maps to the same
         //    address (re-run is a true no-op) and changed bytecode yields a new impl (→ the upgrade path
         //    below). The forwarder is baked in as an immutable; the impl address is not consumer-facing.
+        //    ⚠️ The salt label below is deliberately still "AsseteraExchange.impl" — see the proxy salt note.
         (exchangeImpl, created) = _deploy2(
-            deployer,
-            "AsseteraExchange.impl",
-            abi.encodePacked(type(AsseteraExchange).creationCode, abi.encode(forwarder))
+            deployer, "AsseteraExchange.impl", abi.encodePacked(type(AsseteraECS).creationCode, abi.encode(forwarder))
         );
-        console2.log(created ? "AsseteraExchange impl deployed:" : "AsseteraExchange impl reused: ", exchangeImpl);
+        console2.log(created ? "AsseteraECS impl deployed:" : "AsseteraECS impl reused: ", exchangeImpl);
 
         // 4. Exchange proxy — CREATE3 stable address, initialized atomically in the constructor (initData is
         //    part of the initcode, but CREATE3 makes the address initcode-independent, so there is no
         //    front-run window and the address is identical across chains and across future upgrades).
+        //    ⚠️ DO NOT RENAME THE SALT LABEL to "AsseteraECS.proxy" (AC-837). `_salt` hashes this string
+        //    into the CREATE3 salt, so the label IS the address. Changing it would make a re-run compute a
+        //    fresh address, miss the existing Amoy/Sepolia proxy at 0x58c3Fb1B…F213, and deploy a second
+        //    venue instead of no-op'ing. Same reasoning for the ".impl" CREATE2 label above. The labels
+        //    move to "AsseteraECS.*" only at the planned production fresh deploy.
         bytes32 proxySalt = _salt(deployer, "AsseteraExchange.proxy");
         exchangeProxy = computeCreate3Address(proxySalt, deployer);
         // Only a fresh proxy deployment sets the recorded creation block/timestamp; an upgrade or no-op re-run
         // must PRESERVE the existing provenance (see DeployBase._provenance / AC-665).
         bool proxyCreated = false;
         if (!_hasCode(exchangeProxy)) {
-            bytes memory initData = abi.encodeCall(AsseteraExchange.initialize, (admin, kycSigner, feeSigner));
+            bytes memory initData = abi.encodeCall(AsseteraECS.initialize, (admin, kycSigner, feeSigner));
             bytes memory proxyInit =
                 abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(exchangeImpl, initData));
             address deployed = create3(proxySalt, proxyInit);
             require(deployed == exchangeProxy, "proxy create3 mismatch");
             proxyCreated = true;
-            console2.log("AsseteraExchange proxy deployed:", exchangeProxy);
+            console2.log("AsseteraECS proxy deployed:", exchangeProxy);
             console2.log("  admin:", admin);
         } else if (_currentImpl(exchangeProxy) != exchangeImpl) {
             // Re-run with new impl bytecode: upgrade in place (requires the caller to hold admin — true for
             // local/testnet where admin == deployer; prod upgrades go through the Safe via UpgradeCalldata).
-            AsseteraExchange(exchangeProxy).upgradeToAndCall(exchangeImpl, "");
-            console2.log("AsseteraExchange proxy upgraded ->", exchangeImpl);
+            AsseteraECS(exchangeProxy).upgradeToAndCall(exchangeImpl, "");
+            console2.log("AsseteraECS proxy upgraded ->", exchangeImpl);
         } else {
-            console2.log("AsseteraExchange proxy impl unchanged");
+            console2.log("AsseteraECS proxy impl unchanged");
         }
 
         vm.stopBroadcast();
@@ -125,8 +129,8 @@ contract Deploy is DeployBase {
 
         console2.log("");
         console2.log("=== Deployment summary (chainId %s) ===", chainId);
-        console2.log("AsseteraExchange (proxy):", exchangeProxy);
-        console2.log("AsseteraExchange (impl): ", exchangeImpl);
+        console2.log("AsseteraECS (proxy):", exchangeProxy);
+        console2.log("AsseteraECS (impl): ", exchangeImpl);
         console2.log("Forwarder:", forwarder);
         if (deployMocks) {
             console2.log("MockUSDC:", usdc);

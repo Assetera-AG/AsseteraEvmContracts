@@ -13,7 +13,7 @@ import { foundry, react } from "@wagmi/cli/plugins";
 // git-ignored).
 const here = dirname(fileURLToPath(import.meta.url));
 const deploymentsDir = join(here, "src/deployments");
-const include = ["AsseteraExchange.json", "FaucetToken.json", "ERC2771Forwarder.json"];
+const include = ["AsseteraECS.json", "FaucetToken.json", "ERC2771Forwarder.json"];
 
 function exchangeAddressesByChain(): Record<number, `0x${string}`> {
   if (!existsSync(deploymentsDir)) return {};
@@ -21,13 +21,13 @@ function exchangeAddressesByChain(): Record<number, `0x${string}`> {
   for (const file of readdirSync(deploymentsDir)) {
     if (!file.endsWith(".json")) continue;
     const d = JSON.parse(readFileSync(join(deploymentsDir, file), "utf8"));
-    const address = d?.contracts?.AsseteraExchange;
+    const address = d?.contracts?.AsseteraECS;
     if (d?.chainId && address) byChain[Number(d.chainId)] = address;
   }
   return byChain;
 }
 
-const deployments = { AsseteraExchange: exchangeAddressesByChain() };
+const deployments = { AsseteraECS: exchangeAddressesByChain() };
 
 export default defineConfig([
   {

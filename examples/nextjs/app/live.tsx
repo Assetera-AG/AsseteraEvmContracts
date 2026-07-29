@@ -1,9 +1,9 @@
 "use client";
 
 import {
-  useReadAsseteraExchangePaused,
-  useReadAsseteraExchangeTotalOrders,
-  useReadAsseteraExchangeVersion,
+  useReadAsseteraEcsPaused,
+  useReadAsseteraEcsTotalOrders,
+  useReadAsseteraEcsVersion,
 } from "@asseteragmbh/evm-contracts/react";
 import { polygonAmoy } from "wagmi/chains";
 
@@ -11,9 +11,9 @@ import { polygonAmoy } from "wagmi/chains";
 // never pass an address. These read live from Amoy through the wagmi transport.
 export function LiveReads() {
   const chainId = polygonAmoy.id;
-  const version = useReadAsseteraExchangeVersion({ chainId });
-  const totalOrders = useReadAsseteraExchangeTotalOrders({ chainId });
-  const paused = useReadAsseteraExchangePaused({ chainId });
+  const version = useReadAsseteraEcsVersion({ chainId });
+  const totalOrders = useReadAsseteraEcsTotalOrders({ chainId });
+  const paused = useReadAsseteraEcsPaused({ chainId });
 
   const show = (q: { data?: unknown; isLoading: boolean; error: unknown }) =>
     q.isLoading ? "…" : q.error ? "error" : String(q.data);

@@ -5,9 +5,9 @@ import {ExchangeTypes} from "../types/ExchangeTypes.sol";
 import {IKycGate} from "./IKycGate.sol";
 import {IFeeGate} from "./IFeeGate.sol";
 
-/// @title IAsseteraExchange
+/// @title IAsseteraECS
 /// @notice Standalone, SDK/caller-facing reference interface for the full
-///         assembled `AsseteraExchange` ABI. Not `is`-inherited by the concrete
+///         assembled `AsseteraECS` ABI. Not `is`-inherited by the concrete
 ///         contract (that would reintroduce duplicate-declaration conflicts
 ///         with `ExchangeStorage`/`OrderBook`/`OfferBook`/`ExchangeAdmin`, which
 ///         are plain abstract contracts an interface cannot inherit) — this is
@@ -16,7 +16,7 @@ import {IFeeGate} from "./IFeeGate.sol";
 ///         `IKycGate`/`IFeeGate` which ARE formally inherited by their gates.
 ///         References `ExchangeTypes.*` via qualified import rather than
 ///         inheriting `ExchangeTypes` — see ExchangeTypes.sol's doc comment.
-interface IAsseteraExchange is IKycGate, IFeeGate {
+interface IAsseteraECS is IKycGate, IFeeGate {
     // --------------------------------------------------------------------- //
     //               ExchangeStorage-level errors (see storage/)              //
     // --------------------------------------------------------------------- //

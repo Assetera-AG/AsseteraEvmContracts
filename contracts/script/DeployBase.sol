@@ -16,8 +16,8 @@ import {console2} from "forge-std/Script.sol";
 ///
 ///         {
 ///           "chainId": 31337, "caip2": "eip155:31337", "namespace": "eip155",
-///           "contracts":       { "AsseteraExchange": "0x..(proxy)..", "Forwarder": "0x..", "MockUSDC": "0x..", "MockRWA": "0x.." },
-///           "implementations": { "AsseteraExchange": "0x..(impl).." },
+///           "contracts":       { "AsseteraECS": "0x..(proxy)..", "Forwarder": "0x..", "MockUSDC": "0x..", "MockRWA": "0x.." },
+///           "implementations": { "AsseteraECS": "0x..(impl).." },
 ///           "metadata":        { "deployer": "0x..", "admin": "0x..", "operator": "0x..", "kycSigner": "0x..",
 ///                                "feeSigner": "0x..", "relayer": "0x..", "deployBlock": 0, "deployTimestamp": 0 }
 ///         }
@@ -134,16 +134,16 @@ abstract contract DeployBase is CreateXScript {
     ///      it gates whether `deployBlock`/`deployTimestamp` are re-stamped or preserved (see `_provenance`).
     function _save(address deployer, bool proxyCreated) internal {
         // MockUSDC/MockRWA only exist on testnets (see `_isTestnet`); omit their keys entirely on chains
-        // where the faucet wasn't deployed rather than recording a misleading 0x0. AsseteraExchange is
+        // where the faucet wasn't deployed rather than recording a misleading 0x0. AsseteraECS is
         // serialized last so its return value carries the full "contracts" object regardless.
         string memory c = "contracts";
         if (usdc != address(0)) vm.serializeAddress(c, "MockUSDC", usdc);
         if (rwa != address(0)) vm.serializeAddress(c, "MockRWA", rwa);
         vm.serializeAddress(c, "Forwarder", forwarder);
-        string memory cJson = vm.serializeAddress(c, "AsseteraExchange", exchangeProxy);
+        string memory cJson = vm.serializeAddress(c, "AsseteraECS", exchangeProxy);
 
         string memory im = "implementations";
-        string memory imJson = vm.serializeAddress(im, "AsseteraExchange", exchangeImpl);
+        string memory imJson = vm.serializeAddress(im, "AsseteraECS", exchangeImpl);
 
         (uint256 deployBlock, uint256 deployTimestamp) = _provenance(proxyCreated);
 

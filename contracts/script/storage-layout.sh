@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Storage-layout guard for the upgradeable AsseteraExchange proxy.
+# Storage-layout guard for the upgradeable AsseteraECS proxy.
 #
 # The proxy's storage layout is a hard upgrade-safety invariant: a new
 # implementation may only *append* storage (shrinking `__gap`), never move,
@@ -26,7 +26,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-CONTRACT="AsseteraExchange"
+CONTRACT="AsseteraECS"
 SNAPSHOT="storage/${CONTRACT}.txt"
 CURRENT="$(mktemp)"
 trap 'rm -f "$CURRENT"' EXIT
@@ -56,7 +56,7 @@ if diff -u <(tr -d '\r' <"$SNAPSHOT") <(tr -d '\r' <"$CURRENT"); then
 else
   cat >&2 <<'EOF'
 
-❌ AsseteraExchange storage layout CHANGED.
+❌ AsseteraECS storage layout CHANGED.
 
   The proxy's storage layout is an upgrade-safety invariant. Review the diff above:
     - New trailing vars that shrink `__gap`   -> expected for a deliberate upgrade.

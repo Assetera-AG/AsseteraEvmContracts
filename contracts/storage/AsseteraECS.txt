@@ -1,0 +1,60 @@
+
+╭--------------------+------------------------------------------------+------+--------+-------+---------------------------------╮
+| Name               | Type                                           | Slot | Offset | Bytes | Contract                        |
++===============================================================================================================================+
+| _orders            | mapping(uint256 => struct ExchangeTypes.Order) | 0    | 0      | 32    | src/AsseteraECS.sol:AsseteraECS |
+|--------------------+------------------------------------------------+------+--------+-------+---------------------------------|
+| totalOrders        | uint256                                        | 1    | 0      | 32    | src/AsseteraECS.sol:AsseteraECS |
+|--------------------+------------------------------------------------+------+--------+-------+---------------------------------|
+| usedNonce          | mapping(address => mapping(uint256 => bool))   | 2    | 0      | 32    | src/AsseteraECS.sol:AsseteraECS |
+|--------------------+------------------------------------------------+------+--------+-------+---------------------------------|
+| usedFeeNonce       | mapping(address => mapping(uint256 => bool))   | 3    | 0      | 32    | src/AsseteraECS.sol:AsseteraECS |
+|--------------------+------------------------------------------------+------+--------+-------+---------------------------------|
+| complianceRequired | mapping(enum ExchangeTypes.Action => bool)     | 4    | 0      | 32    | src/AsseteraECS.sol:AsseteraECS |
+|--------------------+------------------------------------------------+------+--------+-------+---------------------------------|
+| _offers            | mapping(uint256 => struct ExchangeTypes.Offer) | 5    | 0      | 32    | src/AsseteraECS.sol:AsseteraECS |
+|--------------------+------------------------------------------------+------+--------+-------+---------------------------------|
+| totalOffers        | uint256                                        | 6    | 0      | 32    | src/AsseteraECS.sol:AsseteraECS |
+|--------------------+------------------------------------------------+------+--------+-------+---------------------------------|
+| allowedCollectors  | mapping(address => bool)                       | 7    | 0      | 32    | src/AsseteraECS.sol:AsseteraECS |
+|--------------------+------------------------------------------------+------+--------+-------+---------------------------------|
+| __gap              | uint256[42]                                    | 8    | 0      | 1344  | src/AsseteraECS.sol:AsseteraECS |
+╰--------------------+------------------------------------------------+------+--------+-------+---------------------------------╯
+
+
+=== struct members (slot/offset within each struct) ===
+
+t_struct(Offer)11497_storage
+  slot    0  offset  0  id: t_uint256
+  slot    1  offset  0  maker: t_address
+  slot    2  offset  0  taker: t_address
+  slot    3  offset  0  makerToken: t_address
+  slot    4  offset  0  makerAmount: t_uint256
+  slot    5  offset  0  takerToken: t_address
+  slot    6  offset  0  takerAmount: t_uint256
+  slot    7  offset  0  status: t_enum(OfferStatus)11418
+  slot    7  offset  1  createdAt: t_uint64
+  slot    7  offset  9  expireTs: t_uint64
+  slot    8  offset  0  proposedBy: t_address
+  slot    8  offset 20  makerFeeBps: t_uint16
+  slot    8  offset 22  takerFeeBps: t_uint16
+  slot    9  offset  0  feeCollector: t_address
+  slot   10  offset  0  feeToken: t_address
+  slot   11  offset  0  escrowedFee: t_uint256
+
+t_struct(Order)11462_storage
+  slot    0  offset  0  id: t_uint256
+  slot    1  offset  0  maker: t_address
+  slot    2  offset  0  sellToken: t_address
+  slot    3  offset  0  sellAmount: t_uint256
+  slot    4  offset  0  buyToken: t_address
+  slot    5  offset  0  buyAmount: t_uint256
+  slot    6  offset  0  status: t_enum(OrderStatus)11409
+  slot    6  offset  1  createdAt: t_uint64
+  slot    7  offset  0  remainingQuantity: t_uint256
+  slot    8  offset  0  expireTs: t_uint64
+  slot    8  offset  8  makerFeeBps: t_uint16
+  slot    8  offset 10  takerFeeBps: t_uint16
+  slot    8  offset 12  feeCollector: t_address
+  slot    9  offset  0  feeToken: t_address
+  slot   10  offset  0  escrowedFee: t_uint256

@@ -2,10 +2,18 @@
 
 Solidity (Foundry) smart contracts for the **Assetera** regulated real-world-asset (RWA) exchange.
 
-`AsseteraExchange` is an **escrow-based, off-chain-matched limit-order venue** with a MiFID-style
-compliance model: every user-initiated trade action requires a fresh, single-use **EIP-712 KYC
-attestation** signed by the platform's compliance backend, and trades are **gasless** for end users via
-ERC-2771 meta-transactions. The contract is **UUPS-upgradeable** (ERC-1967) and role-gated.
+`AsseteraECS` — **E**xecution, **C**learing and **S**ettlement — is an **escrow-based, off-chain-matched
+limit-order venue** with a MiFID-style compliance model: every user-initiated trade action requires a fresh,
+single-use **EIP-712 KYC attestation** signed by the platform's compliance backend, and trades are
+**gasless** for end users via ERC-2771 meta-transactions. The contract is **UUPS-upgradeable** (ERC-1967)
+and role-gated.
+
+> **Renamed from `AsseteraExchange`** (AC-836/AC-837). The rename is source-level only: the compiled
+> `deployedBytecode`, the ABI and the storage layout are byte-identical, so the live Amoy/Sepolia proxies
+> and implementations are untouched — **no redeploy, no upgrade**. Two string literals deliberately keep
+> the old name because they are addresses/domains rather than branding: the **EIP-712 domain**
+> (`src/AsseteraECS.sol:initialize`) and the **CREATE2/CREATE3 salt labels** (`script/Deploy.s.sol`).
+> Both move to `AsseteraECS` only at the planned production fresh deploy.
 
 > Full behaviour is specified in [`docs/FUNCTIONAL_SPEC.md`](docs/FUNCTIONAL_SPEC.md). The event surface
 > consumed by the indexer is in [`docs/INDEXER_EVENT_SCHEMA.md`](docs/INDEXER_EVENT_SCHEMA.md).
@@ -14,7 +22,7 @@ ERC-2771 meta-transactions. The contract is **UUPS-upgradeable** (ERC-1967) and 
 
 | Contract | Path | What it is |
 |---|---|---|
-| `AsseteraExchange` | [`src/AsseteraExchange.sol`](src/AsseteraExchange.sol) | The exchange. UUPS proxy; escrow limit orders + counter-offer negotiation; KYC-attestation gated; ERC-2771 gasless; per-pair maker/taker fees. |
+| `AsseteraECS` | [`src/AsseteraECS.sol`](src/AsseteraECS.sol) | The exchange. UUPS proxy; escrow limit orders + counter-offer negotiation; KYC-attestation gated; ERC-2771 gasless; per-pair maker/taker fees. |
 | `FaucetToken` | [`test/mocks/FaucetToken.sol`](test/mocks/FaucetToken.sol) | Minimal ERC20 + EIP-2612 permit with an open faucet — the mock `mUSDC` (6 dp) and `mRWA` (18 dp) test tokens. **Testnet only, not part of the production `src/` surface.** |
 
 ### Roles
@@ -27,7 +35,7 @@ ERC-2771 meta-transactions. The contract is **UUPS-upgradeable** (ERC-1967) and 
 ## Layout
 
 ```
-src/       production contract surface (AsseteraExchange)
+src/       production contract surface (AsseteraECS)
 script/    Foundry deploy/verify/upgrade scripts
 test/      forge tests (+ test/mocks/)
 docs/      FUNCTIONAL_SPEC.md, INDEXER_EVENT_SCHEMA.md

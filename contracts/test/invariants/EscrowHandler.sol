@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {AsseteraExchange} from "../../src/AsseteraExchange.sol";
+import {AsseteraECS} from "../../src/AsseteraECS.sol";
 import {ExchangeTypes} from "../../src/types/ExchangeTypes.sol";
 import {FaucetToken} from "../mocks/FaucetToken.sol";
 
@@ -20,7 +20,7 @@ import {FaucetToken} from "../mocks/FaucetToken.sol";
 ///         so it actually exercises the contract's own accounting logic
 ///         instead of just replaying it.
 contract EscrowHandler is Test {
-    AsseteraExchange public immutable exchange;
+    AsseteraECS public immutable exchange;
     FaucetToken public immutable tokenA;
     FaucetToken public immutable tokenB;
 
@@ -42,7 +42,7 @@ contract EscrowHandler is Test {
     address public immutable collector;
 
     constructor(
-        AsseteraExchange exchange_,
+        AsseteraECS exchange_,
         FaucetToken tokenA_,
         FaucetToken tokenB_,
         address[3] memory actors_,

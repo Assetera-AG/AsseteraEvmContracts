@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {AsseteraExchange} from "../../src/AsseteraExchange.sol";
+import {AsseteraECS} from "../../src/AsseteraECS.sol";
 
 /// @notice Upgrade target used only in tests to prove the UUPS path: it bumps
 ///         the version, adds a new function, and — crucially — adds a new
@@ -15,12 +15,12 @@ import {AsseteraExchange} from "../../src/AsseteraExchange.sol";
 ///         (`script/storage-layout.sh`) exists to catch exactly that edit and
 ///         turn it into a reviewed diff. For a test mock, appending is enough to
 ///         exercise the "old state preserved + new state writable" property.
-contract AsseteraExchangeV2 is AsseteraExchange {
+contract AsseteraECSV2 is AsseteraECS {
     /// @dev New state introduced by the upgrade (see contract-level note).
     uint256 public upgradeNote;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address trustedForwarder) AsseteraExchange(trustedForwarder) {}
+    constructor(address trustedForwarder) AsseteraECS(trustedForwarder) {}
 
     function version() external pure override returns (string memory) {
         return "4.0.0";

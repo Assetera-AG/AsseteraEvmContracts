@@ -4,7 +4,7 @@ pragma solidity 0.8.28;
 import {Script, console2} from "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
-import {AsseteraExchange} from "../src/AsseteraExchange.sol";
+import {AsseteraECS} from "../src/AsseteraECS.sol";
 import {ExchangeTypes} from "../src/types/ExchangeTypes.sol";
 
 /// @notice Read-only post-deployment verification. Checks every governance
@@ -26,17 +26,17 @@ contract Verify is Script {
 
         string memory json = vm.readFile(path);
 
-        address proxy = json.readAddress(".contracts.AsseteraExchange");
-        address impl = json.readAddress(".implementations.AsseteraExchange");
+        address proxy = json.readAddress(".contracts.AsseteraECS");
+        address impl = json.readAddress(".implementations.AsseteraECS");
         address adminAddr = json.readAddress(".metadata.admin");
         // address opAddr = json.readAddress(".metadata.operator"); // unused while OPERATOR_ROLE is parked (AC-246)
         address kycAddr = json.readAddress(".metadata.kycSigner");
         address feeAddr = json.readAddress(".metadata.feeSigner");
 
-        AsseteraExchange exchange = AsseteraExchange(proxy);
+        AsseteraECS exchange = AsseteraECS(proxy);
 
         console2.log("");
-        console2.log("=== Verify: AsseteraExchange (chain %s) ===", chainId);
+        console2.log("=== Verify: AsseteraECS (chain %s) ===", chainId);
         console2.log("Proxy  :", proxy);
         console2.log("Impl   :", impl);
         console2.log("Admin  :", adminAddr);
