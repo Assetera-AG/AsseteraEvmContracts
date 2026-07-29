@@ -2,13 +2,13 @@
   "caip2": "eip155:11155111",
   "chainId": 11155111,
   "contracts": {
-    "AsseteraExchange": "0x58c3Fb1B69ca985A5461CcEfFd0Fe590b653F213",
+    "AsseteraECS": "0x58c3Fb1B69ca985A5461CcEfFd0Fe590b653F213",
     "Forwarder": "0x402D2d3e7CdD42cAb656475952961f150f3Cf07f",
     "MockRWA": "0x7c8d03B4aA9b4A21BAA82266f10174f0961a7A0E",
     "MockUSDC": "0xf4e1049Ec8b2C8CD2e5a6554acA3f5c267951043"
   },
   "implementations": {
-    "AsseteraExchange": "0x20098e26EFb65773aaC32d156bE43F9143825Ed4"
+    "AsseteraECS": "0x20098e26EFb65773aaC32d156bE43F9143825Ed4"
   },
   "metadata": {
     "admin": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",

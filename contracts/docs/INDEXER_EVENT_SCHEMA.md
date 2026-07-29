@@ -1,10 +1,10 @@
-# AsseteraExchange — Interface & Event Schema (Indexer/API Reference)
+# AsseteraECS — Interface & Event Schema (Indexer/API Reference)
 
 **Contract version:** `3.1.0` (`version()`)
 **Solidity:** 0.8.28
 **Proxy pattern:** UUPS (ERC-1967) — index the **proxy** address; ABI/events come from the **implementation**
 **Meta-tx:** ERC-2771 (see [Actor resolution](#actor-resolution-erc-2771-meta-tx) — do not key identity off `tx.from`)
-**Source of truth:** `src/AsseteraExchange.sol`. This document is generated from that file directly (event/error signatures hashed independently), not from the checked-in `abi/AsseteraExchange.json`, which is stale — see [Schema versioning](#schema-versioning--breaking-change) below.
+**Source of truth:** `src/AsseteraECS.sol`. This document is generated from that file directly (event/error signatures hashed independently), not from the checked-in `abi/AsseteraECS.json`, which is stale — see [Schema versioning](#schema-versioning--breaking-change) below.
 
 | Network | Chain ID | Proxy address | Forwarder |
 |---|---|---|---|
@@ -17,10 +17,10 @@ Source: `deployments/80002.json`. Confirm the current implementation address via
 ## 1. How to get the full ABI
 
 ```
-abi/AsseteraExchange.json
+abi/AsseteraECS.json
 ```
 
-Regenerate after any contract change with `forge build` (emits `out/AsseteraExchange.sol/AsseteraExchange.json`, which should be copied/synced to `abi/`). **The current `abi/AsseteraExchange.json` predates the fee-enrichment of `OfferMade`/`OfferSettled` and the `OrderPlaced`/`OrderCancelled` parity fields — do not rely on it for those four events until it is rebuilt.** All signatures, topics, and selectors in this document were computed directly from the current `src/AsseteraExchange.sol` source, independent of that file.
+Regenerate after any contract change with `forge build` (emits `out/AsseteraECS.sol/AsseteraECS.json`, which should be copied/synced to `abi/`). **The current `abi/AsseteraECS.json` predates the fee-enrichment of `OfferMade`/`OfferSettled` and the `OrderPlaced`/`OrderCancelled` parity fields — do not rely on it for those four events until it is rebuilt.** All signatures, topics, and selectors in this document were computed directly from the current `src/AsseteraECS.sol` source, independent of that file.
 
 ---
 
@@ -543,7 +543,7 @@ event OfferSettled(uint256 indexed id, address indexed by, uint256 makerReceived
 
 ## 5. Schema versioning — breaking change
 
-The checked-in `abi/AsseteraExchange.json` (last built before fee support was added to offers, and before `OrderPlaced`/`OrderCancelled` were brought to parity with the offer-side events) has **stale topic0 hashes** for four events. If any indexer is currently subscribed to the old topics, it will silently stop matching once the enriched contract is deployed:
+The checked-in `abi/AsseteraECS.json` (last built before fee support was added to offers, and before `OrderPlaced`/`OrderCancelled` were brought to parity with the offer-side events) has **stale topic0 hashes** for four events. If any indexer is currently subscribed to the old topics, it will silently stop matching once the enriched contract is deployed:
 
 | Event | Legacy topic0 | Current topic0 |
 |---|---|---|
@@ -565,7 +565,7 @@ event OrderCancelled(uint256 indexed id, address indexed maker);
 Action items for indexer/API teams:
 - Subscribe to the **current** topic0 values listed in §4, not the ones in the stale ABI file.
 - If backfilling historical logs across a deployment that was upgraded from a pre-enrichment implementation, both topics may appear in the log history for each event above — branch decoding on `topics[0]`.
-- Rebuild `abi/AsseteraExchange.json` from source (`forge build`) before treating it as authoritative again; all other events/functions in the current committed ABI file match this document.
+- Rebuild `abi/AsseteraECS.json` from source (`forge build`) before treating it as authoritative again; all other events/functions in the current committed ABI file match this document.
 
 All other events (`OrderFilled`, `OrderPartiallyFilled`, `OrderSettled`, etc.) are unchanged between the committed ABI and current source.
 

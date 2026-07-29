@@ -21,7 +21,7 @@ contract ReentrantToken is ERC20 {
 
     /// @param target_   Contract to reenter (the exchange under test).
     /// @param callData_ Calldata for the reentrant call, e.g.
-    ///                  `abi.encodeCall(AsseteraExchange.cancelOrder, (id))`.
+    ///                  `abi.encodeCall(AsseteraECS.cancelOrder, (id))`.
     function arm(address target_, bytes calldata callData_) external {
         target = target_;
         callData = callData_;

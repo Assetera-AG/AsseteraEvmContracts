@@ -8,7 +8,7 @@ pragma solidity 0.8.28;
 ///         declared directly in the contract being referenced or reached via
 ///         plain contract inheritance; nested types declared in an `interface`
 ///         do not reliably propagate through `Contract.Type` qualified access
-///         once inherited. `interfaces/{IKycGate,IFeeGate,IAsseteraExchange}.sol`
+///         once inherited. `interfaces/{IKycGate,IFeeGate,IAsseteraECS}.sol`
 ///         therefore reference these types via qualified import
 ///         (`ExchangeTypes.Action`, etc.) rather than by inheriting this contract.
 abstract contract ExchangeTypes {

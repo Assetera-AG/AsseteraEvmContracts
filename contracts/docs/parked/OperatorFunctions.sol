@@ -40,7 +40,7 @@ import {FeeMath} from "../libs/FeeMath.sol";
 //   3. Add `OperatorFunctions` to `OrderBook`'s `is` list (already inherits
 //      `KycGate`, so no further wiring is needed there).
 //   4. Grant `OPERATOR_ROLE` to the operator. The `operator` param was dropped
-//      from `AsseteraExchange.sol::initialize` (commit 78aee84), so there is no
+//      from `AsseteraECS.sol::initialize` (commit 78aee84), so there is no
 //      commented-out grant line to uncomment — either add an `operator` param
 //      back to `initialize` (breaking initializer change, needs a fresh deploy
 //      like the `feeSigner` addition did) or add a `reinitializer` function that
