@@ -36,8 +36,27 @@ After that, delete any local publish token; all future releases go through the w
 > `publishConfig` change), like `@asseteragmbh/metakyc`. Either way the package ships only compiled SDK +
 > ABIs + addresses — **no Solidity source**.
 >
-> **Provenance:** omitted while the repo is private (ADR-0016 D4). Enable `--provenance` only if the repo
-> itself goes public.
+> **Provenance:** the workflow now publishes with `--provenance`. The original rationale for omitting it
+> (ADR-0016 D4 — "while the repo is private") no longer applies: `Assetera-AG/AsseteraEvmContracts` is
+> **public**. Two things are worth knowing:
+>
+> - Under **trusted publishing**, npm generates provenance **automatically** — the flag is belt-and-braces,
+>   not the thing that turns it on. npm: _"When you publish using trusted publishing from GitHub Actions or
+>   GitLab CI/CD, npm automatically generates and publishes provenance attestations for your package. This
+>   happens by default—you don't need to add the `--provenance` flag."_
+> - That automatic generation applies only when the repo **and the package** are public. Ours is still
+>   `access: restricted`, so provenance is expected to be skipped — and passing `--provenance` explicitly
+>   may make npm **fail** the publish rather than skip it: _"Can't generate provenance for new or private
+>   package, you must set `access` to public."_
+>
+> **So the remaining blocker is package access, not repo visibility.** Provenance starts working for real
+> when `publishConfig.access` flips to `public` at launch (see *Visibility* above) — a maintainer decision,
+> not something to force here by adding `--access public` to the publish step. If a release job fails on
+> the provenance step, the revert is one line: drop `--provenance` from
+> [`.github/workflows/release-please.yml`](.github/workflows/release-please.yml).
+>
+> The other prerequisites are already met by the workflow: `permissions: id-token: write` on the `publish`
+> job, npm ≥ 11.5.1 (`npm install -g npm@latest`), Node ≥ 22.14 (`node-version: 24`), cloud-hosted runner.
 >
 > **Addresses:** the package ships whatever real-network deployment JSON is committed under
 > `packages/sdk/src/deployments/` — deploy to a network and commit its `<chainId>.json` before releasing so

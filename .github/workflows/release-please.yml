@@ -57,5 +57,9 @@ jobs:
       - name: Build the SDK
         run: npm run build -w @asseteragmbh/evm-contracts # prebuild runs codegen (needs Foundry)
 
-      - name: Publish to npm (OIDC — no token)
-        run: npm publish -w @asseteragmbh/evm-contracts
+      # `Assetera-AG/AsseteraEvmContracts` is public, so the repo-visibility precondition for provenance now
+      # holds. NOTE: npm additionally requires the *package* to be public — while `publishConfig.access` is
+      # `restricted` this flag can fail with "Can't generate provenance for new or private package, you must
+      # set `access` to public". See RELEASING.md; the revert is dropping `--provenance` from this line.
+      - name: Publish to npm (OIDC — no token, with provenance)
+        run: npm publish -w @asseteragmbh/evm-contracts --provenance
