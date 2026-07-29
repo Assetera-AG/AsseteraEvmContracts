@@ -1,5 +1,16 @@
 # Changelog
 
+## [4.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v3.0.0...evm-contracts-v4.0.0) (2026-07-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* **ecs:** the SDK's generated symbols and deployment-artifact JSON keys are renamed. asseteraExchangeAbi -> asseteraEcsAbi; asseteraExchangeAddress / asseteraExchangeConfig -> asseteraEcsAddress / asseteraEcsConfig; useReadAsseteraExchange* / useWriteAsseteraExchange* / useSimulateAsseteraExchange* / useWatchAsseteraExchange* -> *AsseteraEcs*; getContractAddress(id, "AsseteraExchange") -> getContractAddress(id, "AsseteraECS"); deployment.contracts.AsseteraExchange and deployment.implementations.AsseteraExchange -> .AsseteraECS. getExchangeAddress() still works but is deprecated in favour of getEcsAddress(). Consumers that read the deployment key raw (the Subsquid indexer) must change the key in the same PR as the dependency bump. On-chain addresses and the EIP-712 domain are unchanged.
+
+### Features
+
+* **ecs:** rename AsseteraExchange to AsseteraECS (AC-837, AC-838) ([#43](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/43)) ([f81e0a1](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/f81e0a1ba3b22027a9b7efd1128fd3a422c012ae))
+
 ## [3.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v2.0.2...evm-contracts-v3.0.0) (2026-07-28)
 
 
