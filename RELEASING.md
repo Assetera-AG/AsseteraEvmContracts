@@ -19,7 +19,7 @@ manually (npm CLI ≥ 11.5.1, Node ≥ 22.14):
 npm login                       # as an @asseteragmbh org owner
 npm ci
 npm run build -w @asseteragmbh/evm-contracts   # needs Foundry (codegen runs forge build)
-npm publish -w @asseteragmbh/evm-contracts     # publishes 0.1.0, access = restricted (publishConfig)
+npm publish -w @asseteragmbh/evm-contracts     # publishes 0.1.0; access comes from publishConfig (now public)
 ```
 
 Then on npmjs.com → **`@asseteragmbh/evm-contracts` → Settings → Trusted Publisher → GitHub Actions**, set:
@@ -30,29 +30,28 @@ Then on npmjs.com → **`@asseteragmbh/evm-contracts` → Settings → Trusted P
 
 After that, delete any local publish token; all future releases go through the workflow, token-free.
 
-> **Visibility:** `publishConfig.access` is `restricted` (private, ADR-0007 default). The `@asseteragmbh`
-> org is on a paid npm plan, so we keep it private **while the contracts are still churning** — no pre-launch
-> interface exposure. **Flip to `public` at launch** once the contracts are finalized (a one-line
-> `publishConfig` change), like `@asseteragmbh/metakyc`. Either way the package ships only compiled SDK +
-> ABIs + addresses — **no Solidity source**.
+> **Visibility:** `publishConfig.access` is **`public`**, and the package is public on npmjs — the flip from
+> the `restricted` default (ADR-0007) happened once the contracts stabilised and the repo went public, the
+> same posture as `@asseteragmbh/metakyc`. It ships only the compiled SDK + ABIs + addresses — **no Solidity
+> source** (`files: ["dist"]`). Anyone can now `npm install @asseteragmbh/evm-contracts` without credentials;
+> consumers no longer need the Key Vault read token for this package.
 >
-> **Provenance:** the workflow now publishes with `--provenance`. The original rationale for omitting it
-> (ADR-0016 D4 — "while the repo is private") no longer applies: `Assetera-AG/AsseteraEvmContracts` is
-> **public**. Two things are worth knowing:
+> Note the two settings are independent and both matter: `publishConfig.access` governs **future** publishes,
+> while the visibility of **already-published** versions is a registry-side setting (npmjs package settings,
+> or `npm access set status=public`). Changing access applies retroactively to every published version.
 >
-> - Under **trusted publishing**, npm generates provenance **automatically** — the flag is belt-and-braces,
->   not the thing that turns it on. npm: _"When you publish using trusted publishing from GitHub Actions or
->   GitLab CI/CD, npm automatically generates and publishes provenance attestations for your package. This
->   happens by default—you don't need to add the `--provenance` flag."_
-> - That automatic generation applies only when the repo **and the package** are public. Ours is still
->   `access: restricted`, so provenance is expected to be skipped — and passing `--provenance` explicitly
->   may make npm **fail** the publish rather than skip it: _"Can't generate provenance for new or private
->   package, you must set `access` to public."_
+> **Provenance:** the workflow publishes with `--provenance`. The original rationale for omitting it
+> (ADR-0016 D4 — "while the repo is private") no longer applies, and neither does the package-access blocker:
 >
-> **So the remaining blocker is package access, not repo visibility.** Provenance starts working for real
-> when `publishConfig.access` flips to `public` at launch (see *Visibility* above) — a maintainer decision,
-> not something to force here by adding `--access public` to the publish step. If a release job fails on
-> the provenance step, the revert is one line: drop `--provenance` from
+> - npm requires **both** the repo and the package to be public. Both now are.
+> - Under **trusted publishing**, npm generates provenance **automatically** — the flag does not turn it on.
+>   npm: _"When you publish using trusted publishing from GitHub Actions or GitLab CI/CD, npm automatically
+>   generates and publishes provenance attestations for your package. This happens by default—you don't need
+>   to add the `--provenance` flag."_ We pass it explicitly anyway so the intent is visible in the run log and
+>   so a regression in either precondition **fails loudly** instead of silently dropping the attestation.
+>
+> If a release ever fails on the provenance step, check package access first (`npm access get status
+> @asseteragmbh/evm-contracts`); the fallback is a one-line revert dropping `--provenance` from
 > [`.github/workflows/release-please.yml`](.github/workflows/release-please.yml).
 >
 > The other prerequisites are already met by the workflow: `permissions: id-token: write` on the `publish`
