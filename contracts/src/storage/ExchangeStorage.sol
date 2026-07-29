@@ -65,7 +65,7 @@ abstract contract ExchangeStorage is
     //                          Shared errors                                 //
     // --------------------------------------------------------------------- //
     // Used by 2+ sibling modules (OrderBook/OfferBook/FeeGate/ExchangeAdmin/
-    // final AsseteraExchange.initialize) — must live in the common ancestor.
+    // final AsseteraECS.initialize) — must live in the common ancestor.
 
     error ZeroAddress();
     error ZeroAmount();

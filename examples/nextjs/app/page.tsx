@@ -32,7 +32,7 @@ export default function Page() {
 
       <h2>Addresses ({deployment.caip2})</h2>
       <ul>
-        <li>Exchange (proxy): {link(deployment.contracts.AsseteraExchange)}</li>
+        <li>Exchange (proxy): {link(deployment.contracts.AsseteraECS)}</li>
         <li>Forwarder: {link(deployment.contracts.Forwarder)}</li>
         <li>MockUSDC: {link(deployment.contracts.MockUSDC)}</li>
         <li>MockRWA: {link(deployment.contracts.MockRWA)}</li>

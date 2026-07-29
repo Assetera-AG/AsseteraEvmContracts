@@ -4,7 +4,7 @@ pragma solidity 0.8.28;
 import {Script, console2} from "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
-import {AsseteraExchange} from "../src/AsseteraExchange.sol";
+import {AsseteraECS} from "../src/AsseteraECS.sol";
 
 /// @notice Deploys a new implementation and prints the Safe transaction
 ///         calldata needed to upgrade the proxy. No broadcast of the upgrade
@@ -26,7 +26,7 @@ contract UpgradeCalldata is Script {
         require(vm.isFile(path), "no deployment file for this chain");
 
         string memory json = vm.readFile(path);
-        address proxy = json.readAddress(".contracts.AsseteraExchange");
+        address proxy = json.readAddress(".contracts.AsseteraECS");
         address forwarderAddr = json.readAddress(".contracts.Forwarder");
 
         // 1. Read current implementation from the proxy storage slot.
@@ -36,7 +36,7 @@ contract UpgradeCalldata is Script {
 
         // 2. Deploy the new implementation (deployer pays gas for this part).
         vm.startBroadcast();
-        address newImpl = address(new AsseteraExchange(forwarderAddr));
+        address newImpl = address(new AsseteraECS(forwarderAddr));
         vm.stopBroadcast();
         console2.log("New impl deployed:", newImpl);
 

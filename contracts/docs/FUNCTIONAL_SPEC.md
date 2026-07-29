@@ -1,4 +1,4 @@
-# AsseteraExchange — Functional Specification
+# AsseteraECS — Functional Specification
 
 **Version:** 3.1.0  
 **Solidity:** 0.8.28  
@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-AsseteraExchange is an escrow-based, off-chain-matched limit-order venue for regulated real-world asset (RWA) trading. It is designed around a MiFID-style compliance model:
+AsseteraECS is an escrow-based, off-chain-matched limit-order venue for regulated real-world asset (RWA) trading. It is designed around a MiFID-style compliance model:
 
 - **Positive gate** — every user-initiated trade action requires a fresh, single-use EIP-712 *KYC attestation* signed by the platform's compliance backend. The backend refuses to sign for unverified or suspended users, effectively freezing them without on-chain writes.
 - **Negative / escape hatch** — admin functions (`cancelOrderForUser`, `cancelOfferForUser`) allow the multisig to force-return escrowed funds to a compliance-chosen recipient, bypassing the KYC gate.
@@ -47,11 +47,11 @@ In development/testnet deployments all roles may be held by a single EOA. This c
 ## 3. Contract Architecture
 
 ```
-User EOA  ──► ERC2771Forwarder ──► AsseteraExchange (proxy)
+User EOA  ──► ERC2771Forwarder ──► AsseteraECS (proxy)
                                           │
                                     ERC-1967 proxy
                                           │
-                                   AsseteraExchange (impl)
+                                   AsseteraECS (impl)
                                    ├── AccessControlUpgradeable
                                    ├── ReentrancyGuardUpgradeable
                                    ├── PausableUpgradeable
@@ -91,6 +91,11 @@ version:           "1"
 chainId:           <deployment chain>
 verifyingContract: <proxy address>
 ```
+
+> ⚠️ The domain `name` is **still `"AsseteraExchange"`** after the AsseteraECS rename (AC-836 §2). It is
+> written into ERC-7201 namespaced storage by the initializer, which the live proxies already consumed, so
+> changing the literal would only affect new deployments while invalidating every attestation signed by
+> AsseteraSignerService (`EXCHANGE_DOMAIN_NAME`). It moves to `"AsseteraECS"` at the production fresh deploy.
 
 ### Type Hash
 
@@ -370,7 +375,7 @@ Each `Action` enum value maps to a boolean in `complianceRequired`. When `false`
 
 - The contract uses the UUPS proxy pattern. Only the admin (`DEFAULT_ADMIN_ROLE`) can call `upgradeToAndCall`.
 - The forwarder address is immutable in each implementation. If the forwarder must change, a new implementation is deployed and the proxy is upgraded.
-- Storage layout must be preserved across upgrades. The `__gap[42]` reserve leaves room for up to 42 additional storage slots in future versions of `AsseteraExchange` without colliding with inherited contract storage. (Restored from `[41]` after removing the `_blacklist` mapping freed one slot; `usedFeeNonce` still consumes one slot from the original `[42]` reserve.)
+- Storage layout must be preserved across upgrades. The `__gap[42]` reserve leaves room for up to 42 additional storage slots in future versions of `AsseteraECS` without colliding with inherited contract storage. (Restored from `[41]` after removing the `_blacklist` mapping freed one slot; `usedFeeNonce` still consumes one slot from the original `[42]` reserve.)
 - `initialize(admin, kycSigner, feeSigner)` takes a required `feeSigner` param (granted `FEE_OPERATOR_ROLE`); this is a breaking change to the initializer signature, coordinated with a fresh deploy rather than an in-place upgrade of an already-initialized proxy. The previously-present `operator` param was dropped entirely (commit `78aee84`) since `OPERATOR_ROLE` is unused while parked — see below.
 - If a future upgrade introduces new `complianceRequired` entries (new `Action` enum values), a `reinitializer` function must be included and called via `upgradeToAndCall` to initialise the new storage slots — they default to `false` and must be explicitly set.
 - **Order-level operator functions are parked (AC-246):** `settle`, `refund`, and the `OPERATOR_ROLE` constant are commented out in `docs/parked/OperatorFunctions.sol`, not deleted. `initialize` no longer has an `operator` parameter (dropped in commit `78aee84`), so re-enabling needs either an initializer ABI change (add `operator` back, requiring a fresh deploy) or a `reinitializer` function that grants `OPERATOR_ROLE` on an already-initialized proxy — plus uncommenting the file and wiring `OperatorFunctions` into `OrderBook`'s inheritance, then deploying a new implementation via `upgradeToAndCall`.
