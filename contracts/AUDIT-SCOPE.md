@@ -35,18 +35,18 @@ handed a different commit.
 
 ## In scope
 
-The production contract surface under `contracts/src/` — **12 files, 1,742 LoC**
+The production contract surface under `contracts/src/` — **12 files, 1,794 LoC**
 (`find src -name '*.sol' | xargs wc -l`):
 
 | File | LoC | Role |
 |---|---:|---|
-| `src/AsseteraECS.sol` | 109 | UUPS proxy entrypoint; assembles the modules; `initialize`; `version()` |
-| `src/core/OrderBook.sol` | 401 | Order lifecycle: place / cancel / fill / sweep; pooled escrow + escrowed maker fee |
-| `src/core/OfferBook.sol` | 402 | Offer lifecycle: make / replace / accept (atomic settle) / cancel / sweep |
+| `src/AsseteraECS.sol` | 135 | UUPS proxy entrypoint; assembles the modules; `initialize`; `version()` |
+| `src/core/OrderBook.sol` | 393 | Order lifecycle: place / cancel / fill / sweep; pooled escrow + escrowed maker fee |
+| `src/core/OfferBook.sol` | 403 | Offer lifecycle: make / replace / accept (atomic settle) / cancel / sweep |
 | `src/gates/KycGate.sol` | 62 | EIP-712 KYC attestation verification + nonce burn |
-| `src/gates/FeeGate.sol` | 108 | EIP-712 fee attestation verification + fee bounds / denomination / collector allowlist |
-| `src/admin/ExchangeAdmin.sol` | 110 | Admin surface: pause, compliance toggles, collector allowlist, force-cancel |
-| `src/storage/ExchangeStorage.sol` | 78 | Single storage base behind `__gap` (UUPS layout) |
+| `src/gates/FeeGate.sol` | 136 | EIP-712 fee attestation verification + fee bounds / denomination / collector allowlist |
+| `src/admin/ExchangeAdmin.sol` | 114 | Admin surface: pause, compliance toggles, collector allowlist, force-cancel |
+| `src/storage/ExchangeStorage.sol` | 79 | Single storage base behind `__gap` (UUPS layout) |
 | `src/types/ExchangeTypes.sol` | 148 | Structs, enums (`Action`), attestation types |
 | `src/libs/FeeMath.sol` | 23 | Fee arithmetic (floor division) + ceiling division |
 | `src/interfaces/IAsseteraECS.sol` | 242 | External interface |
@@ -71,20 +71,20 @@ rename is comment- and identifier-level only; it does not change bytecode (see t
 ```bash
 cd contracts
 forge build                 # Solidity 0.8.28, via-IR, optimizer 200 runs — clean
-forge test                  # 190 tests across 4 suites, all passing
+forge test                  # 196 tests across 4 suites, all passing
 forge coverage --ir-minimum --no-match-coverage '(script|test)'
 bash script/storage-layout.sh   # upgrade-safety guard; must print "storage layout unchanged"
 slither .
 ```
 
-**Test suite — 190 tests, 0 failures** (`forge test`):
+**Test suite — 196 tests, 0 failures** (`forge test`):
 
 | Suite | Tests |
 |---|---:|
-| `test/AsseteraECS.t.sol` | 179 |
+| `test/AsseteraECS.t.sol` | 184 |
 | `test/FaucetToken.t.sol` | 6 |
 | `test/DeployProvenance.t.sol` | 3 |
-| `test/invariants/EscrowConservation.t.sol` | 2 (invariant runs: 64 × depth 50) |
+| `test/invariants/EscrowConservation.t.sol` | 3 (2 invariants at 64 runs × depth 50, plus a non-vacuity unit test) |
 
 **Coverage** (`forge coverage --ir-minimum --no-match-coverage '(script|test)'`). `--ir-minimum` is
 **required** — plain `forge coverage` disables the optimizer and via-IR and fails "stack too deep" in
@@ -92,14 +92,14 @@ slither .
 
 | File | % Lines | % Branches | % Funcs |
 |---|---:|---:|---:|
-| `src/core/OrderBook.sol` | 100.00 (104/104) | 100.00 (36/36) | 100.00 (11/11) |
-| `src/core/OfferBook.sol` | 100.00 (144/144) | 95.45 (42/44) | 100.00 (9/9) |
-| `src/gates/FeeGate.sol` | 100.00 (24/24) | 100.00 (13/13) | 100.00 (3/3) |
+| `src/core/OrderBook.sol` | 100.00 (98/98) | 100.00 (30/30) | 100.00 (11/11) |
+| `src/core/OfferBook.sol` | 100.00 (141/141) | 95.12 (39/41) | 100.00 (9/9) |
+| `src/gates/FeeGate.sol` | 100.00 (27/27) | 100.00 (14/14) | 100.00 (4/4) |
 | `src/gates/KycGate.sol` | 100.00 (19/19) | 100.00 (10/10) | 100.00 (2/2) |
 | `src/libs/FeeMath.sol` | 100.00 (4/4) | n/a (0/0) | 100.00 (2/2) |
 | `src/admin/ExchangeAdmin.sol` | 94.59 (35/37) | 100.00 (7/7) | 100.00 (6/6) |
 | `src/AsseteraECS.sol` | 75.86 (22/29) | 100.00 (1/1) | 85.71 (6/7) |
-| **Total** | **97.51 (352/361)** | **98.20 (109/111)** | **97.50 (39/40)** |
+| **Total** | **97.46 (346/355)** | **98.06 (101/103)** | **97.56 (40/41)** |
 
 The residue on `AsseteraECS.sol` is the ERC-2771 / UUPS plumbing (`_msgData`, `_contextSuffixLength`) —
 overrides OZ requires but which the venue's own paths never take.
@@ -111,7 +111,10 @@ overrides OZ requires but which the venue's own paths never take.
   **fee-on-transfer / rebasing mock-token** tests that directly exercise the M-1 pool-insolvency mechanism, and
   **reentrancy-guard coverage on all 12 funds-custody entry points** (via a `ReentrantToken` armed with
   arbitrary calldata). AC-833 extended the invariant to the escrowed fee (below) and made the handler trade at
-  real, non-zero fee rates so the escrowed-fee path is genuinely exercised rather than sitting at zero.
+  real, non-zero fee rates so the escrowed-fee path is genuinely exercised rather than sitting at zero. AC-884
+  made the handler sign its fee attestations with the fee-operator key (they are no longer skippable) and added
+  `test_HandlerCanDriveFeeAttestedEntryPoints` — the handler swallows every revert, so without that pin a
+  broken signing helper would create zero orders and both invariants would pass vacuously.
 
 ### Upgrade-safety guard (`script/storage-layout.sh`)
 
@@ -197,7 +200,7 @@ FeeAttestation(address account,uint8 action,uint256 nonce,uint256 deadline,bytes
 ```
 
 The fee service resolves it from the marketplace catalog (`token_pairs.settlement_currency_id`) and signs it.
-On-chain, `_validateFees` asserts `feeToken ∈ {legA, legB}` (`FeeGate.sol:102`) — **unconditionally**, i.e.
+On-chain, `_validateFees` asserts `feeToken ∈ {legA, legB}` (`FeeGate.sol:130`) — **unconditionally**, i.e.
 independently of the `complianceRequired` toggle, as defence in depth. It is required **even for a zero-fee
 order**, so that `feeToken == address(0)` means exactly one thing (below).
 
@@ -212,7 +215,7 @@ under the old type recovers to a different address and is rejected by `FeeBadSig
 When the maker/proposer is the party **escrowing the currency leg**, they are the currency *payer*, so their
 fee must be escrowed up front alongside the notional:
 
-- **Orders** (`OrderBook.sol:162-183`, `:194`, `:214`): a buy-side order (`sellToken == feeToken`) escrows
+- **Orders** (`OrderBook.sol:159-175`, `:186`, `:206`): a buy-side order (`sellToken == feeToken`) escrows
   `sellAmount + floor(sellAmount × makerFeeBps / 10000)` in one `safeTransferFrom`. The unconsumed remainder is
   tracked as an explicit `Order.escrowedFee` field rather than recomputed at unwind time — after partial fills
   the two diverge by rounding.
@@ -292,21 +295,26 @@ unacceptable offer alive indefinitely.
    `allowedCollectors` allowlist, and the fee terms are visible in `OrderPlaced` / `OfferMade` before any fill.
    This is a genuine widening of that role's authority versus the pre-AC-833 model and should be weighed as
    such.
-2. **Fee terms are only *signed* when `complianceRequired[action]` is true.** `_verifyFee` early-returns when
-   the toggle is off (`FeeGate.sol:44`), while `_validateFees` runs unconditionally. With gating disabled, fee
-   terms are caller-chosen but still bounded by `MAX_FEE_BPS`, the collector allowlist and the leg check.
-   Production runs with gating on for `Place` / `MakeOffer` (set in `initialize`).
+2. **Fee terms are always signed — closed by AC-884.** As shipped in AC-833, `_verifyFee` early-returned on
+   `complianceRequired[action]`, so `setComplianceRequired(Place, false)` — an admin lever named and documented
+   as a *KYC* control — also disabled signature, deadline and nonce checking on the *fee* attestation, letting
+   any caller hand-craft an unsigned zero-fee attestation and place a permanently fee-free order. Never
+   triggered on any deployment (Amoy read 2026-07-29 showed the initializer defaults untouched), but a footgun
+   in an admin API. AC-884 removed the early return: `_verifyFee`, the fee nonce burn and the fee
+   `paramsHash` binding are now unconditional, and `complianceRequired` governs KYC only. Fee-free trading is
+   still expressible — the fee service signs `makerFeeBps == takerFeeBps == 0`, which `_validateFees` permits
+   — so nothing was lost beyond the ability to reach it unauthenticated.
 3. **Allowance requirements changed for takers.** A sell-side fill pulls from the taker **twice**
-   (`OrderBook.sol:342-343`): `notional − makerFee` to the maker and `makerFee + takerFee` to the collector. The
+   (`OrderBook.sol:334-335`): `notional − makerFee` to the maker and `makerFee + takerFee` to the collector. The
    taker must therefore approve `notional + takerFee`, not `notional`. `placeOrderWithPermit` correspondingly
-   permits `_escrowTotal(...)` = `sellAmount + escrowedFee` (`OrderBook.sol:150-152`).
-4. **`replaceOffer` swaps both halves of the fee escrow in one call** (`OfferBook.sol:195-224`) — the outgoing
+   permits `_escrowTotal(...)` = `sellAmount + escrowedFee` (`OrderBook.sol:142-144`).
+4. **`replaceOffer` swaps both halves of the fee escrow in one call** (`OfferBook.sol:196-225`) — the outgoing
    proposer's unconsumed fee is refunded and the incoming proposer escrows a fee recomputed on the **new**
    amounts, which may be a different party, side and token. It is also the highest-complexity function in the
    codebase (Slither cyclomatic complexity 12) and worth focused review.
 5. **Rounding is deliberately asymmetric.** `FeeMath.feeAmount` floors (rounding favours maker and taker over
    the collector); `FeeMath.ceilDiv` on the fill's proportional amount ceils (protecting the maker from
-   rounding loss on partial fills) — `OrderBook.sol:290`.
+   rounding loss on partial fills) — `OrderBook.sol:282`.
 6. **Fill/settle events now carry GROSS amounts** plus `feeToken`, and `OrderPartiallyFilled` additionally
    carries `filledBuyAmount`. Consumers must not re-derive net figures the old way. See
    `docs/INDEXER_EVENT_SCHEMA.md`.

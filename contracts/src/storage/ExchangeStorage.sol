@@ -44,9 +44,10 @@ abstract contract ExchangeStorage is
     ///         from `usedNonce` since fee attestations are signed by a different party.
     mapping(address => mapping(uint256 => bool)) public usedFeeNonce;
 
-    /// @notice Whether each action requires a KYC attestation (and, for Place/
-    ///         MakeOffer, a fee attestation too — both share this toggle).
-    ///         Composable: turn gating on/off per action (admin). Defaults to all-on.
+    /// @notice Whether each action requires a KYC attestation. KYC ONLY — it does
+    ///         NOT govern the fee attestation, which Place/MakeOffer always require
+    ///         (AC-884). Composable: turn KYC gating on/off per action (admin).
+    ///         Defaults to all-on.
     mapping(Action => bool) public complianceRequired;
 
     mapping(uint256 => Offer) internal _offers;

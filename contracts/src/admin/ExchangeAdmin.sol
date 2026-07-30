@@ -41,6 +41,10 @@ abstract contract ExchangeAdmin is ExchangeStorage {
     }
 
     /// @notice Toggle KYC gating per action (composability). Admin only.
+    /// @dev KYC ONLY. Turning this off for `Place`/`MakeOffer` does NOT disable fee
+    ///      verification (AC-884) — the fee attestation is still signature-, deadline-
+    ///      and nonce-checked, so the fee service must stay live. To run a market
+    ///      fee-free, have the fee service sign `makerFeeBps == takerFeeBps == 0`.
     function setComplianceRequired(Action action, bool required) external onlyRole(DEFAULT_ADMIN_ROLE) {
         complianceRequired[action] = required;
         emit ComplianceRequiredSet(action, required);

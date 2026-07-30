@@ -70,7 +70,7 @@ since a "stop the venue" lever is worth keeping active.
 | `cancelOrderForUser(uint256 id, address recipient)` | Escape hatch for frozen makers. Emits `OrderForceCancelled`. |
 | `cancelOfferForUser(uint256 offerId, address makerRecipient, address takerRecipient)` | Only `Open`/`Countered` — `Accepted` is never a persisted state (`acceptOffer` settles atomically, AC-246). Emits `OfferForceCancelled`. |
 | `setAllowedCollector(address collector, bool allowed)` | Fee collector allowlist. Emits `CollectorAllowed`. |
-| `setComplianceRequired(Action action, bool required)` | Per-action KYC gating toggle. Emits `ComplianceRequiredSet`. |
+| `setComplianceRequired(Action action, bool required)` | Per-action **KYC** gating toggle — does not affect fee-attestation verification (AC-884). Emits `ComplianceRequiredSet`. |
 | `pause()` / `unpause()` | Moved from `OPERATOR_ROLE` (AC-246). Gates `whenNotPaused` functions. Emits standard `Paused(address)`/`Unpaused(address)`. |
 | `upgradeToAndCall(address newImplementation, bytes data)` | Inherited UUPS; gated via `_authorizeUpgrade`. Emits standard `Upgraded(address)`. |
 
@@ -90,7 +90,7 @@ since a "stop the venue" lever is worth keeping active.
 | `totalOrders()` / `totalOffers()` | `uint256` — highest assigned id (ids are `1..total`) |
 | `usedNonce(address account, uint256 nonce)` | `bool` — KYC nonce consumption state |
 | `usedFeeNonce(address account, uint256 nonce)` | `bool` — fee attestation nonce consumption state (separate namespace from `usedNonce`) |
-| `complianceRequired(Action action)` | `bool` — whether that action currently requires an attestation |
+| `complianceRequired(Action action)` | `bool` — whether that action currently requires a **KYC** attestation. Fee attestations are always required on `Place`/`MakeOffer`, independently of this (AC-884) |
 | `allowedCollectors(address)` | `bool` |
 | `version()` | `string` |
 | `hasRole(bytes32 role, address account)`, `getRoleAdmin(bytes32 role)` | inherited `AccessControlUpgradeable` |
@@ -202,7 +202,7 @@ Not stored on-chain; passed as calldata to state-changing calls and reflected in
 
 Not stored on-chain; required alongside a `KycAttestation` on `placeOrder`, `placeOrderWithPermit`, and `makeOffer` (the fee-setting actions), and reflected into `FeeConsumed`. Signed by a `FEE_OPERATOR_ROLE` holder (the fee service) — a separate signer from KYC. Has its own nonce namespace (`usedFeeNonce`, distinct from `usedNonce`). No `orderId` field: fee attestations only ever authorise Place/MakeOffer, both of which are bound via `orderId == 0`.
 
-The contract binds `feeAtt` to the paired `kycAtt` by checking both against the *same* `account`/`action`, and both `paramsHash` fields against the *same* on-chain-computed hash — so a fee attestation cannot be replayed against a different order/offer or paired with a mismatched KYC attestation.
+The contract binds `feeAtt` to the paired `kycAtt` by checking both against the *same* `account`/`action`, and both `paramsHash` fields against the *same* on-chain-computed hash — so a fee attestation cannot be replayed against a different order/offer or paired with a mismatched KYC attestation. The fee side of that binding holds whatever `complianceRequired[action]` says (AC-884); only the KYC side follows the toggle.
 
 | Field | Type |
 |---|---|
@@ -210,16 +210,17 @@ The contract binds `feeAtt` to the paired `kycAtt` by checking both against the 
 | `action` | `Action` (`uint8`) — `Place` or `MakeOffer` |
 | `nonce` | `uint256` |
 | `deadline` | `uint256` |
-| `paramsHash` | `bytes32` — must equal the paired `KycAttestation.paramsHash` |
+| `paramsHash` | `bytes32` — always bound to the call's on-chain-computed params hash; equal to the paired `KycAttestation.paramsHash` whenever KYC gating is on for the action |
 | `makerFeeBps` | `uint16` |
 | `takerFeeBps` | `uint16` |
 | `feeCollector` | `address` |
+| `feeToken` | `address` — the settlement currency; must be one of the two trade legs (AC-833) |
 | `signature` | `bytes` |
 
-`FEE_TYPEHASH = 0xf16e0cd6fda16a8c595f563a1b6429cd3f4afc445eadd7aa847cee6a22c843ce`
-(`keccak256("FeeAttestation(address account,uint8 action,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector)")`)
+`FEE_TYPEHASH = 0x3531aff0e1bd1af792c545fad8cd142e11c96b67decff1940a98277c8c4f530a`
+(`keccak256("FeeAttestation(address account,uint8 action,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector,address feeToken)")`)
 
-On-chain bounds (`MAX_FEE_BPS` cap, `allowedCollectors` allowlist check) are re-checked unconditionally on every fee-setting call regardless of `complianceRequired` gating — defence in depth against a compromised fee signer.
+The whole fee attestation is verified on every fee-setting call regardless of `complianceRequired` gating (AC-884) — signature, deadline, nonce and `paramsHash` — and the on-chain bounds (`MAX_FEE_BPS` cap, `allowedCollectors` allowlist check, `feeToken ∈ {legA, legB}`) are re-checked on top as defence in depth against a compromised fee signer.
 
 ### Role constants (for decoding inherited `RoleGranted`/`RoleRevoked` events)
 
@@ -437,7 +438,7 @@ event FeeConsumed(address indexed account, Action indexed action, uint256 nonce)
 - **Indexed:** `account`, `action`
 - **Data:** `nonce`
 
-Emitted alongside `KycConsumed` on `placeOrder`/`placeOrderWithPermit` (`action = Place`) and `makeOffer` (`action = MakeOffer`), same gating rule as `KycConsumed` (only emitted when `complianceRequired[action]` is `true`). No `orderId` field — fee attestations are only ever bound to `orderId == 0` (Place/MakeOffer). `nonce` is drawn from the separate `usedFeeNonce` namespace, not `usedNonce`.
+Emitted on `placeOrder`/`placeOrderWithPermit` (`action = Place`) and `makeOffer` (`action = MakeOffer`). **Unlike `KycConsumed`, it is emitted unconditionally** (AC-884): fee attestations are verified and their nonces burned whatever `complianceRequired[action]` says, so every fee-setting call produces exactly one `FeeConsumed`, and its absence means the call reverted. `KycConsumed` may or may not accompany it, depending on the KYC toggle. No `orderId` field — fee attestations are only ever bound to `orderId == 0` (Place/MakeOffer). `nonce` is drawn from the separate `usedFeeNonce` namespace, not `usedNonce`.
 
 ---
 
@@ -576,7 +577,7 @@ All other events (`OrderFilled`, `OrderPartiallyFilled`, `OrderSettled`, etc.) a
 | Item | Before | After |
 |---|---|---|
 | `KYC_TYPEHASH` | `keccak256("KycAttestation(...,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector)")`, 9 fields | `0x9d47d5391d5fdceebb227638b24f6b391e7e39fd6671f3b7478c9767dd1ba835`, 6 fields (fee fields removed) |
-| `FEE_TYPEHASH` | *(did not exist)* | `0xf16e0cd6fda16a8c595f563a1b6429cd3f4afc445eadd7aa847cee6a22c843ce` — new, signed by `FEE_OPERATOR_ROLE` |
+| `FEE_TYPEHASH` | *(did not exist)* | `0xf16e0cd6fda16a8c595f563a1b6429cd3f4afc445eadd7aa847cee6a22c843ce` — new, signed by `FEE_OPERATOR_ROLE`. **Superseded by AC-833**, which appended `address feeToken`: the current value is `0x3531aff0e1bd1af792c545fad8cd142e11c96b67decff1940a98277c8c4f530a` (see [§3](#feeattestation-off-chain-struct)) |
 | `placeOrder` selector | `0x3a0bd1ce` | `0x1c17a0b2` — now takes `(KycAttestation, FeeAttestation)` |
 | `placeOrderWithPermit` selector | `0xfc71b24e` | `0xd6f26c85` — now takes `(..., KycAttestation, FeeAttestation)` |
 | `makeOffer` selector | `0x3e6f6a3a` | `0xc1155711` — now takes `(KycAttestation, FeeAttestation)` |

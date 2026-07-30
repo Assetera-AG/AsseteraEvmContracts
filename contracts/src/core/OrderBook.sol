@@ -103,11 +103,7 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
         if (sellAmount == 0 || buyAmount == 0) revert ZeroAmount();
         if (sellToken == buyToken) revert SameToken();
         if (expireTs != 0 && expireTs <= block.timestamp) revert InvalidExpiry();
-        if (complianceRequired[Action.Place]) {
-            bytes32 paramsHash = keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount));
-            if (att.paramsHash != paramsHash) revert ParamsHashMismatch();
-            if (feeAtt.paramsHash != paramsHash) revert ParamsHashMismatch();
-        }
+        _bindParamsHash(Action.Place, att, feeAtt, keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount)));
         // Fee bounds + denomination — always enforced (defence in depth) so a compromised
         // fee signer cannot set extreme fees, route to an unlisted collector, or
         // denominate the fees in a token that isn't part of this trade.
@@ -140,11 +136,7 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
         if (sellAmount == 0 || buyAmount == 0) revert ZeroAmount();
         if (sellToken == buyToken) revert SameToken();
         if (expireTs != 0 && expireTs <= block.timestamp) revert InvalidExpiry();
-        if (complianceRequired[Action.Place]) {
-            bytes32 paramsHash = keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount));
-            if (att.paramsHash != paramsHash) revert ParamsHashMismatch();
-            if (feeAtt.paramsHash != paramsHash) revert ParamsHashMismatch();
-        }
+        _bindParamsHash(Action.Place, att, feeAtt, keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount)));
         _validateFees(feeAtt, sellToken, buyToken);
         _consumeKycAndFee(_msgSender(), Action.Place, 0, att, feeAtt);
         // Permit must cover the FULL escrow, which on a buy-side order is

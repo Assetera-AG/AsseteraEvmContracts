@@ -466,21 +466,158 @@ contract AsseteraECSTest is Test {
         vm.stopPrank();
     }
 
-    function test_PlaceOrder_GatingOff_NoAttestationNeeded() public {
+    // ===================================================================== //
+    //        AC-884: the KYC toggle does NOT gate fee verification          //
+    // ===================================================================== //
+    //
+    // `complianceRequired` is a KYC control. Before AC-884 `_verifyFee` shared it,
+    // so `setComplianceRequired(Place, false)` also switched off signature, deadline
+    // and nonce checking on the FEE attestation — any caller could then hand-craft an
+    // unsigned zero-fee attestation and place a permanently fee-free order. Fee
+    // verification is now unconditional; fee-free trading stays reachable the honest
+    // way, by the fee service signing `makerFeeBps == takerFeeBps == 0`.
+
+    /// With `Place` gating off the KYC attestation may be empty, but the fee
+    /// attestation must still be signed by a `FEE_OPERATOR_ROLE` holder — and its
+    /// single-use nonce burns even though no KYC nonce does.
+    function test_PlaceOrder_GatingOff_KycSkippedButFeeStillVerified() public {
         vm.prank(admin);
         exchange.setComplianceRequired(ExchangeTypes.Action.Place, false);
-        AsseteraECS.KycAttestation memory empty; // garbage / empty
-        AsseteraECS.FeeAttestation memory emptyFee; // garbage / empty — but see below
-        // AC-833: `feeToken` is validated unconditionally, NOT behind the compliance
-        // toggle, because it is what makes the order's fee denomination well-defined.
-        // Turning gating off skips signature/nonce checks, not the denomination.
-        emptyFee.feeToken = address(usdc);
+
+        AsseteraECS.KycAttestation memory empty; // garbage / empty — KYC gating is off
+        AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
+
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        uint256 id = exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, empty, emptyFee);
+        uint256 id = exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, empty, feeAtt);
         vm.stopPrank();
+
         assertEq(id, 1);
         assertEq(exchange.getOrder(id).feeToken, address(usdc));
+        assertTrue(exchange.usedFeeNonce(alice, feeAtt.nonce), "fee nonce must burn with KYC gating off");
+        assertFalse(exchange.usedNonce(alice, empty.nonce), "no KYC nonce is burned with KYC gating off");
+    }
+
+    /// THE AC-884 regression. `Place` gating off, a perfectly formed zero-fee
+    /// attestation with NO signature — the exact hand-crafted payload that used to
+    /// mint a permanently fee-free order. It must revert, and no order may exist.
+    function test_PlaceOrder_GatingOff_UnsignedFeeAttestationReverts() public {
+        vm.prank(admin);
+        exchange.setComplianceRequired(ExchangeTypes.Action.Place, false);
+
+        AsseteraECS.FeeAttestation memory forged = ExchangeTypes.FeeAttestation({
+            account: alice,
+            action: ExchangeTypes.Action.Place,
+            nonce: 1,
+            deadline: block.timestamp + 3 minutes,
+            paramsHash: keccak256(abi.encode(address(rwa), SELL_RWA, address(usdc), WANT_USDC)),
+            makerFeeBps: 0,
+            takerFeeBps: 0,
+            feeCollector: address(0),
+            feeToken: address(usdc),
+            signature: "" // unsigned
+        });
+        AsseteraECS.KycAttestation memory empty;
+
+        vm.startPrank(alice);
+        rwa.approve(address(exchange), SELL_RWA);
+        vm.expectRevert(abi.encodeWithSignature("ECDSAInvalidSignatureLength(uint256)", 0));
+        exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, empty, forged);
+        vm.stopPrank();
+
+        assertEq(exchange.totalOrders(), 0, "no order may have been created");
+    }
+
+    /// Same attack, self-signed rather than unsigned, so it reaches the role check.
+    function test_PlaceOrder_GatingOff_SelfSignedFeeAttestationReverts() public {
+        uint256 attackerPk = 0xBAD1;
+        address attacker = vm.addr(attackerPk);
+        rwa.mint(attacker, SELL_RWA);
+
+        vm.prank(admin);
+        exchange.setComplianceRequired(ExchangeTypes.Action.Place, false);
+
+        AsseteraECS.FeeAttestation memory forged = _signFeeAtt(
+            attackerPk,
+            attacker,
+            ExchangeTypes.Action.Place,
+            _freshNonce(),
+            block.timestamp + 3 minutes,
+            keccak256(abi.encode(address(rwa), SELL_RWA, address(usdc), WANT_USDC)),
+            0,
+            0,
+            address(0),
+            address(usdc)
+        );
+        AsseteraECS.KycAttestation memory empty;
+
+        vm.startPrank(attacker);
+        rwa.approve(address(exchange), SELL_RWA);
+        vm.expectRevert(IFeeGate.FeeBadSigner.selector);
+        exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, empty, forged);
+        vm.stopPrank();
+    }
+
+    /// The fee nonce is single-use regardless of the KYC toggle — otherwise one signed
+    /// attestation would be replayable for as long as gating stayed off.
+    function test_PlaceOrder_GatingOff_FeeNonceIsStillSingleUse() public {
+        vm.prank(admin);
+        exchange.setComplianceRequired(ExchangeTypes.Action.Place, false);
+
+        AsseteraECS.KycAttestation memory empty;
+        AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
+
+        vm.startPrank(alice);
+        rwa.approve(address(exchange), SELL_RWA * 2);
+        exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, empty, feeAtt);
+        vm.expectRevert(IFeeGate.FeeNonceUsed.selector);
+        exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, empty, feeAtt);
+        vm.stopPrank();
+    }
+
+    /// The fee attestation's `paramsHash` binding is unconditional too: a fee
+    /// attestation signed for different order params must not be reusable here.
+    function test_PlaceOrder_GatingOff_FeeParamsHashIsStillBound() public {
+        vm.prank(admin);
+        exchange.setComplianceRequired(ExchangeTypes.Action.Place, false);
+
+        AsseteraECS.FeeAttestation memory feeAtt =
+            _feePlace(alice, address(rwa), SELL_RWA / 2, address(usdc), WANT_USDC);
+        AsseteraECS.KycAttestation memory empty;
+
+        vm.startPrank(alice);
+        rwa.approve(address(exchange), SELL_RWA);
+        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
+        exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, empty, feeAtt);
+        vm.stopPrank();
+    }
+
+    /// The offer path shares `_verifyFee`, so it must behave identically.
+    function test_MakeOffer_GatingOff_UnsignedFeeAttestationReverts() public {
+        vm.prank(admin);
+        exchange.setComplianceRequired(ExchangeTypes.Action.MakeOffer, false);
+
+        AsseteraECS.FeeAttestation memory forged = ExchangeTypes.FeeAttestation({
+            account: alice,
+            action: ExchangeTypes.Action.MakeOffer,
+            nonce: 1,
+            deadline: block.timestamp + 3 minutes,
+            paramsHash: keccak256(abi.encodePacked(bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC)),
+            makerFeeBps: 0,
+            takerFeeBps: 0,
+            feeCollector: address(0),
+            feeToken: address(usdc),
+            signature: "" // unsigned
+        });
+        AsseteraECS.KycAttestation memory empty;
+
+        vm.startPrank(alice);
+        rwa.approve(address(exchange), SELL_RWA);
+        vm.expectRevert(abi.encodeWithSignature("ECDSAInvalidSignatureLength(uint256)", 0));
+        exchange.makeOffer(bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, empty, forged);
+        vm.stopPrank();
+
+        assertEq(exchange.totalOffers(), 0, "no offer may have been created");
     }
 
     function test_PlaceOrder_RevertsOnZeroAmount() public {

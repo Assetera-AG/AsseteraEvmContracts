@@ -7,11 +7,13 @@ import {ExchangeTypes} from "../../src/types/ExchangeTypes.sol";
 import {FaucetToken} from "../mocks/FaucetToken.sol";
 
 /// @notice Bounded-random driver for the I-2(b) escrow-conservation invariant
-///         suite. KYC/fee gating is disabled on the target exchange (see
+///         suite. KYC gating is disabled on the target exchange (see
 ///         EscrowConservation.t.sol setUp) so every action here can use an
-///         empty attestation — this handler exercises pure token-custody
+///         empty KYC attestation — this handler exercises pure token-custody
 ///         accounting, not the attestation gate (which has its own dedicated
-///         unit-test coverage elsewhere).
+///         unit-test coverage elsewhere). FEE attestations are the exception:
+///         they are verified unconditionally (AC-884), so `placeOrder` and
+///         `makeOffer` sign a real one with the fee-operator key.
 ///
 ///         `expectedEscrowed` recomputes the "should hold" balance from
 ///         ground truth (iterating every order/offer this handler ever
@@ -30,33 +32,84 @@ contract EscrowHandler is Test {
     uint256[] public offerIds;
 
     ExchangeTypes.KycAttestation internal EMPTY_KYC;
-    ExchangeTypes.FeeAttestation internal EMPTY_FEE;
 
     /// @dev AC-833: tokenB is the settlement currency for every order/offer this handler
     ///      drives, and fees are NON-ZERO — otherwise the escrowed-fee path (which is the
-    ///      whole reason the invariant had to change) would never be exercised. Attestation
-    ///      signatures are still skipped: gating is off, so `_verifyFee` returns early while
-    ///      `_validateFees` — which enforces the denomination — still runs.
+    ///      whole reason the invariant had to change) would never be exercised.
     uint16 internal constant MAKER_BPS = 100; // 1 %
     uint16 internal constant TAKER_BPS = 50; // 0.5 %
     address public immutable collector;
+
+    /// @dev AC-884: fee attestations are verified whatever `complianceRequired` says, so
+    ///      the handler holds the fee-operator key and signs a fresh one per call.
+    uint256 internal immutable feeSignerPk;
+    bytes32 internal constant FEE_TYPEHASH = keccak256(
+        "FeeAttestation(address account,uint8 action,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector,address feeToken)"
+    );
+    uint256 internal feeNonceCtr;
 
     constructor(
         AsseteraECS exchange_,
         FaucetToken tokenA_,
         FaucetToken tokenB_,
         address[3] memory actors_,
-        address collector_
+        address collector_,
+        uint256 feeSignerPk_
     ) {
         exchange = exchange_;
         tokenA = tokenA_;
         tokenB = tokenB_;
         actors = actors_;
         collector = collector_;
-        EMPTY_FEE.feeToken = address(tokenB_);
-        EMPTY_FEE.makerFeeBps = MAKER_BPS;
-        EMPTY_FEE.takerFeeBps = TAKER_BPS;
-        EMPTY_FEE.feeCollector = collector_;
+        feeSignerPk = feeSignerPk_;
+    }
+
+    /// @dev A freshly signed fee attestation for `account`/`action`, bound to
+    ///      `paramsHash` and carrying this handler's fixed non-zero fee terms.
+    ///      Nonces come from one monotonic counter — unique per account by construction.
+    function _feeAtt(address account, ExchangeTypes.Action action, bytes32 paramsHash)
+        internal
+        returns (ExchangeTypes.FeeAttestation memory att)
+    {
+        uint256 nonce = ++feeNonceCtr;
+        uint256 deadline = block.timestamp + 5 minutes; // well inside MAX_FEE_TTL (15 min)
+        bytes32 domain = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("AsseteraExchange")), // EIP-712 domain name is intentionally pre-rename
+                keccak256(bytes("1")),
+                block.chainid,
+                address(exchange)
+            )
+        );
+        bytes32 structHash = keccak256(
+            abi.encode(
+                FEE_TYPEHASH,
+                account,
+                uint8(action),
+                nonce,
+                deadline,
+                paramsHash,
+                MAKER_BPS,
+                TAKER_BPS,
+                collector,
+                address(tokenB)
+            )
+        );
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(feeSignerPk, keccak256(abi.encodePacked("\x19\x01", domain, structHash)));
+        att = ExchangeTypes.FeeAttestation({
+            account: account,
+            action: action,
+            nonce: nonce,
+            deadline: deadline,
+            paramsHash: paramsHash,
+            makerFeeBps: MAKER_BPS,
+            takerFeeBps: TAKER_BPS,
+            feeCollector: collector,
+            feeToken: address(tokenB),
+            signature: abi.encodePacked(r, s, v)
+        });
     }
 
     /// @dev What a maker/proposer must escrow on top of their leg: their own fee, but
@@ -86,11 +139,16 @@ contract EscrowHandler is Test {
         uint64 expireTs = withExpiry ? uint64(block.timestamp + bound(expiryOffsetSeed, 1, 7 days)) : 0;
 
         uint256 escrow = sellAmount + _ownFee(address(sellToken), sellAmount, MAKER_BPS);
+        ExchangeTypes.FeeAttestation memory feeAtt = _feeAtt(
+            maker,
+            ExchangeTypes.Action.Place,
+            keccak256(abi.encode(address(sellToken), sellAmount, address(buyToken), buyAmount))
+        );
         vm.startPrank(maker);
         sellToken.mint(maker, escrow);
         sellToken.approve(address(exchange), escrow);
         try exchange.placeOrder(
-            address(sellToken), sellAmount, address(buyToken), buyAmount, expireTs, EMPTY_KYC, EMPTY_FEE
+            address(sellToken), sellAmount, address(buyToken), buyAmount, expireTs, EMPTY_KYC, feeAtt
         ) returns (
             uint256 id
         ) {
@@ -158,11 +216,16 @@ contract EscrowHandler is Test {
         uint64 expireTs = withExpiry ? uint64(block.timestamp + bound(expiryOffsetSeed, 1, 7 days)) : 0;
 
         uint256 offerEscrow = makerAmount + _ownFee(address(makerToken), makerAmount, MAKER_BPS);
+        ExchangeTypes.FeeAttestation memory feeAtt = _feeAtt(
+            maker,
+            ExchangeTypes.Action.MakeOffer,
+            keccak256(abi.encodePacked(taker, address(makerToken), makerAmount, address(takerToken), takerAmount))
+        );
         vm.startPrank(maker);
         makerToken.mint(maker, offerEscrow);
         makerToken.approve(address(exchange), offerEscrow);
         try exchange.makeOffer(
-            taker, address(makerToken), makerAmount, address(takerToken), takerAmount, expireTs, EMPTY_KYC, EMPTY_FEE
+            taker, address(makerToken), makerAmount, address(takerToken), takerAmount, expireTs, EMPTY_KYC, feeAtt
         ) returns (
             uint256 id
         ) {
