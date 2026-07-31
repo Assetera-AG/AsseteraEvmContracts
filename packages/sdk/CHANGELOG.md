@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.0.1](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v4.0.0...evm-contracts-v4.0.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **exchange:** verify fee attestations regardless of the KYC toggle (AC-884) ([#48](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/48)) ([47171e4](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/47171e41076614801c7624ffab7f6769b286e732))
+
 ## [4.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v3.0.0...evm-contracts-v4.0.0) (2026-07-29)
 
 
