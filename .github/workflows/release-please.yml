@@ -57,5 +57,9 @@ jobs:
       - name: Build the SDK
         run: npm run build -w @asseteragmbh/evm-contracts # prebuild runs codegen (needs Foundry)
 
-      - name: Publish to npm (OIDC — no token)
-        run: npm publish -w @asseteragmbh/evm-contracts
+      # Provenance needs BOTH the repo and the package to be public. Both now are: the repo is public, and
+      # `packages/sdk` sets `publishConfig.access: public`. Trusted publishing (OIDC) already emits provenance
+      # automatically, so `--provenance` is belt-and-braces: it makes the intent explicit in the run log and
+      # fails loudly if the preconditions ever regress, rather than silently dropping the attestation.
+      - name: Publish to npm (OIDC — no token, with provenance)
+        run: npm publish -w @asseteragmbh/evm-contracts --provenance
