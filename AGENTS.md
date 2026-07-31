@@ -2,7 +2,9 @@
 
 Local conventions for this repo. Cross-repo rules live in the workspace `CLAUDE.md`; engineering
 workflow is **ADR-0004** and github-config-as-code is **ADR-0013** (AsseteraADRs repo). The deploy
-pipeline + published SDK design is **ADR-0026**.
+pipeline + published SDK design is **ADR-0026**. The `AsseteraExchange` → `AsseteraECS` rename and the
+decision to keep the EIP-712 domain name unchanged is **ADR-0041**
+(`adr/0041-assetera-ecs-rename/README.md`).
 
 ## Layout (npm-workspaces monorepo)
 
@@ -15,6 +17,21 @@ examples/         consumer apps that import the SDK (proof + living docs)
 Point Foundry/Slither/reviewers at `contracts/`. Everything TypeScript lives under `packages/` and
 `examples/`. `contracts/src/` is grouped by domain (`exchange/`, `distribution/`, `token/`, `interfaces/`,
 `libraries/`).
+
+## Frozen identifiers — never rename ⚠️
+
+The `AsseteraECS` rename (**ADR-0041**) left three string literals that read like leftovers but are **live
+on-chain state**. Renaming any of them is silent and irreversible — not a refactor. Each carries an inline
+comment; this list exists so you see the hazard *before* you grep.
+
+| Identifier | Where | Why it is frozen |
+|---|---|---|
+| `"AsseteraExchange"` | `contracts/src/AsseteraECS.sol` — `__EIP712_init("AsseteraExchange", "1")` | The EIP-712 domain name is baked into the deployed proxies' ERC-7201 namespaced storage. Changing it invalidates **every** KYC/fee attestation (the signer service pins the same string). |
+| `"AsseteraExchange.impl"` / `"AsseteraExchange.proxy"` | `contracts/script/Deploy.s.sol` | CREATE3 **salt labels** — `DeployBase._salt()` hashes the string into the salt, so the label *determines the deployed address*. A rename misses the live proxy (`0x58c3Fb1B69ca985A5461CcEfFd0Fe590b653F213` on Amoy + Sepolia) and deploys a **second, empty venue**. |
+
+The same class of hazard exists outside this repo: the `@subsquid/pipes` portal cursor key
+`assetera-exchange-${chainId}` in **AsseteraEvmIndexerService** — renaming it silently re-indexes from
+genesis. Change any of these only as a deliberate, coordinated migration.
 
 ## Git workflow
 
