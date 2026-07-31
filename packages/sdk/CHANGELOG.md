@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.0.2](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v4.0.1...evm-contracts-v4.0.2) (2026-07-31)
+
+
+### Bug Fixes
+
+* **sdk:** declare the repository so provenance validation passes ([#50](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/50)) ([c2c2af0](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/c2c2af06498389e35a87779c4f5d94598a7ca102))
+
 ## [4.0.1](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v4.0.0...evm-contracts-v4.0.1) (2026-07-31)
 
 
