@@ -25,22 +25,25 @@ contract EscrowConservationInvariantTest is Test {
     address internal admin = makeAddr("invariant-admin");
     address internal collector = makeAddr("invariant-collector");
 
+    uint256 internal feeSignerPk = 0xFEE1;
+
     function setUp() public {
         tokenA = new FaucetToken("Token A", "TKA", 18);
         tokenB = new FaucetToken("Token B", "TKB", 6);
 
         AsseteraECS impl = new AsseteraECS(address(0)); // no meta-tx forwarder needed
         bytes memory initData =
-            abi.encodeCall(AsseteraECS.initialize, (admin, makeAddr("invariant-kyc"), makeAddr("invariant-fee")));
+            abi.encodeCall(AsseteraECS.initialize, (admin, makeAddr("invariant-kyc"), vm.addr(feeSignerPk)));
         exchange = AsseteraECS(address(new ERC1967Proxy(address(impl), initData)));
 
         // Escrow conservation is a pure token-accounting property, independent
-        // of KYC/fee attestation gating (which has its own dedicated coverage
+        // of KYC attestation gating (which has its own dedicated coverage
         // in AsseteraECS.t.sol) — disable it so the handler can drive
-        // every action freely with unsigned attestations. The fee TERMS on those
-        // attestations are still honoured (AC-833): `_validateFees` runs
-        // unconditionally, so the handler trades at real, non-zero fees and the
-        // escrowed-fee path is genuinely exercised rather than sitting at zero.
+        // every action freely with unsigned KYC attestations. FEE attestations are
+        // NOT covered by that toggle (AC-884): the handler signs them with the real
+        // fee-operator key. The fee TERMS are honoured either way (AC-833), so the
+        // handler trades at real, non-zero fees and the escrowed-fee path is
+        // genuinely exercised rather than sitting at zero.
         vm.startPrank(admin);
         exchange.setAllowedCollector(collector, true);
         exchange.setComplianceRequired(ExchangeTypes.Action.Place, false);
@@ -52,9 +55,21 @@ contract EscrowConservationInvariantTest is Test {
         vm.stopPrank();
 
         address[3] memory actors = [makeAddr("h-alice"), makeAddr("h-bob"), makeAddr("h-carol")];
-        handler = new EscrowHandler(exchange, tokenA, tokenB, actors, collector);
+        handler = new EscrowHandler(exchange, tokenA, tokenB, actors, collector, feeSignerPk);
 
         targetContract(address(handler));
+    }
+
+    /// @dev Guards the invariant against becoming vacuous. The handler swallows every
+    ///      revert (`try/catch`), so a broken fee-attestation signing helper would
+    ///      silently create zero orders/offers — and both invariants would then pass
+    ///      trivially against an empty exchange. Pin that the handler's two
+    ///      fee-attested entry points genuinely land.
+    function test_HandlerCanDriveFeeAttestedEntryPoints() public {
+        handler.placeOrder(0, true, 100e18, 200e18, false, 0);
+        handler.makeOffer(0, 1, true, 100e18, 200e18, false, 0);
+        assertEq(exchange.totalOrders(), 1, "handler failed to place an order");
+        assertEq(exchange.totalOffers(), 1, "handler failed to make an offer");
     }
 
     /// @dev Sum of ground-truth escrowed tokenA (recomputed fresh from every

@@ -174,7 +174,17 @@ FeeAttestation(address account,uint8 action,uint256 nonce,uint256 deadline,bytes
 
 A fee attestation therefore cannot be replayed against a different order/offer, paired with a mismatched KYC attestation, or reused by a different account.
 
-### Validation rules (enforced in `_verifyFee`)
+### Validation rules (enforced in `_verifyFee`, unconditionally)
+
+`_verifyFee` is **not** gated by `complianceRequired[action]` (AC-884). That toggle is a KYC control;
+sharing it with fee verification meant `setComplianceRequired(Place, false)` also switched off the
+signature, deadline and nonce checks below, letting any caller hand-craft an unsigned zero-fee
+attestation and place a permanently fee-free order. The KYC toggle now only affects the KYC
+attestation; the fee attestation is always signature-checked, always deadline- and nonce-checked, and
+its `paramsHash` is always bound to the call's params. **Fee-free trading remains reachable** — the fee
+service signs `makerFeeBps == takerFeeBps == 0`, which `_validateFees` explicitly permits (no collector
+required at zero bps) — it just has to be an authorised, auditable decision rather than a side effect of
+turning KYC off.
 
 | Check | Error |
 |---|---|
@@ -187,7 +197,7 @@ A fee attestation therefore cannot be replayed against a different order/offer, 
 
 ### Fee bounds (enforced unconditionally by `placeOrder` / `placeOrderWithPermit` / `makeOffer`, defence in depth)
 
-Unlike attestation *verification* above (which is skipped when `complianceRequired[action]` is `false`, same toggle as KYC gating for that action), these bounds are **always** enforced regardless of gating, so a compromised fee signer — or a test run with gating disabled — cannot set extreme fees or redirect them to an arbitrary wallet:
+These bounds are enforced on top of the (also unconditional) attestation verification above, so a compromised fee signer cannot set extreme fees or redirect them to an arbitrary wallet:
 
 | Check | Error |
 |---|---|
@@ -308,7 +318,9 @@ Permissionless. Returns the current proposer's escrowed tokens for expired `Open
 
 ### KYC gating per action (`complianceRequired`)
 
-Each `Action` enum value maps to a boolean in `complianceRequired`. When `false` for an action, `_verifyKyc` returns immediately, skipping all attestation validation for that action. This allows the admin to turn gating off per-action for testing or phased rollout. All actions default to `true` on deployment. "Freezing" a user is simply the KYC backend declining to sign for them — there is no on-chain blocklist; `cancelOrderForUser` / `cancelOfferForUser` are the compliance escape hatches for releasing a frozen user's escrowed funds.
+Each `Action` enum value maps to a boolean in `complianceRequired`. When `false` for an action, `_verifyKyc` returns immediately, skipping all **KYC** attestation validation for that action. This allows the admin to turn gating off per-action for testing or phased rollout. All actions default to `true` on deployment.
+
+**KYC only (AC-884).** This toggle does not govern the **fee** attestation on `Place`/`MakeOffer` — that is verified unconditionally (see [Validation rules](#validation-rules-enforced-in-_verifyfee-unconditionally)), so turning KYC gating off for those actions still requires the fee service to be live and signing. "Freezing" a user is simply the KYC backend declining to sign for them — there is no on-chain blocklist; `cancelOrderForUser` / `cancelOfferForUser` are the compliance escape hatches for releasing a frozen user's escrowed funds.
 
 ### Pause
 

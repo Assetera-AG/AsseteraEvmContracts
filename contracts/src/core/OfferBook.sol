@@ -83,11 +83,12 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         if (taker == maker) revert OfferSelfTarget();
         if (expireTs != 0 && expireTs <= block.timestamp) revert InvalidExpiry();
 
-        if (complianceRequired[Action.MakeOffer]) {
-            bytes32 paramsHash = keccak256(abi.encodePacked(taker, makerToken, makerAmount, takerToken, takerAmount));
-            if (att.paramsHash != paramsHash) revert ParamsHashMismatch();
-            if (feeAtt.paramsHash != paramsHash) revert ParamsHashMismatch();
-        }
+        _bindParamsHash(
+            Action.MakeOffer,
+            att,
+            feeAtt,
+            keccak256(abi.encodePacked(taker, makerToken, makerAmount, takerToken, takerAmount))
+        );
         _validateFees(feeAtt, makerToken, takerToken);
         _consumeKycAndFee(maker, Action.MakeOffer, 0, att, feeAtt);
 

@@ -38,10 +38,17 @@ abstract contract FeeGate is KycGate, IFeeGate {
     ///      no state writes. Fee attestations only exist for fee-setting actions
     ///      (Place, MakeOffer); the caller is responsible for checking
     ///      `att.paramsHash` against the same on-chain-computed hash it checks the
-    ///      paired KycAttestation against — that transitively enforces
-    ///      `fee.paramsHash == kyc.paramsHash` without a separate cross-check here.
+    ///      paired KycAttestation against (see `_bindParamsHash`) — that transitively
+    ///      enforces `fee.paramsHash == kyc.paramsHash` without a separate cross-check here.
+    ///
+    ///      UNCONDITIONAL — deliberately NOT behind `complianceRequired[action]` (AC-884).
+    ///      That toggle is a KYC control; coupling fee verification to it meant an admin
+    ///      disabling KYC gating for an action silently disabled signature, deadline and
+    ///      nonce checking on the fee terms too, letting any caller hand-craft an unsigned
+    ///      zero-fee attestation and place a permanently fee-free order. Fee-free trading
+    ///      remains reachable the honest way: the fee service signs `makerFeeBps ==
+    ///      takerFeeBps == 0` (`_validateFees` explicitly permits that, collector included).
     function _verifyFee(address account, Action action, FeeAttestation calldata att) internal view {
-        if (!complianceRequired[action]) return;
         if (att.account != account) revert FeeAccountMismatch();
         if (att.action != action) revert FeeActionMismatch();
         if (block.timestamp > att.deadline) revert FeeExpired();
@@ -66,6 +73,24 @@ abstract contract FeeGate is KycGate, IFeeGate {
         if (!hasRole(FEE_OPERATOR_ROLE, signer)) revert FeeBadSigner();
     }
 
+    /// @dev Binds both attestations of a fee-setting action to the on-chain-computed
+    ///      `paramsHash` for this call. The FEE binding is unconditional, matching
+    ///      `_verifyFee` (AC-884): a fee attestation is always signature-checked, so it
+    ///      must always be pinned to these exact params or one signed for a different
+    ///      order/offer could be replayed onto this one. The KYC binding stays behind
+    ///      `complianceRequired[action]`, the gate it actually belongs to.
+    function _bindParamsHash(
+        Action action,
+        KycAttestation calldata kycAtt,
+        FeeAttestation calldata feeAtt,
+        bytes32 paramsHash
+    ) internal view {
+        if (complianceRequired[action] && kycAtt.paramsHash != paramsHash) {
+            revert ParamsHashMismatch();
+        }
+        if (feeAtt.paramsHash != paramsHash) revert ParamsHashMismatch();
+    }
+
     /// @dev Verifies both the KYC and fee attestations for a fee-setting action
     ///      (Place, MakeOffer) before burning either nonce — an invalid second
     ///      attestation must not consume the first attestation's nonce on a
@@ -84,9 +109,12 @@ abstract contract FeeGate is KycGate, IFeeGate {
         if (complianceRequired[action]) {
             usedNonce[account][kycAtt.nonce] = true;
             emit KycConsumed(account, action, orderId, kycAtt.nonce);
-            usedFeeNonce[account][feeAtt.nonce] = true;
-            emit FeeConsumed(account, action, feeAtt.nonce);
         }
+        // The fee nonce burns unconditionally, mirroring the now-unconditional
+        // `_verifyFee` (AC-884) — a single-use attestation whose nonce is only burned
+        // when KYC gating happens to be on would be replayable while it is off.
+        usedFeeNonce[account][feeAtt.nonce] = true;
+        emit FeeConsumed(account, action, feeAtt.nonce);
     }
 
     /// @dev Fee bounds + denomination — always enforced (defence in depth) so a
