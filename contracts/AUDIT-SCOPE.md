@@ -35,21 +35,22 @@ handed a different commit.
 
 ## In scope
 
-The production contract surface under `contracts/src/` — **12 files, 1,794 LoC**
+The production contract surface under `contracts/src/` — **13 files, 1,922 LoC**
 (`find src -name '*.sol' | xargs wc -l`):
 
 | File | LoC | Role |
 |---|---:|---|
-| `src/AsseteraECS.sol` | 135 | UUPS proxy entrypoint; assembles the modules; `initialize`; `version()` |
-| `src/core/OrderBook.sol` | 393 | Order lifecycle: place / cancel / fill / sweep; pooled escrow + escrowed maker fee |
+| `src/AsseteraECS.sol` | 139 | UUPS proxy entrypoint; assembles the modules; `initialize`; `version()` |
+| `src/core/OrderBook.sol` | 387 | Order lifecycle: place / cancel / fill / sweep; pooled escrow + escrowed maker fee |
 | `src/core/OfferBook.sol` | 403 | Offer lifecycle: make / replace / accept (atomic settle) / cancel / sweep |
+| `src/core/PermitRelay.sol` | 109 | `permitAndCall`: ERC-2612 permit + one self-`delegatecall`, so approve-then-trade is one transaction (AO-298) |
 | `src/gates/KycGate.sol` | 62 | EIP-712 KYC attestation verification + nonce burn |
 | `src/gates/FeeGate.sol` | 136 | EIP-712 fee attestation verification + fee bounds / denomination / collector allowlist |
 | `src/admin/ExchangeAdmin.sol` | 114 | Admin surface: pause, compliance toggles, collector allowlist, force-cancel |
 | `src/storage/ExchangeStorage.sol` | 79 | Single storage base behind `__gap` (UUPS layout) |
 | `src/types/ExchangeTypes.sol` | 148 | Structs, enums (`Action`), attestation types |
 | `src/libs/FeeMath.sol` | 23 | Fee arithmetic (floor division) + ceiling division |
-| `src/interfaces/IAsseteraECS.sol` | 242 | External interface |
+| `src/interfaces/IAsseteraECS.sol` | 263 | External interface |
 | `src/interfaces/IKycGate.sol` | 29 | Interface |
 | `src/interfaces/IFeeGate.sol` | 30 | Interface |
 
@@ -60,7 +61,7 @@ rename is comment- and identifier-level only; it does not change bytecode (see t
 
 | Path | Why |
 |---|---|
-| `test/**` — unit tests, the `test/invariants/` escrow-conservation suite, and mocks (`test/mocks/FaucetToken.sol`, `ReentrantToken.sol`, `FeeOnTransferToken.sol`, `RebasingToken.sol`, `AsseteraECSV2.sol`) | Tests and mocks. `FaucetToken` is an **open-mint testnet faucet**, deployed only on Amoy/Sepolia/local anvil — never mainnet (enforced in `Deploy.s.sol` via `_isTestnet`). Not part of the production surface. |
+| `test/**` — unit tests, the `test/invariants/` escrow-conservation suite, and mocks (`test/mocks/FaucetToken.sol`, `ReentrantToken.sol`, `FeeOnTransferToken.sol`, `RebasingToken.sol`, `DivergentDomainToken.sol`, `AsseteraECSV2.sol`) | Tests and mocks. `FaucetToken` is an **open-mint testnet faucet**, deployed only on Amoy/Sepolia/local anvil — never mainnet (enforced in `Deploy.s.sol` via `_isTestnet`). Not part of the production surface. |
 | `script/**` (`Deploy.s.sol`, `DeployBase.sol`, `Verify.s.sol`, `UpgradeCalldata.s.sol`, `storage-layout.sh`, `struct-layout.py`) | Deployment / verification / upgrade-safety tooling, not deployed bytecode. Reviewing the deploy story is welcome but it is not the contract under custody. |
 | `docs/parked/OperatorFunctions.sol` | **Parked, not compiled, not deployed.** A commented reference implementation of `settle`/`refund` (`OPERATOR_ROLE`), kept outside `src/` so it is not on the attack surface. See `docs/FUNCTIONAL_SPEC.md §11` for the re-enable path. |
 | `lib/**` | Pinned dependencies (see below). |
@@ -71,17 +72,17 @@ rename is comment- and identifier-level only; it does not change bytecode (see t
 ```bash
 cd contracts
 forge build                 # Solidity 0.8.28, via-IR, optimizer 200 runs — clean
-forge test                  # 196 tests across 4 suites, all passing
+forge test                  # 212 tests across 4 suites, all passing
 forge coverage --ir-minimum --no-match-coverage '(script|test)'
 bash script/storage-layout.sh   # upgrade-safety guard; must print "storage layout unchanged"
 slither .
 ```
 
-**Test suite — 196 tests, 0 failures** (`forge test`):
+**Test suite — 212 tests, 0 failures** (`forge test`):
 
 | Suite | Tests |
 |---|---:|
-| `test/AsseteraECS.t.sol` | 184 |
+| `test/AsseteraECS.t.sol` | 200 |
 | `test/FaucetToken.t.sol` | 6 |
 | `test/DeployProvenance.t.sol` | 3 |
 | `test/invariants/EscrowConservation.t.sol` | 3 (2 invariants at 64 runs × depth 50, plus a non-vacuity unit test) |
@@ -92,14 +93,15 @@ slither .
 
 | File | % Lines | % Branches | % Funcs |
 |---|---:|---:|---:|
-| `src/core/OrderBook.sol` | 100.00 (98/98) | 100.00 (30/30) | 100.00 (11/11) |
+| `src/core/OrderBook.sol` | 100.00 (96/96) | 100.00 (29/29) | 100.00 (10/10) |
 | `src/core/OfferBook.sol` | 100.00 (141/141) | 95.12 (39/41) | 100.00 (9/9) |
+| `src/core/PermitRelay.sol` | 100.00 (8/8) | 100.00 (1/1) | 100.00 (2/2) |
 | `src/gates/FeeGate.sol` | 100.00 (27/27) | 100.00 (14/14) | 100.00 (4/4) |
 | `src/gates/KycGate.sol` | 100.00 (19/19) | 100.00 (10/10) | 100.00 (2/2) |
 | `src/libs/FeeMath.sol` | 100.00 (4/4) | n/a (0/0) | 100.00 (2/2) |
 | `src/admin/ExchangeAdmin.sol` | 94.59 (35/37) | 100.00 (7/7) | 100.00 (6/6) |
 | `src/AsseteraECS.sol` | 75.86 (22/29) | 100.00 (1/1) | 85.71 (6/7) |
-| **Total** | **97.46 (346/355)** | **98.06 (101/103)** | **97.56 (40/41)** |
+| **Total** | **97.51 (352/361)** | **98.06 (101/103)** | **97.62 (41/42)** |
 
 The residue on `AsseteraECS.sol` is the ERC-2771 / UUPS plumbing (`_msgData`, `_contextSuffixLength`) —
 overrides OZ requires but which the venue's own paths never take.
@@ -319,6 +321,51 @@ unacceptable offer alive indefinitely.
    carries `filledBuyAmount`. Consumers must not re-derive net figures the old way. See
    `docs/INDEXER_EVENT_SCHEMA.md`.
 
+### Audit-relevant surface introduced by AO-298 (`permitAndCall`)
+
+`src/core/PermitRelay.sol` adds one external function, `permitAndCall`, which runs an ERC-2612 `permit` for
+the caller and then `delegatecall`s one function on this same contract. It exists because
+`placeOrderWithPermit` only ever helped the maker placing an order: the taker on `fillOrder` and both
+parties across `makeOffer` / `replaceOffer` / `acceptOffer` had to send a separate `approve` transaction
+first. We chose one generic entry point over four `…WithPermit` twins on measured size (373 bytes of
+runtime code versus 513, against roughly 2.6 kB of EIP-170 headroom) and because it also covers any
+token-pulling function added later, including the parked operator `settle`/`refund`.
+
+It is a **self-`delegatecall` with caller-supplied calldata**, which we expect a reviewer to want to look
+at closely. The claims we make about it, and where each is pinned:
+
+1. **No privilege escalation.** Authorisation everywhere in this contract is `_msgSender()`.
+   `permitAndCall` re-appends the ERC-2771 sender suffix to `data` before delegating (the same detection
+   OpenZeppelin's `Multicall` uses: `msg.sender != _msgSender()` means the call arrived through the trusted
+   forwarder). The inner function therefore resolves the same actor it would have resolved on a direct
+   call, whether relayed or not, so `data` reaches nothing the caller could not already reach. Pinned by
+   `test_PermitAndCall_Relayed_IdentityIsUserNotRelayer` and
+   `test_PermitAndCall_CannotReachAdminFunctionsWithoutTheRole`.
+2. **The reentrancy guard still holds.** `permitAndCall` is deliberately not `nonReentrant` — taking the
+   guard would make the inner call revert — and every function it can delegate into carries its own guard.
+   The one external call it makes before delegating is `token.permit` on a caller-chosen address, at which
+   point it holds no state and has moved no funds. Pinned by
+   `test_PermitAndCall_ReentrantTokenCannotReenterGuardedCall`.
+3. **No `msg.value` to double-spend.** The classic multicall bug does not apply: the venue has no payable
+   functions and `permitAndCall` is not payable.
+4. **Permit failure stays swallowed**, as in `placeOrderWithPermit`. The first return value,
+   `permitAccepted`, makes the failure observable on simulation instead of silent. Three real cases need
+   the swallow, and all three are tested against mocks: a token with no ERC-2612 at all
+   (`test_PermitAndCall_TokenWithoutErc2612_FallsBackToAllowance`), a token whose EIP-712 domain name is
+   not its `name()` — EUROP's shape (`DivergentDomainToken`, three tests), and a token whose ERC-5267
+   `eip712Domain()` reverts — USDC's shape (`test_PermitAndCall_TokenWithoutErc5267_StillPermits`). The
+   faucet tokens on playground pass their own `name()` to `ERC20Permit`, so playground cannot reproduce
+   either divergence; the mock exists for exactly that reason.
+
+Slither's result count is unchanged at 26 with this in place. `controlled-delegatecall` does not fire
+because the delegatecall target is `address(this)`, not caller-supplied.
+
+The **storage layout is unchanged**: `PermitRelay` declares no state. The committed snapshot
+(`storage/AsseteraECS.txt`) was nevertheless re-baselined in the AO-298 commit, because it embeds solc AST
+node ids in type names (`t_struct(Order)11439_storage` → `…11533_storage`) and adding a source file shifts
+them. Every slot, offset and member is byte-identical either side of that diff. That the guard produces a
+diff on a change it is not meant to detect is a real weakness worth fixing separately.
+
 ## Static analysis (Slither)
 
 Config: [`slither.config.json`](slither.config.json) (filters `lib/`, `test/`, `script/`). Run: `slither .`
@@ -328,7 +375,7 @@ from `contracts/`. Current result: **42 contracts, 101 detectors, 26 results —
 |---|---|---|
 | `arbitrary-send-erc20` (×4) | `OfferBook._settleOffer` (`OfferBook.sol:338-342`) | **False positive** — `from` is always `o.maker` or `o.taker`, and the caller has already been checked to be one of them (`acceptOffer`, `OfferBook.sol:288`). You can only pull tokens from yourself. Moved here from `acceptOffer` when AC-833 split settlement into `_settleOffer`. |
 | `uninitialized-local` | `OrderBook._settleFill.feeDust` (`OrderBook.sol:316`) | **Benign, new in AC-833** — the zero default *is* the intended value; `feeDust` is only assigned on the final fill of a buy-side order, and the guarded `if (feeDust > 0)` transfer makes the unassigned case a no-op. |
-| `reentrancy-benign` | `OrderBook.placeOrderWithPermit` | Guarded by `nonReentrant`; state writes after the `permit` external call are harmless. |
+| `reentrancy-benign` | `OrderBook.placeOrderWithPermit` (external call now in `PermitRelay._tryPermit`) | Guarded by `nonReentrant`; state writes after the `permit` external call are harmless. |
 | `timestamp` (×10) | expiry / TTL comparisons in `OrderBook`, `OfferBook`, `KycGate._verifyKyc`, `FeeGate._verifyFee` | Benign — validator drift (seconds) is immaterial to the expiry/TTL windows (`MAX_KYC_TTL` / `MAX_FEE_TTL` are 15 minutes; order expiries are hours-plus). |
 | `cyclomatic-complexity` | `OfferBook.replaceOffer` (12) | **New in AC-833** — the function now swaps both parties' escrow *and* both fee escrows. Accepted; flagged above as a focused-review target. |
 | `dead-code` (`_msgData`) | `AsseteraECS` | OZ-required ERC-2771 override. |

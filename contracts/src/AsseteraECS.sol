@@ -49,10 +49,14 @@ import {ExchangeTypes} from "./types/ExchangeTypes.sol";
 ///         be a relayer (gasless meta-tx) or — later — an ERC-4337 smart account;
 ///         the contract never assumes `msg.sender == maker/taker`.
 ///
-///         Modularised (AC-242) as: ExchangeStorage → {KycGate,FeeGate,ExchangeAdmin}
-///         → {OrderBook,OfferBook} → AsseteraECS (this file adds
+///         Modularised (AC-242) as: ExchangeStorage → {KycGate,FeeGate,ExchangeAdmin,
+///         PermitRelay} → {OrderBook,OfferBook} → AsseteraECS (this file adds
 ///         UUPSUpgradeable/ERC2771ContextUpgradeable/Initializable, the three
-///         concerns that only the final assembled contract needs).
+///         concerns that only the final assembled contract needs). `PermitRelay`
+///         (AO-298) carries `permitAndCall`, which lets any caller submit an
+///         ERC-2612 permit and the venue call it wants in a single transaction;
+///         it is assembled in through `OrderBook`, which also uses its
+///         `_tryPermit` for `placeOrderWithPermit`.
 contract AsseteraECS is ExchangeTypes, Initializable, UUPSUpgradeable, OrderBook, OfferBook, ERC2771ContextUpgradeable {
     /// @param trustedForwarder ERC-2771 forwarder (relayer). Immutable in impl
     ///        bytecode — proxy-safe. Set to address(0) to disable meta-tx.
@@ -112,8 +116,11 @@ contract AsseteraECS is ExchangeTypes, Initializable, UUPSUpgradeable, OrderBook
 
     function _authorizeUpgrade(address) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
+    /// @dev Bumped to 3.2.0 by AO-298, which added `permitAndCall`. This is how ops confirms which
+    ///      implementation a proxy is running; an impl that carries a new function but still reports
+    ///      the old version is worse than a changed string. Nothing on chain reads it.
     function version() external pure virtual returns (string memory) {
-        return "3.1.0";
+        return "3.2.0";
     }
 
     function _msgSender() internal view override(ContextUpgradeable, ERC2771ContextUpgradeable) returns (address) {

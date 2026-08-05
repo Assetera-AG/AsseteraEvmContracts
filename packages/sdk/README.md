@@ -63,6 +63,68 @@ const exchange = createExchangeClient({ chainId: 80002, publicClient }); // addr
 const version = await exchange.read.version();
 ```
 
+## Approve and trade in one transaction (`permitAndCall`)
+
+`AsseteraECS.permitAndCall` runs an ERC-2612 `permit` for the caller and then makes one call on the
+exchange with the allowance it granted, so a taker filling an order or a party accepting an offer no
+longer sends a separate `approve` transaction first (AO-298).
+
+```ts
+import { encodeFunctionData } from "viem";
+import {
+  asseteraEcsAbi,
+  getEcsAddress,
+  getPermitNonce,
+  PERMIT_TYPES,
+  resolvePermitDomain,
+  splitPermitSignature,
+} from "@asseteragmbh/evm-contracts";
+
+const exchange = getEcsAddress(chainId)!;
+const value = buyAmountDue; // exactly what the fill will pull
+const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+// Resolve the token's real EIP-712 domain. Do NOT assume it is `token.name()` — see below.
+const domain = await resolvePermitDomain({ publicClient, token });
+const signature = await walletClient.signTypedData({
+  account,
+  domain,
+  types: PERMIT_TYPES,
+  primaryType: "Permit",
+  message: {
+    owner: account,
+    spender: exchange,
+    value,
+    nonce: await getPermitNonce(publicClient, token, account),
+    deadline,
+  },
+});
+const { v, r, s } = splitPermitSignature(signature);
+
+await walletClient.writeContract({
+  address: exchange,
+  abi: asseteraEcsAbi,
+  functionName: "permitAndCall",
+  args: [
+    token,
+    value,
+    deadline,
+    v,
+    r,
+    s,
+    encodeFunctionData({ abi: asseteraEcsAbi, functionName: "fillOrder", args: [orderId, fillAmount, att] }),
+  ],
+});
+```
+
+**Resolve the domain, do not guess it.** A token's EIP-712 domain name is often, but not always, its
+`name()`. EUROP hashed a different string into its domain separator, and USDC has no ERC-5267
+`eip712Domain()` to read the answer from. A permit signed against the wrong domain is not an error you
+see: the contract swallows it, `permitAndCall` returns `permitAccepted: false`, and the trade then fails
+on the allowance. `resolvePermitDomain` reads `eip712Domain()` where available and otherwise matches
+candidate names against the token's `DOMAIN_SEPARATOR()`, throwing rather than returning a guess. The
+faucet tokens on playground agree with their `name()`, so playground will not catch this for you.
+
 ## Indexer / non-viem consumers (pure data)
 
 ```ts

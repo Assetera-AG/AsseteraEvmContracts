@@ -2,18 +2,18 @@
 pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {KycGate} from "../gates/KycGate.sol";
 import {FeeGate} from "../gates/FeeGate.sol";
 import {ExchangeAdmin} from "../admin/ExchangeAdmin.sol";
+import {PermitRelay} from "./PermitRelay.sol";
 import {FeeMath} from "../libs/FeeMath.sol";
 
 /// @title OrderBook
 /// @notice Order lifecycle: place, self-cancel, fill, and permissionless sweep
 ///         of expired orders. Operator-only settle/refund are parked — see
 ///         docs/parked/OperatorFunctions.sol (AC-246).
-abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
+abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
     using SafeERC20 for IERC20;
 
     /// @dev Emitted when a new order is placed. Includes the fee terms snapshotted onto the
@@ -143,12 +143,6 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin {
         // sellAmount + the maker's escrowed fee — see `_placeOrder`.
         _tryPermit(sellToken, _escrowTotal(sellToken, sellAmount, feeAtt), permitDeadline, v, r, s);
         return _placeOrder(sellToken, sellAmount, buyToken, buyAmount, expireTs, feeAtt);
-    }
-
-    function _tryPermit(address token, uint256 amount, uint256 deadline, uint8 v, bytes32 r, bytes32 s) private {
-        // Permit failure is intentionally swallowed: the token may not support ERC-2612,
-        // or the allowance may already be sufficient. safeTransferFrom below enforces the result.
-        try IERC20Permit(token).permit(_msgSender(), address(this), amount, deadline, v, r, s) {} catch {}
     }
 
     /// @dev The maker's escrowed fee (AC-833). Non-zero only when the maker is selling

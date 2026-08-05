@@ -59,6 +59,10 @@ User EOA  ──► ERC2771Forwarder ──► AsseteraECS (proxy)
                                    └── ERC2771ContextUpgradeable
 ```
 
+`permitAndCall` (AO-298) sits alongside the two books as a third module, `PermitRelay`: it runs an
+ERC-2612 `permit` for the caller and then `delegatecall`s one function on the same contract, so
+approving and trading is one transaction for every party, not just for the maker placing an order.
+
 - The **proxy** holds all state. The **implementation** holds all logic.
 - The forwarder address is immutable in the implementation bytecode (set in the constructor). Changing the forwarder requires deploying a new implementation and upgrading.
 - `_authorizeUpgrade` is restricted to `DEFAULT_ADMIN_ROLE`, so only the admin multisig can trigger an upgrade.
@@ -238,6 +242,25 @@ Maker escrows `sellAmount` of `sellToken`. Requires a `Place` `KycAttestation` (
 
 #### `placeOrderWithPermit(sellToken, sellAmount, buyToken, buyAmount, expireTs, permitDeadline, v, r, s, att, feeAtt)`
 Same as `placeOrder` (including fee validation/snapshot) but attempts an ERC-2612 `permit` call before the `transferFrom`, allowing the maker to approve and place in a single transaction. The permit failure is swallowed — if the approval is already in place or the token does not support permit, the `transferFrom` still proceeds normally.
+
+#### `permitAndCall(token, value, deadline, v, r, s, data)`
+Runs an ERC-2612 `permit` granting the exchange `value` of `token` for `_msgSender()`, then
+`delegatecall`s `data` on this contract. It exists because `placeOrderWithPermit` only ever helped the
+maker placing an order: the taker on `fillOrder`, and both parties on `makeOffer` / `replaceOffer` /
+`acceptOffer`, all had to send a separate `approve` first (AO-298). One entry point covers all of them,
+and any token-pulling function added later, without a `…WithPermit` twin per function.
+
+- **Identity.** The ERC-2771 sender suffix is re-appended to `data` before delegating, so the inner
+  function resolves the same `_msgSender()` it would have resolved had the caller invoked it directly —
+  through the forwarder or not. `data` therefore reaches nothing the caller could not already reach;
+  admin functions still check roles against that same actor.
+- **Permit failure is swallowed**, as in `placeOrderWithPermit`. A token with no ERC-2612, a token whose
+  EIP-712 domain the client could not derive, or a permit that already landed all leave the inner call
+  runnable against whatever allowance exists; the inner call reverts on the transfer if there is none.
+  The first return value, `permitAccepted`, reports which happened — simulate the call to see it before
+  the user pays.
+- **Not `nonReentrant`**, deliberately: every function it can delegate into carries its own guard, and
+  holding the guard here would make the inner call revert. See `PermitRelay.sol` for the full note.
 
 #### `cancelOrder(id)`
 Maker self-cancel. Never requires a KYC attestation — a user must always be able to cancel their own open order and reclaim escrow, even if the KYC backend refuses to sign for them or is offline. Use `cancelOrderForUser` for compliance-routed release to a non-maker recipient.

@@ -11,13 +11,16 @@ import {IKycGate} from "../src/interfaces/IKycGate.sol";
 import {IFeeGate} from "../src/interfaces/IFeeGate.sol";
 import {OrderBook} from "../src/core/OrderBook.sol";
 import {OfferBook} from "../src/core/OfferBook.sol";
+import {PermitRelay} from "../src/core/PermitRelay.sol";
 import {ExchangeAdmin} from "../src/admin/ExchangeAdmin.sol";
 import {FaucetToken} from "./mocks/FaucetToken.sol";
 import {AsseteraECSV2} from "./mocks/AsseteraECSV2.sol";
 import {ReentrantToken} from "./mocks/ReentrantToken.sol";
+import {DivergentDomainToken} from "./mocks/DivergentDomainToken.sol";
 import {FeeOnTransferToken} from "./mocks/FeeOnTransferToken.sol";
 import {RebasingToken} from "./mocks/RebasingToken.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 
 contract AsseteraECSTest is Test {
     AsseteraECS internal exchange;
@@ -306,7 +309,7 @@ contract AsseteraECSTest is Test {
         // OPERATOR_ROLE is parked (AC-246) — not granted, no getter to assert against.
         assertTrue(exchange.hasRole(KYC_OPERATOR_ROLE, kycSigner));
         assertTrue(exchange.hasRole(FEE_OPERATOR_ROLE, feeSigner));
-        assertEq(exchange.version(), "3.1.0");
+        assertEq(exchange.version(), "3.2.0");
         assertTrue(exchange.complianceRequired(ExchangeTypes.Action.Place));
         assertTrue(exchange.complianceRequired(ExchangeTypes.Action.Fill));
         assertTrue(exchange.complianceRequired(ExchangeTypes.Action.Settle));
@@ -3895,6 +3898,474 @@ contract AsseteraECSTest is Test {
             abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, address(exchange), 0, transferFee)
         );
         exchange.acceptOffer(id, acceptAtt);
+        vm.stopPrank();
+    }
+
+    // ===================================================================== //
+    //          permitAndCall — approve + trade in one tx (AO-298)           //
+    // ===================================================================== //
+    // Before this, `placeOrderWithPermit` was the only permit-carrying entry
+    // point, so only the maker placing an order could avoid a separate
+    // `approve` transaction. These pin the four call sites that could not:
+    // the taker on a fill, and both parties across makeOffer / replaceOffer /
+    // acceptOffer. Plus the failure modes that real settlement currencies
+    // actually hit, which the faucet tokens on playground cannot reproduce.
+
+    /// Sign an ERC-2612 permit against whatever domain separator the token itself reports.
+    /// This is the correct client behaviour; `_signPermitAgainstName` below is the naive one.
+    function _permitSig(address token, uint256 ownerPk, address owner, uint256 value, uint256 deadline)
+        internal
+        view
+        returns (uint8 v, bytes32 r, bytes32 s)
+    {
+        return _permitSigWithDomain(token, ownerPk, owner, value, deadline, IERC20Permit(token).DOMAIN_SEPARATOR());
+    }
+
+    /// Sign a permit against a domain separator built from an arbitrary name — how a client
+    /// that assumes `domain.name == token.name()` behaves. Correct for the faucet tokens,
+    /// wrong for EUROP.
+    function _signPermitAgainstName(
+        address token,
+        uint256 ownerPk,
+        address owner,
+        uint256 value,
+        uint256 deadline,
+        string memory domainName
+    ) internal view returns (uint8 v, bytes32 r, bytes32 s) {
+        bytes32 domain = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes(domainName)),
+                keccak256(bytes("1")),
+                block.chainid,
+                token
+            )
+        );
+        return _permitSigWithDomain(token, ownerPk, owner, value, deadline, domain);
+    }
+
+    function _permitSigWithDomain(
+        address token,
+        uint256 ownerPk,
+        address owner,
+        uint256 value,
+        uint256 deadline,
+        bytes32 domainSeparator
+    ) internal view returns (uint8 v, bytes32 r, bytes32 s) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"),
+                owner,
+                address(exchange),
+                value,
+                IERC20Permit(token).nonces(owner),
+                deadline
+            )
+        );
+        (v, r, s) = vm.sign(ownerPk, keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash)));
+    }
+
+    /// A funded actor with a key we can sign permits with.
+    function _funded(string memory name) internal returns (address who, uint256 pk) {
+        (who, pk) = makeAddrAndKey(name);
+        rwa.mint(who, 1_000e18);
+        usdc.mint(who, 1_000_000e6);
+    }
+
+    // ---- the four call sites that had no permit path ---------------------- //
+
+    function test_PermitAndCall_FillOrder_WithNoPriorAllowance() public {
+        uint256 id = _placeRwaForUsdc(alice);
+        (address dave, uint256 davePk) = _funded("dave-fill");
+        uint256 dl = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _permitSig(address(usdc), davePk, dave, WANT_USDC, dl);
+
+        assertEq(usdc.allowance(dave, address(exchange)), 0, "starts with no allowance");
+
+        AsseteraECS.KycAttestation memory att = _attest(dave, ExchangeTypes.Action.Fill, id);
+        vm.prank(dave);
+        (bool permitAccepted,) = exchange.permitAndCall(
+            address(usdc), WANT_USDC, dl, v, r, s, abi.encodeCall(OrderBook.fillOrder, (id, SELL_RWA, att))
+        );
+
+        assertTrue(permitAccepted);
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Filled));
+        // The fill is credited to the caller, not to the exchange: the self-delegatecall
+        // preserved `_msgSender()`.
+        assertEq(rwa.balanceOf(dave), 1_000e18 + SELL_RWA);
+        assertEq(usdc.balanceOf(alice), 1_000_000e6 + WANT_USDC);
+    }
+
+    function test_PermitAndCall_MakeOffer_WithNoPriorAllowance() public {
+        (address dave, uint256 davePk) = _funded("dave-make");
+        uint256 dl = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _permitSig(address(rwa), davePk, dave, SELL_RWA, dl);
+
+        AsseteraECS.KycAttestation memory att =
+            _attestMakeOffer(dave, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
+        AsseteraECS.FeeAttestation memory feeAtt =
+            _feeMakeOffer(dave, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
+
+        vm.prank(dave);
+        exchange.permitAndCall(
+            address(rwa),
+            SELL_RWA,
+            dl,
+            v,
+            r,
+            s,
+            abi.encodeCall(OfferBook.makeOffer, (bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt))
+        );
+
+        AsseteraECS.Offer memory o = exchange.getOffer(1);
+        assertEq(o.maker, dave);
+        assertEq(rwa.balanceOf(address(exchange)), SELL_RWA);
+    }
+
+    function test_PermitAndCall_ReplaceOffer_WithNoPriorAllowance() public {
+        (address dave, uint256 davePk) = _funded("dave-replace");
+        uint256 id = _makeOffer(alice, dave, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
+
+        // Dave counters, which makes him the proposer and escrows HIS leg (usdc).
+        uint256 counter = 800e6;
+        uint256 dl = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _permitSig(address(usdc), davePk, dave, counter, dl);
+        AsseteraECS.KycAttestation memory att = _attestReplaceOffer(dave, id, SELL_RWA, counter);
+
+        vm.prank(dave);
+        exchange.permitAndCall(
+            address(usdc), counter, dl, v, r, s, abi.encodeCall(OfferBook.replaceOffer, (id, SELL_RWA, counter, 0, att))
+        );
+
+        AsseteraECS.Offer memory o = exchange.getOffer(id);
+        assertEq(o.proposedBy, dave);
+        assertEq(o.takerAmount, counter);
+        assertEq(usdc.balanceOf(address(exchange)), counter);
+    }
+
+    function test_PermitAndCall_AcceptOffer_WithNoPriorAllowance() public {
+        (address dave, uint256 davePk) = _funded("dave-accept");
+        uint256 id = _makeOffer(alice, dave, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
+
+        uint256 dl = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _permitSig(address(usdc), davePk, dave, WANT_USDC, dl);
+        AsseteraECS.KycAttestation memory att = _attestAcceptOffer(dave, id, SELL_RWA, WANT_USDC);
+
+        vm.prank(dave);
+        exchange.permitAndCall(address(usdc), WANT_USDC, dl, v, r, s, abi.encodeCall(OfferBook.acceptOffer, (id, att)));
+
+        assertEq(uint8(exchange.getOffer(id).status), uint8(ExchangeTypes.OfferStatus.Settled));
+        assertEq(rwa.balanceOf(dave), 1_000e18 + SELL_RWA);
+    }
+
+    /// The generic path also covers what `placeOrderWithPermit` covers, so no future
+    /// token-pulling function needs its own `…WithPermit` twin.
+    function test_PermitAndCall_PlaceOrder_WithNoPriorAllowance() public {
+        (address dave, uint256 davePk) = _funded("dave-place");
+        uint256 dl = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _permitSig(address(rwa), davePk, dave, SELL_RWA, dl);
+        AsseteraECS.KycAttestation memory att = _attestPlace(dave, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
+        AsseteraECS.FeeAttestation memory feeAtt = _feePlace(dave, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
+
+        vm.prank(dave);
+        exchange.permitAndCall(
+            address(rwa),
+            SELL_RWA,
+            dl,
+            v,
+            r,
+            s,
+            abi.encodeCall(OrderBook.placeOrder, (address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt))
+        );
+
+        assertEq(exchange.getOrder(1).maker, dave);
+    }
+
+    // ---- identity, through the relayer and against escalation ------------- //
+
+    function test_PermitAndCall_Relayed_IdentityIsUserNotRelayer() public {
+        uint256 id = _placeRwaForUsdc(alice);
+        (address dave, uint256 davePk) = _funded("dave-relayed");
+        vm.deal(dave, 0); // no ETH: the relayer pays
+
+        uint256 dl = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _permitSig(address(usdc), davePk, dave, WANT_USDC, dl);
+        AsseteraECS.KycAttestation memory att = _attest(dave, ExchangeTypes.Action.Fill, id);
+
+        bytes memory inner = abi.encodeCall(OrderBook.fillOrder, (id, SELL_RWA, att));
+        bytes memory outer = abi.encodeCall(PermitRelay.permitAndCall, (address(usdc), WANT_USDC, dl, v, r, s, inner));
+
+        _relay(davePk, dave, address(exchange), outer);
+
+        // Both the permit owner and the fill were resolved as dave, not as the forwarder
+        // and not as the relayer — the ERC-2771 suffix survived the self-delegatecall.
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Filled));
+        assertEq(rwa.balanceOf(dave), 1_000e18 + SELL_RWA);
+        assertEq(dave.balance, 0);
+    }
+
+    /// The self-delegatecall must not lend the caller the contract's own authority.
+    function test_PermitAndCall_CannotReachAdminFunctionsWithoutTheRole() public {
+        (address dave, uint256 davePk) = _funded("dave-escalate");
+        uint256 dl = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _permitSig(address(usdc), davePk, dave, 1, dl);
+
+        vm.prank(dave);
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", dave, ADMIN_ROLE));
+        exchange.permitAndCall(
+            address(usdc),
+            1,
+            dl,
+            v,
+            r,
+            s,
+            abi.encodeCall(ExchangeAdmin.setComplianceRequired, (ExchangeTypes.Action.Fill, false))
+        );
+    }
+
+    /// A permit signed by someone else does not recover to the caller, so the token
+    /// rejects it. It cannot be redirected into an allowance for the caller.
+    function test_PermitAndCall_CannotUseAnotherAccountsPermit() public {
+        uint256 id = _placeRwaForUsdc(alice);
+        (address victim, uint256 victimPk) = _funded("victim");
+        (address thief,) = _funded("thief");
+        uint256 dl = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _permitSig(address(usdc), victimPk, victim, WANT_USDC, dl);
+
+        AsseteraECS.KycAttestation memory att = _attest(thief, ExchangeTypes.Action.Fill, id);
+        vm.prank(thief);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(exchange), 0, WANT_USDC)
+        );
+        exchange.permitAndCall(
+            address(usdc), WANT_USDC, dl, v, r, s, abi.encodeCall(OrderBook.fillOrder, (id, SELL_RWA, att))
+        );
+        assertEq(usdc.allowance(victim, address(exchange)), 0, "victim's allowance was never set");
+    }
+
+    // ---- the fallback path: permit does not land -------------------------- //
+
+    /// A token with no ERC-2612 at all. `_tryPermit` swallows the failure and the trade
+    /// runs on the allowance the user set the old way — the behaviour AO-298 must not break.
+    function test_PermitAndCall_TokenWithoutErc2612_FallsBackToAllowance() public {
+        ReentrantToken plain = new ReentrantToken(); // never armed: a plain ERC-20, no permit
+        (address dave, uint256 davePk) = _funded("dave-noperm");
+        plain.mint(dave, 1_000e18);
+
+        // Order: alice sells rwa, wants `plain`. `plain` is the settlement currency leg.
+        uint256 want = 500e18;
+        AsseteraECS.KycAttestation memory pAtt = _attestPlace(alice, address(rwa), SELL_RWA, address(plain), want);
+        AsseteraECS.FeeAttestation memory pFee = _feePlaceWithFeeToken(
+            alice, address(rwa), SELL_RWA, address(plain), want, 0, 0, address(0), address(plain)
+        );
+        vm.startPrank(alice);
+        rwa.approve(address(exchange), SELL_RWA);
+        uint256 id = exchange.placeOrder(address(rwa), SELL_RWA, address(plain), want, 0, pAtt, pFee);
+        vm.stopPrank();
+
+        uint256 dl = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(davePk, keccak256("not a permit this token understands"));
+
+        AsseteraECS.KycAttestation memory att = _attest(dave, ExchangeTypes.Action.Fill, id);
+        vm.startPrank(dave);
+        plain.approve(address(exchange), want); // the old two-transaction way
+        (bool permitAccepted,) = exchange.permitAndCall(
+            address(plain), want, dl, v, r, s, abi.encodeCall(OrderBook.fillOrder, (id, SELL_RWA, att))
+        );
+        vm.stopPrank();
+
+        assertFalse(permitAccepted, "no ERC-2612: the permit is reported as not accepted");
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Filled), "trade still settles");
+    }
+
+    /// Set up an order whose settlement-currency leg is a token whose EIP-712 domain a
+    /// client cannot derive from `name()`.
+    function _orderPricedIn(DivergentDomainToken token, address taker, uint256 want) internal returns (uint256 id) {
+        token.mint(taker, 1_000e18);
+        AsseteraECS.KycAttestation memory att = _attestPlace(alice, address(rwa), SELL_RWA, address(token), want);
+        AsseteraECS.FeeAttestation memory feeAtt = _feePlaceWithFeeToken(
+            alice, address(rwa), SELL_RWA, address(token), want, 0, 0, address(0), address(token)
+        );
+        vm.startPrank(alice);
+        rwa.approve(address(exchange), SELL_RWA);
+        id = exchange.placeOrder(address(rwa), SELL_RWA, address(token), want, 0, att, feeAtt);
+        vm.stopPrank();
+    }
+
+    /// EUROP's shape: `name()` is not the EIP-712 domain name. A client that signs against
+    /// `name()` produces a signature the token rejects. Nothing on playground reproduces
+    /// this, because the faucet tokens pass their own `name()` to `ERC20Permit`.
+    function test_PermitAndCall_DivergentDomain_SigningAgainstNameDoesNotLand() public {
+        DivergentDomainToken eurp = new DivergentDomainToken("EUROP", "EURP", "EUR CoinVertible", false);
+        (address dave, uint256 davePk) = _funded("dave-eurp");
+        uint256 want = 500e18;
+        uint256 id = _orderPricedIn(eurp, dave, want);
+        uint256 dl = block.timestamp + 1 hours;
+
+        assertTrue(
+            eurp.DOMAIN_SEPARATOR()
+                != keccak256(
+                    abi.encode(
+                        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                        keccak256(bytes(eurp.name())),
+                        keccak256(bytes("1")),
+                        block.chainid,
+                        address(eurp)
+                    )
+                ),
+            "fixture must actually diverge"
+        );
+
+        (uint8 v, bytes32 r, bytes32 s) = _signPermitAgainstName(address(eurp), davePk, dave, want, dl, eurp.name());
+        AsseteraECS.KycAttestation memory att = _attest(dave, ExchangeTypes.Action.Fill, id);
+
+        // With no allowance to fall back on, the trade reverts on the transfer — loudly, and
+        // without having burned the KYC nonce, because the whole transaction is rolled back.
+        vm.prank(dave);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(exchange), 0, want)
+        );
+        exchange.permitAndCall(
+            address(eurp), want, dl, v, r, s, abi.encodeCall(OrderBook.fillOrder, (id, SELL_RWA, att))
+        );
+    }
+
+    /// Same divergent token, but the user already has an allowance. The bad permit must not
+    /// take the trade down with it, and `permitAccepted == false` tells the client why a
+    /// user without an allowance would have failed.
+    function test_PermitAndCall_DivergentDomain_FallsBackToAllowance() public {
+        DivergentDomainToken eurp = new DivergentDomainToken("EUROP", "EURP", "EUR CoinVertible", false);
+        (address dave, uint256 davePk) = _funded("dave-eurp2");
+        uint256 want = 500e18;
+        uint256 id = _orderPricedIn(eurp, dave, want);
+        uint256 dl = block.timestamp + 1 hours;
+
+        (uint8 v, bytes32 r, bytes32 s) = _signPermitAgainstName(address(eurp), davePk, dave, want, dl, eurp.name());
+        AsseteraECS.KycAttestation memory att = _attest(dave, ExchangeTypes.Action.Fill, id);
+
+        vm.startPrank(dave);
+        eurp.approve(address(exchange), want);
+        (bool permitAccepted,) = exchange.permitAndCall(
+            address(eurp), want, dl, v, r, s, abi.encodeCall(OrderBook.fillOrder, (id, SELL_RWA, att))
+        );
+        vm.stopPrank();
+
+        assertFalse(permitAccepted, "permit rejected: signed against name(), not the real domain");
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Filled));
+    }
+
+    /// The same token, signed against the domain separator the token itself reports. This is
+    /// what the client has to do, and it is the only reliable way: read `DOMAIN_SEPARATOR()`
+    /// and match candidate names against it.
+    function test_PermitAndCall_DivergentDomain_SigningAgainstRealDomainWorks() public {
+        DivergentDomainToken eurp = new DivergentDomainToken("EUROP", "EURP", "EUR CoinVertible", false);
+        (address dave, uint256 davePk) = _funded("dave-eurp3");
+        uint256 want = 500e18;
+        uint256 id = _orderPricedIn(eurp, dave, want);
+        uint256 dl = block.timestamp + 1 hours;
+
+        (uint8 v, bytes32 r, bytes32 s) = _permitSig(address(eurp), davePk, dave, want, dl);
+        AsseteraECS.KycAttestation memory att = _attest(dave, ExchangeTypes.Action.Fill, id);
+
+        vm.prank(dave);
+        (bool permitAccepted,) = exchange.permitAndCall(
+            address(eurp), want, dl, v, r, s, abi.encodeCall(OrderBook.fillOrder, (id, SELL_RWA, att))
+        );
+
+        assertTrue(permitAccepted);
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Filled));
+        assertEq(eurp.allowance(dave, address(exchange)), 0, "permit allowance was consumed exactly");
+    }
+
+    /// USDC's shape: no ERC-5267, so `eip712Domain()` reverts and a client cannot ask the
+    /// token what its domain is. Permit itself still works when signed against
+    /// `DOMAIN_SEPARATOR()`, which is what the client must fall back to reading.
+    function test_PermitAndCall_TokenWithoutErc5267_StillPermits() public {
+        DivergentDomainToken usdcLike = new DivergentDomainToken("USD Coin", "USDC", "USD Coin", true);
+        (address dave, uint256 davePk) = _funded("dave-5267");
+        uint256 want = 500e18;
+        uint256 id = _orderPricedIn(usdcLike, dave, want);
+        uint256 dl = block.timestamp + 1 hours;
+
+        vm.expectRevert(DivergentDomainToken.Eip712DomainUnsupported.selector);
+        usdcLike.eip712Domain();
+
+        (uint8 v, bytes32 r, bytes32 s) = _permitSig(address(usdcLike), davePk, dave, want, dl);
+        AsseteraECS.KycAttestation memory att = _attest(dave, ExchangeTypes.Action.Fill, id);
+
+        vm.prank(dave);
+        (bool permitAccepted,) = exchange.permitAndCall(
+            address(usdcLike), want, dl, v, r, s, abi.encodeCall(OrderBook.fillOrder, (id, SELL_RWA, att))
+        );
+
+        assertTrue(permitAccepted);
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Filled));
+    }
+
+    // ---- guards ----------------------------------------------------------- //
+
+    /// The inner call's revert is bubbled unchanged, so callers keep the error they would
+    /// have got had they called the function directly.
+    function test_PermitAndCall_BubblesTheInnerRevert() public {
+        uint256 id = _placeRwaForUsdc(alice);
+        (address dave, uint256 davePk) = _funded("dave-bubble");
+        uint256 dl = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = _permitSig(address(usdc), davePk, dave, WANT_USDC, dl);
+        AsseteraECS.KycAttestation memory att = _attest(dave, ExchangeTypes.Action.Fill, id);
+
+        vm.prank(dave);
+        vm.expectRevert(abi.encodeWithSelector(OrderBook.FillExceedsRemaining.selector, id, SELL_RWA));
+        exchange.permitAndCall(
+            address(usdc), WANT_USDC, dl, v, r, s, abi.encodeCall(OrderBook.fillOrder, (id, SELL_RWA + 1, att))
+        );
+    }
+
+    /// The one permit failure that is NOT swallowed: a `token` address with no code. Solidity
+    /// performs the `extcodesize` check outside the `try`, so it reverts the whole call. This is
+    /// unchanged from `placeOrderWithPermit`, and it is a caller bug rather than a token quirk,
+    /// but it is worth pinning so nobody assumes `_tryPermit` can never revert.
+    function test_PermitAndCall_CodelessTokenAddressReverts() public {
+        uint256 id = _placeRwaForUsdc(alice);
+        (address dave, uint256 davePk) = _funded("dave-codeless");
+        uint256 dl = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(davePk, keccak256("junk"));
+        AsseteraECS.KycAttestation memory att = _attest(dave, ExchangeTypes.Action.Fill, id);
+
+        vm.prank(dave);
+        vm.expectRevert();
+        exchange.permitAndCall(
+            makeAddr("not-a-contract"), WANT_USDC, dl, v, r, s, abi.encodeCall(OrderBook.fillOrder, (id, SELL_RWA, att))
+        );
+    }
+
+    /// `permitAndCall` is deliberately not `nonReentrant` — taking the guard would make the
+    /// inner call revert. The guard on the inner call is what must hold, including when the
+    /// token used for the permit is the one re-entering.
+    function test_PermitAndCall_ReentrantTokenCannotReenterGuardedCall() public {
+        ReentrantToken evil = new ReentrantToken();
+        (address dave, uint256 davePk) = _funded("dave-reenter");
+        evil.mint(dave, 1_000e18);
+
+        uint256 want = 500e18;
+        AsseteraECS.KycAttestation memory pAtt = _attestPlace(alice, address(rwa), SELL_RWA, address(evil), want);
+        AsseteraECS.FeeAttestation memory pFee =
+            _feePlaceWithFeeToken(alice, address(rwa), SELL_RWA, address(evil), want, 0, 0, address(0), address(evil));
+        vm.startPrank(alice);
+        rwa.approve(address(exchange), SELL_RWA);
+        uint256 id = exchange.placeOrder(address(rwa), SELL_RWA, address(evil), want, 0, pAtt, pFee);
+        vm.stopPrank();
+
+        uint256 dl = block.timestamp + 1 hours;
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(davePk, keccak256("junk"));
+        AsseteraECS.KycAttestation memory att = _attest(dave, ExchangeTypes.Action.Fill, id);
+
+        vm.startPrank(dave);
+        evil.approve(address(exchange), want);
+        evil.arm(address(exchange), abi.encodeCall(OrderBook.sweepExpired, (new uint256[](0))));
+        vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
+        exchange.permitAndCall(
+            address(evil), want, dl, v, r, s, abi.encodeCall(OrderBook.fillOrder, (id, SELL_RWA, att))
+        );
         vm.stopPrank();
     }
 }
