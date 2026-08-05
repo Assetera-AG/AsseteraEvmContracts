@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v4.0.2...evm-contracts-v4.1.0) (2026-08-05)
+
+
+### Features
+
+* **exchange:** let takers and offer parties pay by signature (AO-298) ([#53](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/53)) ([70287c0](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/70287c0704b9811171b1fe96bccb1134ffc48471))
+
 ## [4.0.2](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v4.0.1...evm-contracts-v4.0.2) (2026-07-31)
 
 
