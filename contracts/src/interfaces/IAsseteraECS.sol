@@ -161,6 +161,27 @@ interface IAsseteraECS is IKycGate, IFeeGate {
     function cancelOrder(uint256 id) external;
 
     // --------------------------------------------------------------------- //
+    //                       Permit + call (any actor)                        //
+    // --------------------------------------------------------------------- //
+
+    /// @notice Run an ERC-2612 permit for the caller, then make one call on this contract with
+    ///         the allowance it granted. Lets a taker or an offer party approve and trade in a
+    ///         single transaction (AO-298), the way `placeOrderWithPermit` already let a maker.
+    /// @param data ABI-encoded call to make afterwards, e.g. `fillOrder(id, amount, att)`.
+    /// @return permitAccepted Whether the token accepted the permit. False means the inner call
+    ///                        ran against a pre-existing allowance, or is about to revert.
+    /// @return result         The inner call's return data.
+    function permitAndCall(
+        address token,
+        uint256 value,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bytes calldata data
+    ) external returns (bool permitAccepted, bytes memory result);
+
+    // --------------------------------------------------------------------- //
     //                          Permissioned taker                            //
     // --------------------------------------------------------------------- //
 
