@@ -6,7 +6,9 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {ERC2771Forwarder} from "@openzeppelin/contracts/metatx/ERC2771Forwarder.sol";
 import {AsseteraECS} from "../src/AsseteraECS.sol";
 import {ExchangeTypes} from "../src/types/ExchangeTypes.sol";
+import {GateTypes} from "../src/types/GateTypes.sol";
 import {ExchangeStorage} from "../src/storage/ExchangeStorage.sol";
+import {GateStorage} from "../src/gates/GateStorage.sol";
 import {IKycGate} from "../src/interfaces/IKycGate.sol";
 import {IFeeGate} from "../src/interfaces/IFeeGate.sol";
 import {OrderBook} from "../src/core/OrderBook.sol";
@@ -128,9 +130,9 @@ contract AsseteraECSTest is Test {
             keccak256(abi.encode(KYC_TYPEHASH, account, uint8(action), orderId, nonce, deadline, paramsHash));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domain, structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
-        att = ExchangeTypes.KycAttestation({
+        att = GateTypes.KycAttestation({
             account: account,
-            action: action,
+            action: uint8(action),
             orderId: orderId,
             nonce: nonce,
             deadline: deadline,
@@ -179,9 +181,9 @@ contract AsseteraECSTest is Test {
         );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domain, structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
-        att = ExchangeTypes.FeeAttestation({
+        att = GateTypes.FeeAttestation({
             account: account,
-            action: action,
+            action: uint8(action),
             nonce: nonce,
             deadline: deadline,
             paramsHash: paramsHash,
@@ -310,23 +312,23 @@ contract AsseteraECSTest is Test {
         assertTrue(exchange.hasRole(KYC_OPERATOR_ROLE, kycSigner));
         assertTrue(exchange.hasRole(FEE_OPERATOR_ROLE, feeSigner));
         assertEq(exchange.version(), "3.2.0");
-        assertTrue(exchange.complianceRequired(ExchangeTypes.Action.Place));
-        assertTrue(exchange.complianceRequired(ExchangeTypes.Action.Fill));
-        assertTrue(exchange.complianceRequired(ExchangeTypes.Action.Settle));
+        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.Place)));
+        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.Fill)));
+        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.Settle)));
         assertEq(exchange.trustedForwarder(), address(forwarder));
     }
 
     function test_Initialize_RevertsOnZeroKycSigner() public {
         AsseteraECS impl = new AsseteraECS(address(forwarder));
         bytes memory initData = abi.encodeCall(AsseteraECS.initialize, (admin, address(0), feeSigner));
-        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
+        vm.expectRevert(GateStorage.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initData);
     }
 
     function test_Initialize_RevertsOnZeroFeeSigner() public {
         AsseteraECS impl = new AsseteraECS(address(forwarder));
         bytes memory initData = abi.encodeCall(AsseteraECS.initialize, (admin, kycSigner, address(0)));
-        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
+        vm.expectRevert(GateStorage.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initData);
     }
 
@@ -508,9 +510,9 @@ contract AsseteraECSTest is Test {
         vm.prank(admin);
         exchange.setComplianceRequired(ExchangeTypes.Action.Place, false);
 
-        AsseteraECS.FeeAttestation memory forged = ExchangeTypes.FeeAttestation({
+        AsseteraECS.FeeAttestation memory forged = GateTypes.FeeAttestation({
             account: alice,
-            action: ExchangeTypes.Action.Place,
+            action: uint8(ExchangeTypes.Action.Place),
             nonce: 1,
             deadline: block.timestamp + 3 minutes,
             paramsHash: keccak256(abi.encode(address(rwa), SELL_RWA, address(usdc), WANT_USDC)),
@@ -590,7 +592,7 @@ contract AsseteraECSTest is Test {
 
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, empty, feeAtt);
         vm.stopPrank();
     }
@@ -600,9 +602,9 @@ contract AsseteraECSTest is Test {
         vm.prank(admin);
         exchange.setComplianceRequired(ExchangeTypes.Action.MakeOffer, false);
 
-        AsseteraECS.FeeAttestation memory forged = ExchangeTypes.FeeAttestation({
+        AsseteraECS.FeeAttestation memory forged = GateTypes.FeeAttestation({
             account: alice,
-            action: ExchangeTypes.Action.MakeOffer,
+            action: uint8(ExchangeTypes.Action.MakeOffer),
             nonce: 1,
             deadline: block.timestamp + 3 minutes,
             paramsHash: keccak256(abi.encodePacked(bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC)),
@@ -659,9 +661,9 @@ contract AsseteraECSTest is Test {
         exchange.fillOrder(
             id,
             halfRwa,
-            ExchangeTypes.KycAttestation({
+            GateTypes.KycAttestation({
                 account: address(0),
-                action: ExchangeTypes.Action.None,
+                action: uint8(ExchangeTypes.Action.None),
                 orderId: 0,
                 nonce: 0,
                 deadline: 0,
@@ -936,7 +938,7 @@ contract AsseteraECSTest is Test {
     function test_CancelOrderForUser_RevertsOnZeroRecipient() public {
         uint256 id = _placeRwaForUsdc(alice);
         vm.prank(admin);
-        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
+        vm.expectRevert(GateStorage.ZeroAddress.selector);
         exchange.cancelOrderForUser(id, address(0));
     }
 
@@ -1138,8 +1140,8 @@ contract AsseteraECSTest is Test {
         assertTrue(v2.usedNonce(carol, kycNonce), "usedNonce preserved");
         assertTrue(v2.usedFeeNonce(carol, feeNonce), "usedFeeNonce preserved");
         assertTrue(v2.allowedCollectors(carol), "allowedCollectors preserved");
-        assertFalse(v2.complianceRequired(ExchangeTypes.Action.Fill), "toggled-off compliance preserved");
-        assertTrue(v2.complianceRequired(ExchangeTypes.Action.Place), "untouched compliance default preserved");
+        assertFalse(v2.complianceRequired(uint8(ExchangeTypes.Action.Fill)), "toggled-off compliance preserved");
+        assertTrue(v2.complianceRequired(uint8(ExchangeTypes.Action.Place)), "untouched compliance default preserved");
 
         // Inherited OZ (ERC-7201 namespaced) state must also survive the dep.
         assertTrue(v2.hasRole(ADMIN_ROLE, admin), "admin role preserved");
@@ -1262,7 +1264,7 @@ contract AsseteraECSTest is Test {
     function test_Initialize_RevertsOnZeroAdmin() public {
         AsseteraECS impl = new AsseteraECS(address(forwarder));
         bytes memory initData = abi.encodeCall(AsseteraECS.initialize, (address(0), kycSigner, feeSigner));
-        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
+        vm.expectRevert(GateStorage.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initData);
     }
 
@@ -1286,7 +1288,7 @@ contract AsseteraECSTest is Test {
         AsseteraECS.KycAttestation memory att = _attestPlace(alice, address(0), SELL_RWA, address(usdc), WANT_USDC);
         AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(0), SELL_RWA, address(usdc), WANT_USDC);
         vm.prank(alice);
-        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
+        vm.expectRevert(GateStorage.ZeroAddress.selector);
         exchange.placeOrder(address(0), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
     }
 
@@ -1373,7 +1375,7 @@ contract AsseteraECSTest is Test {
     function test_SetComplianceRequired_TogglesGating() public {
         vm.prank(admin);
         exchange.setComplianceRequired(ExchangeTypes.Action.Fill, false);
-        assertFalse(exchange.complianceRequired(ExchangeTypes.Action.Fill));
+        assertFalse(exchange.complianceRequired(uint8(ExchangeTypes.Action.Fill)));
         // fill now works with an empty attestation
         uint256 id = _placeRwaForUsdc(alice);
         AsseteraECS.KycAttestation memory empty;
@@ -1394,7 +1396,7 @@ contract AsseteraECSTest is Test {
         AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC + 1, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -1456,7 +1458,7 @@ contract AsseteraECSTest is Test {
         AsseteraECS.KycAttestation memory att = _attestPlace(alice, address(rwa), SELL_RWA, address(0), WANT_USDC);
         AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(rwa), SELL_RWA, address(0), WANT_USDC);
         vm.prank(alice);
-        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
+        vm.expectRevert(GateStorage.ZeroAddress.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(0), WANT_USDC, 0, att, feeAtt);
     }
 
@@ -1510,7 +1512,7 @@ contract AsseteraECSTest is Test {
         );
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
-        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
         exchange.fillOrder(id, SELL_RWA, att);
         vm.stopPrank();
     }
@@ -1804,7 +1806,7 @@ contract AsseteraECSTest is Test {
             _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC + 1);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -1813,7 +1815,7 @@ contract AsseteraECSTest is Test {
         AsseteraECS.KycAttestation memory att = _attestPlace(alice, address(0), SELL_RWA, address(usdc), WANT_USDC);
         AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(0), SELL_RWA, address(usdc), WANT_USDC);
         vm.prank(alice);
-        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
+        vm.expectRevert(GateStorage.ZeroAddress.selector);
         exchange.placeOrderWithPermit(
             address(0), SELL_RWA, address(usdc), WANT_USDC, 0, 0, 0, bytes32(0), bytes32(0), att, feeAtt
         );
@@ -1864,7 +1866,7 @@ contract AsseteraECSTest is Test {
         AsseteraECS.KycAttestation memory att = _attestPlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.prank(alice);
-        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
         exchange.placeOrderWithPermit(
             address(rwa), SELL_RWA, address(usdc), WANT_USDC + 1, 0, 0, 0, bytes32(0), bytes32(0), att, feeAtt
         );
@@ -1875,7 +1877,7 @@ contract AsseteraECSTest is Test {
         AsseteraECS.FeeAttestation memory feeAtt =
             _feePlace(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC + 1);
         vm.prank(alice);
-        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
         exchange.placeOrderWithPermit(
             address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, 0, 0, bytes32(0), bytes32(0), att, feeAtt
         );
@@ -1964,13 +1966,13 @@ contract AsseteraECSTest is Test {
     // ── Compliance flags ───────────────────────────────────────────────── //
 
     function test_Offer_ComplianceFlagsSetOnDeploy() public view {
-        assertTrue(exchange.complianceRequired(ExchangeTypes.Action.MakeOffer));
-        assertTrue(exchange.complianceRequired(ExchangeTypes.Action.ReplaceOffer));
-        assertTrue(exchange.complianceRequired(ExchangeTypes.Action.AcceptOffer));
-        assertTrue(exchange.complianceRequired(ExchangeTypes.Action.CancelOffer));
+        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.MakeOffer)));
+        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.ReplaceOffer)));
+        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.AcceptOffer)));
+        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.CancelOffer)));
         // Action.SettleOffer is unused (AC-246) — acceptOffer settles atomically
         // under AcceptOffer's own gate, so this default is intentionally left unset.
-        assertFalse(exchange.complianceRequired(ExchangeTypes.Action.SettleOffer));
+        assertFalse(exchange.complianceRequired(uint8(ExchangeTypes.Action.SettleOffer)));
     }
 
     // ── Event shape ───────────────────────────────────────────────────── //
@@ -2375,7 +2377,7 @@ contract AsseteraECSTest is Test {
             _feeMakeOffer(alice, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
         exchange.makeOffer(bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -2389,7 +2391,7 @@ contract AsseteraECSTest is Test {
         );
         vm.startPrank(bob);
         usdc.approve(address(exchange), 800e6);
-        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
         exchange.replaceOffer(id, SELL_RWA, 800e6, 0, att);
         vm.stopPrank();
     }
@@ -2403,7 +2405,7 @@ contract AsseteraECSTest is Test {
         );
         vm.startPrank(bob);
         usdc.approve(address(exchange), WANT_USDC);
-        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
         exchange.acceptOffer(id, att);
         vm.stopPrank();
     }
@@ -2422,7 +2424,7 @@ contract AsseteraECSTest is Test {
             badHash
         );
         vm.prank(alice);
-        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
         exchange.cancelOffer(id, att);
     }
 
@@ -2455,7 +2457,7 @@ contract AsseteraECSTest is Test {
             _feeMakeOffer(alice, address(0), address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
+        vm.expectRevert(GateStorage.ZeroAddress.selector);
         exchange.makeOffer(address(0), address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -2503,7 +2505,7 @@ contract AsseteraECSTest is Test {
             _feeMakeOffer(alice, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC + 1);
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
         exchange.makeOffer(bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -2672,7 +2674,7 @@ contract AsseteraECSTest is Test {
     function test_CancelOfferForUser_RevertsOnZeroRecipient() public {
         uint256 id = _makeOffer(alice, bob, address(rwa), SELL_RWA, address(usdc), WANT_USDC);
         vm.prank(admin);
-        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
+        vm.expectRevert(GateStorage.ZeroAddress.selector);
         exchange.cancelOfferForUser(id, address(0), bob);
     }
 
@@ -2875,7 +2877,7 @@ contract AsseteraECSTest is Test {
             _feePlaceWithFee(alice, address(rwa), SELL_RWA, address(usdc), WANT_USDC, 50, 0, address(0));
         vm.startPrank(alice);
         rwa.approve(address(exchange), SELL_RWA);
-        vm.expectRevert(ExchangeStorage.ZeroAddress.selector);
+        vm.expectRevert(GateStorage.ZeroAddress.selector);
         exchange.placeOrder(address(rwa), SELL_RWA, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
     }

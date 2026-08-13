@@ -103,12 +103,14 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
         if (sellAmount == 0 || buyAmount == 0) revert ZeroAmount();
         if (sellToken == buyToken) revert SameToken();
         if (expireTs != 0 && expireTs <= block.timestamp) revert InvalidExpiry();
-        _bindParamsHash(Action.Place, att, feeAtt, keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount)));
+        _bindParamsHash(
+            uint8(Action.Place), att, feeAtt, keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount))
+        );
         // Fee bounds + denomination — always enforced (defence in depth) so a compromised
         // fee signer cannot set extreme fees, route to an unlisted collector, or
         // denominate the fees in a token that isn't part of this trade.
         _validateFees(feeAtt, sellToken, buyToken);
-        _consumeKycAndFee(_msgSender(), Action.Place, 0, att, feeAtt);
+        _consumeKycAndFee(_msgSender(), uint8(Action.Place), 0, att, feeAtt);
         return _placeOrder(sellToken, sellAmount, buyToken, buyAmount, expireTs, feeAtt);
     }
 
@@ -136,9 +138,11 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
         if (sellAmount == 0 || buyAmount == 0) revert ZeroAmount();
         if (sellToken == buyToken) revert SameToken();
         if (expireTs != 0 && expireTs <= block.timestamp) revert InvalidExpiry();
-        _bindParamsHash(Action.Place, att, feeAtt, keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount)));
+        _bindParamsHash(
+            uint8(Action.Place), att, feeAtt, keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount))
+        );
         _validateFees(feeAtt, sellToken, buyToken);
-        _consumeKycAndFee(_msgSender(), Action.Place, 0, att, feeAtt);
+        _consumeKycAndFee(_msgSender(), uint8(Action.Place), 0, att, feeAtt);
         // Permit must cover the FULL escrow, which on a buy-side order is
         // sellAmount + the maker's escrowed fee — see `_placeOrder`.
         _tryPermit(sellToken, _escrowTotal(sellToken, sellAmount, feeAtt), permitDeadline, v, r, s);
@@ -269,7 +273,7 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
         address taker = _msgSender();
         if (o.maker == taker) revert SelfTrade(id);
 
-        _consumeKyc(taker, Action.Fill, id, att);
+        _consumeKyc(taker, uint8(Action.Fill), id, att);
 
         // Ceiling division: taker always pays at least the proportional buyAmount.
         // This protects the maker from rounding loss on partial fills.

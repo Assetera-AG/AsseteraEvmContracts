@@ -92,9 +92,9 @@ contract Verify is Script {
         );
 
         // 7. Compliance gating is on for all actions by default.
-        bool placeGated = exchange.complianceRequired(ExchangeTypes.Action.Place);
-        bool fillGated = exchange.complianceRequired(ExchangeTypes.Action.Fill);
-        bool settleGated = exchange.complianceRequired(ExchangeTypes.Action.Settle);
+        bool placeGated = exchange.complianceRequired(uint8(ExchangeTypes.Action.Place));
+        bool fillGated = exchange.complianceRequired(uint8(ExchangeTypes.Action.Fill));
+        bool settleGated = exchange.complianceRequired(uint8(ExchangeTypes.Action.Settle));
         _check(
             "all actions KYC-gated by default",
             placeGated && fillGated && settleGated,

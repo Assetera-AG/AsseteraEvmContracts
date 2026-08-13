@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {AsseteraECS} from "../../src/AsseteraECS.sol";
 import {ExchangeTypes} from "../../src/types/ExchangeTypes.sol";
+import {GateTypes} from "../../src/types/GateTypes.sol";
 import {FaucetToken} from "../mocks/FaucetToken.sol";
 
 /// @notice Bounded-random driver for the I-2(b) escrow-conservation invariant
@@ -98,9 +99,9 @@ contract EscrowHandler is Test {
         );
         (uint8 v, bytes32 r, bytes32 s) =
             vm.sign(feeSignerPk, keccak256(abi.encodePacked("\x19\x01", domain, structHash)));
-        att = ExchangeTypes.FeeAttestation({
+        att = GateTypes.FeeAttestation({
             account: account,
-            action: action,
+            action: uint8(action),
             nonce: nonce,
             deadline: deadline,
             paramsHash: paramsHash,

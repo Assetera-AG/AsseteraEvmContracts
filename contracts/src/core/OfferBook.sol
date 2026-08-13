@@ -84,13 +84,13 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         if (expireTs != 0 && expireTs <= block.timestamp) revert InvalidExpiry();
 
         _bindParamsHash(
-            Action.MakeOffer,
+            uint8(Action.MakeOffer),
             att,
             feeAtt,
             keccak256(abi.encodePacked(taker, makerToken, makerAmount, takerToken, takerAmount))
         );
         _validateFees(feeAtt, makerToken, takerToken);
-        _consumeKycAndFee(maker, Action.MakeOffer, 0, att, feeAtt);
+        _consumeKycAndFee(maker, uint8(Action.MakeOffer), 0, att, feeAtt);
 
         id = _storeOffer(maker, taker, makerToken, makerAmount, takerToken, takerAmount, expireTs, feeAtt);
         // The maker escrows their leg, plus their own fee when that leg is the
@@ -180,12 +180,12 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         if (caller != o.maker && caller != o.taker) revert NotOfferParty(offerId);
 
         if (
-            complianceRequired[Action.ReplaceOffer]
+            complianceRequired(uint8(Action.ReplaceOffer))
                 && att.paramsHash != keccak256(abi.encodePacked(offerId, newMakerAmount, newTakerAmount))
         ) {
             revert ParamsHashMismatch();
         }
-        _consumeKyc(caller, Action.ReplaceOffer, offerId, att);
+        _consumeKyc(caller, uint8(Action.ReplaceOffer), offerId, att);
 
         // Cache before state changes (CEI).
         address prevProposedBy = o.proposedBy;
@@ -240,12 +240,12 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         if (caller != o.maker && caller != o.taker) revert NotOfferParty(offerId);
 
         if (
-            complianceRequired[Action.CancelOffer]
+            complianceRequired(uint8(Action.CancelOffer))
                 && att.paramsHash != keccak256(abi.encodePacked(offerId, o.makerAmount, o.takerAmount))
         ) {
             revert ParamsHashMismatch();
         }
-        _consumeKyc(caller, Action.CancelOffer, offerId, att);
+        _consumeKyc(caller, uint8(Action.CancelOffer), offerId, att);
 
         // Cache before state changes (CEI).
         address proposedBy = o.proposedBy;
@@ -290,12 +290,12 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         if (caller == o.proposedBy) revert AcceptorIsProposer(offerId);
 
         if (
-            complianceRequired[Action.AcceptOffer]
+            complianceRequired(uint8(Action.AcceptOffer))
                 && att.paramsHash != keccak256(abi.encodePacked(offerId, o.makerAmount, o.takerAmount))
         ) {
             revert ParamsHashMismatch();
         }
-        _consumeKyc(caller, Action.AcceptOffer, offerId, att);
+        _consumeKyc(caller, uint8(Action.AcceptOffer), offerId, att);
 
         emit OfferAccepted(offerId, caller, o.makerAmount, o.takerAmount);
         _settleOffer(o, offerId, caller);

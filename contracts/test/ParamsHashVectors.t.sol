@@ -6,7 +6,8 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {ERC2771Forwarder} from "@openzeppelin/contracts/metatx/ERC2771Forwarder.sol";
 import {AsseteraECS} from "../src/AsseteraECS.sol";
 import {ExchangeTypes} from "../src/types/ExchangeTypes.sol";
-import {ExchangeStorage} from "../src/storage/ExchangeStorage.sol";
+import {GateTypes} from "../src/types/GateTypes.sol";
+import {GateStorage} from "../src/gates/GateStorage.sol";
 import {IKycGate} from "../src/interfaces/IKycGate.sol";
 import {IFeeGate} from "../src/interfaces/IFeeGate.sol";
 import {FaucetToken} from "./mocks/FaucetToken.sol";
@@ -378,7 +379,7 @@ contract ParamsHashVectorsOnChainTest is Test {
 
         vm.startPrank(maker);
         FaucetToken(TOKEN_A).approve(address(exchange), AMOUNT_A);
-        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
         exchange.placeOrder(TOKEN_A, AMOUNT_A, TOKEN_B, AMOUNT_B, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -396,7 +397,7 @@ contract ParamsHashVectorsOnChainTest is Test {
 
         vm.startPrank(maker);
         FaucetToken(TOKEN_A).approve(address(exchange), AMOUNT_A);
-        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
         exchange.makeOffer(TAKER, TOKEN_A, AMOUNT_A, TOKEN_B, AMOUNT_B, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -438,9 +439,9 @@ contract ParamsHashVectorsOnChainTest is Test {
         bytes32 structHash =
             keccak256(abi.encode(KYC_TYPEHASH, account, uint8(action), orderId, nonce, deadline, paramsHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(kycSignerPk, _digest(structHash));
-        att = ExchangeTypes.KycAttestation({
+        att = GateTypes.KycAttestation({
             account: account,
-            action: action,
+            action: uint8(action),
             orderId: orderId,
             nonce: nonce,
             deadline: deadline,
@@ -471,9 +472,9 @@ contract ParamsHashVectorsOnChainTest is Test {
             )
         );
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(feeSignerPk, _digest(structHash));
-        att = ExchangeTypes.FeeAttestation({
+        att = GateTypes.FeeAttestation({
             account: account,
-            action: action,
+            action: uint8(action),
             nonce: nonce,
             deadline: deadline,
             paramsHash: paramsHash,
@@ -755,9 +756,9 @@ contract EIP712DigestVectorsTest is Test {
     /// negative tests perturb the signature and nothing else.
     function _kyc(bytes32 digest) internal view returns (ExchangeTypes.KycAttestation memory att) {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(kycSignerPk, digest);
-        att = ExchangeTypes.KycAttestation({
+        att = GateTypes.KycAttestation({
             account: MAKER,
-            action: ExchangeTypes.Action.Place,
+            action: uint8(ExchangeTypes.Action.Place),
             orderId: ORDER_ID,
             nonce: KYC_NONCE,
             deadline: DEADLINE,
@@ -768,9 +769,9 @@ contract EIP712DigestVectorsTest is Test {
 
     function _fee(bytes32 digest) internal view returns (ExchangeTypes.FeeAttestation memory att) {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(feeSignerPk, digest);
-        att = ExchangeTypes.FeeAttestation({
+        att = GateTypes.FeeAttestation({
             account: MAKER,
-            action: ExchangeTypes.Action.Place,
+            action: uint8(ExchangeTypes.Action.Place),
             nonce: FEE_NONCE,
             deadline: DEADLINE,
             paramsHash: PLACE_VECTOR,
