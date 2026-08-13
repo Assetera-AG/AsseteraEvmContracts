@@ -117,6 +117,9 @@ contract Deploy is DeployBase {
         } else if (_currentImpl(exchangeProxy) != exchangeImpl) {
             // Re-run with new impl bytecode: upgrade in place (requires the caller to hold admin — true for
             // local/testnet where admin == deployer; prod upgrades go through the Safe via UpgradeCalldata).
+            // ⚠️ Refuses while this commit's layout is incompatible with what is already at this address —
+            //    otherwise a routine re-run of the deploy script would silently corrupt a live proxy.
+            require(INPLACE_UPGRADE_ALLOWED, INPLACE_UPGRADE_REFUSAL);
             AsseteraECS(exchangeProxy).upgradeToAndCall(exchangeImpl, "");
             console2.log("AsseteraECS proxy upgraded ->", exchangeImpl);
         } else {

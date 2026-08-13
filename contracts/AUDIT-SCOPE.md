@@ -135,6 +135,16 @@ weighed against preserving the old order with reserved gaps and taken on purpose
 coordinated redeploy, never by `upgradeToAndCall` on an existing proxy. The snapshot below is re-baselined
 to the new layout.
 
+**That is enforced in code, not only stated here.** Re-baselining the snapshot means CI now considers the
+new layout "unchanged", so it no longer protects the deployed one, and `Deploy.s.sol` upgrades a proxy in
+place the moment the implementation bytecode differs. Both it and `UpgradeCalldata.s.sol` therefore refuse
+outright while `DeployBase.INPLACE_UPGRADE_ALLOWED` is `false`. It is a compile-time constant rather than
+an environment flag because whether an implementation is installable is a property of the source tree, not
+of whoever runs the script. The intended way to land this is `EXCHANGE_SALT_VERSION = "v2"`, which computes
+a fresh address, takes the deploy branch instead of the upgrade branch, and leaves the old proxy untouched.
+`version()` reports `4.0.0` for the same reason: the major digit is what tells ops the two are not
+interchangeable.
+
 A committed snapshot of the proxy's storage layout (`storage/AsseteraECS.txt`), diffed in CI on every PR.
 Because the OZ v5 upgradeable bases use ERC-7201 namespaced storage, a clean minor dependency bump produces a
 **zero-line diff** — any diff on a dep bump is a red flag. Paired with

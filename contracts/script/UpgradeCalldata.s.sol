@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Script, console2} from "forge-std/Script.sol";
+import {console2} from "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {AsseteraECS} from "../src/AsseteraECS.sol";
+import {DeployBase} from "./DeployBase.sol";
 
 /// @notice Deploys a new implementation and prints the Safe transaction
 ///         calldata needed to upgrade the proxy. No broadcast of the upgrade
@@ -17,12 +18,17 @@ import {AsseteraECS} from "../src/AsseteraECS.sol";
 ///
 /// Then paste the printed calldata into app.safe.global, New Transaction,
 /// Contract Interaction, target: proxy address.
-contract UpgradeCalldata is Script {
+/// ⚠️ Inherits `DeployBase` only to share the in-place-upgrade guard constants with `Deploy.s.sol`, so the
+///    two scripts cannot disagree about whether the current commit is safe to install on a live proxy.
+contract UpgradeCalldata is DeployBase {
     using stdJson for string;
 
     function run() external {
-        uint256 chainId = block.chainid;
-        string memory path = string.concat("deployments/", vm.toString(chainId), ".json");
+        // A commit that breaks the storage layout must not be proposable to the Safe either. Checked before
+        // anything else so the script cannot even deploy the implementation it would then tell you to install.
+        require(INPLACE_UPGRADE_ALLOWED, INPLACE_UPGRADE_REFUSAL);
+
+        string memory path = string.concat("deployments/", vm.toString(block.chainid), ".json");
         require(vm.isFile(path), "no deployment file for this chain");
 
         string memory json = vm.readFile(path);
