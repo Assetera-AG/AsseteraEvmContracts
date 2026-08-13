@@ -180,6 +180,58 @@ contract GateReuseTest is Test {
         other.settle(kycAtt, feeAtt);
     }
 
+    /// The gate mapping is fail-OPEN, and this is what that costs. `GateOnlyVenue` never enables
+    /// `ACTION_FORGOTTEN`, so `_verifyKyc` returns on its first line: a KYC attestation naming the wrong
+    /// account, a nonsense action, an expired deadline, an unbound `paramsHash` and a junk signature is
+    /// accepted, and its nonce is not even burned. Only the fee gate still bites, because AC-884 made that
+    /// one unconditional.
+    ///
+    /// The point is not that the exchange is wrong (its initializer enables every action it defines, pinned
+    /// by `test_Initialize_GatesEveryDeclaredAction`). The point is that safety comes from the CONSUMER's
+    /// initializer, never from the gate, so the primary-settlement venue must not inherit this by omission.
+    function test_AnActionNobodyEnabledIsNotGatedAtAll() public {
+        GateTypes.KycAttestation memory junk = GateTypes.KycAttestation({
+            account: address(0xBAD),
+            action: 99,
+            orderId: 12_345,
+            nonce: 1,
+            deadline: 1,
+            paramsHash: keccak256("never bound"),
+            signature: hex"deadbeef"
+        });
+        GateTypes.FeeAttestation memory feeAtt = _feeFor(venue.ACTION_FORGOTTEN());
+
+        vm.prank(actor);
+        venue.settleForgotten(junk, feeAtt);
+
+        assertFalse(venue.usedNonce(actor, 1), "an ungated action must not burn a KYC nonce");
+        assertTrue(venue.usedFeeNonce(actor, 2), "the fee gate is unconditional and still consumed");
+    }
+
+    /// The other half of the same fact: enabling the action is the ONLY thing that closes the hole, and it
+    /// closes it completely. Same junk attestation, same call, now rejected on the account mismatch.
+    function test_EnablingTheActionIsWhatClosesTheGate() public {
+        // Read the constant BEFORE the prank: it is a call too, and would otherwise consume it.
+        uint8 forgotten = venue.ACTION_FORGOTTEN();
+        vm.prank(admin);
+        venue.setComplianceRequired(forgotten, true);
+
+        GateTypes.KycAttestation memory junk = GateTypes.KycAttestation({
+            account: address(0xBAD),
+            action: 99,
+            orderId: 12_345,
+            nonce: 1,
+            deadline: 1,
+            paramsHash: keccak256("never bound"),
+            signature: hex"deadbeef"
+        });
+        GateTypes.FeeAttestation memory feeAtt = _feeFor(venue.ACTION_FORGOTTEN());
+
+        vm.prank(actor);
+        vm.expectRevert(IKycGate.KycAccountMismatch.selector);
+        venue.settleForgotten(junk, feeAtt);
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────────────────────────
 
     function _digest(bytes32 structHash) internal view returns (bytes32) {
@@ -196,7 +248,10 @@ contract GateReuseTest is Test {
     }
 
     function _kyc(bytes32 paramsHash) internal view returns (GateTypes.KycAttestation memory att) {
-        uint8 action = venue.ACTION_SETTLE();
+        return _kycFor(venue.ACTION_SETTLE(), paramsHash);
+    }
+
+    function _kycFor(uint8 action, bytes32 paramsHash) internal view returns (GateTypes.KycAttestation memory att) {
         uint256 deadline = block.timestamp + 3 minutes;
         bytes32 structHash =
             keccak256(abi.encode(venue.KYC_TYPEHASH(), actor, action, uint256(0), uint256(1), deadline, paramsHash));
@@ -213,7 +268,10 @@ contract GateReuseTest is Test {
     }
 
     function _fee() internal view returns (GateTypes.FeeAttestation memory att) {
-        uint8 action = venue.ACTION_SETTLE();
+        return _feeFor(venue.ACTION_SETTLE());
+    }
+
+    function _feeFor(uint8 action) internal view returns (GateTypes.FeeAttestation memory att) {
         uint256 deadline = block.timestamp + 3 minutes;
         bytes32 structHash = keccak256(
             abi.encode(

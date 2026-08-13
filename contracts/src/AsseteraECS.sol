@@ -136,11 +136,13 @@ contract AsseteraECS is ExchangeTypes, Initializable, UUPSUpgradeable, OrderBook
 
     function _authorizeUpgrade(address) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
-    /// @dev Bumped to 3.2.0 by AO-298, which added `permitAndCall`. This is how ops confirms which
-    ///      implementation a proxy is running; an impl that carries a new function but still reports
-    ///      the old version is worse than a changed string. Nothing on chain reads it.
+    /// @dev Bumped to 4.0.0 by AO-514, which moved the gate mappings into ERC-7201 namespaced storage
+    ///      and shifted `_offers` 5 → 2, `totalOffers` 6 → 3, `__gap` 8 → 4. The MAJOR digit is the
+    ///      signal: this implementation is NOT installable over a proxy running 3.x, and reporting 3.2.0
+    ///      from it would make the one string ops uses to identify an implementation say the opposite of
+    ///      the truth. Previous: 3.2.0 (AO-298, `permitAndCall`). Nothing on chain reads it.
     function version() external pure virtual returns (string memory) {
-        return "3.2.0";
+        return "4.0.0";
     }
 
     function _msgSender() internal view override(ContextUpgradeable, ERC2771ContextUpgradeable) returns (address) {

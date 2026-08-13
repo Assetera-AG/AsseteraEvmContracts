@@ -311,11 +311,24 @@ contract AsseteraECSTest is Test {
         // OPERATOR_ROLE is parked (AC-246) — not granted, no getter to assert against.
         assertTrue(exchange.hasRole(KYC_OPERATOR_ROLE, kycSigner));
         assertTrue(exchange.hasRole(FEE_OPERATOR_ROLE, feeSigner));
-        assertEq(exchange.version(), "3.2.0");
-        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.Place)));
-        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.Fill)));
-        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.Settle)));
+        assertEq(exchange.version(), "4.0.0");
         assertEq(exchange.trustedForwarder(), address(forwarder));
+    }
+
+    /// @dev The gate mapping is fail-OPEN: an action nobody enabled is not gated at all. `AsseteraECS` is
+    ///      safe only because `initialize` enables each action it defines, so that list is pinned here.
+    ///      Anything added to `ExchangeTypes.Action` must either appear below or be justified above.
+    function test_Initialize_GatesEveryDeclaredAction() public view {
+        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.Place)), "Place");
+        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.Fill)), "Fill");
+        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.Settle)), "Settle");
+        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.MakeOffer)), "MakeOffer");
+        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.ReplaceOffer)), "ReplaceOffer");
+        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.AcceptOffer)), "AcceptOffer");
+        assertTrue(exchange.complianceRequired(uint8(ExchangeTypes.Action.CancelOffer)), "CancelOffer");
+        // Action.SettleOffer is deliberately NOT enabled: it is unused (AC-246), acceptOffer settles
+        // atomically under AcceptOffer's gate. Asserted false so re-introducing it forces a decision here.
+        assertFalse(exchange.complianceRequired(uint8(ExchangeTypes.Action.SettleOffer)), "SettleOffer");
     }
 
     function test_Initialize_RevertsOnZeroKycSigner() public {

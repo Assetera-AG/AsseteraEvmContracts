@@ -84,9 +84,19 @@ abstract contract GateStorage is GateTypes, AccessControlUpgradeable, EIP712Upgr
 
     /// @notice Whether an action requires a KYC attestation.
     /// @dev KYC ONLY — it does NOT govern the fee attestation, which fee-setting actions always
-    ///      require (AC-884). Composable: KYC gating is toggled per action by the admin, and
-    ///      defaults to all-on. `action` is the caller-defined `uint8` the attestation carries;
-    ///      the exchange's values are `ExchangeTypes.Action`.
+    ///      require (AC-884). `action` is the caller-defined `uint8` the attestation carries; the
+    ///      exchange's values are `ExchangeTypes.Action`.
+    ///
+    ///      ⚠️ **The underlying mapping is fail-OPEN.** Every `uint8` reads `false` until someone
+    ///      writes it, and `KycGate._verifyKyc` returns immediately when this is `false` — so an
+    ///      action nobody enabled is not gated at all, rather than gated by default. `AsseteraECS`
+    ///      is safe because its initializer enables each of its actions explicitly (pinned by
+    ///      `test_Initialize_GatesEveryDeclaredAction`), NOT because the gate defaults to on.
+    ///      Any new consumer of this base must do the same for every action it defines, and prove
+    ///      it in a test. The default is not inverted here because `complianceRequired` is a public
+    ///      getter whose meaning is already relied on off-chain; changing its polarity is a breaking
+    ///      change to the admin surface, and the forthcoming primary-settlement venue is expected to
+    ///      express the policy as a required override instead (see AO-516).
     /// @param action The action ordinal.
     /// @return Whether a KYC attestation is required for it.
     function complianceRequired(uint8 action) public view returns (bool) {

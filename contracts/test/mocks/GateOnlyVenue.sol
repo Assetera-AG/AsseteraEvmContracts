@@ -23,6 +23,11 @@ contract GateOnlyVenue is Initializable, FeeGate {
     ///      gate does not mean sharing an action set — that is what the `uint8` retype bought.
     uint8 public constant ACTION_SETTLE = 1;
 
+    /// @dev An action this venue declares but its initializer deliberately never enables. It exists to make
+    ///      the fail-OPEN default of `complianceRequired` visible in a test rather than only in a comment:
+    ///      a consumer that forgets one action does not get a gated action, it gets an ungated one.
+    uint8 public constant ACTION_FORGOTTEN = 2;
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -46,5 +51,19 @@ contract GateOnlyVenue is Initializable, FeeGate {
     /// @param feeAtt Fee attestation for the same account and action.
     function settle(KycAttestation calldata kycAtt, FeeAttestation calldata feeAtt) external {
         _consumeKycAndFee(msg.sender, ACTION_SETTLE, 0, kycAtt, feeAtt);
+    }
+
+    /// @notice Enable or disable the KYC gate for one of this venue's actions.
+    /// @param action   The action ordinal in this venue's own numbering.
+    /// @param required Whether a KYC attestation is required for it.
+    function setComplianceRequired(uint8 action, bool required) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _gate().complianceRequired[action] = required;
+    }
+
+    /// @notice The same call under the action the initializer forgot to enable.
+    /// @param kycAtt KYC attestation, which the gate will NOT check for this action.
+    /// @param feeAtt Fee attestation, which is checked regardless (AC-884).
+    function settleForgotten(KycAttestation calldata kycAtt, FeeAttestation calldata feeAtt) external {
+        _consumeKycAndFee(msg.sender, ACTION_FORGOTTEN, 0, kycAtt, feeAtt);
     }
 }
