@@ -5,6 +5,10 @@ import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {AsseteraECS} from "../src/AsseteraECS.sol";
 import {ExchangeTypes} from "../src/types/ExchangeTypes.sol";
+import {GateTypes} from "../src/types/GateTypes.sol";
+import {GateStorage} from "../src/gates/GateStorage.sol";
+import {IKycGate} from "../src/interfaces/IKycGate.sol";
+import {GateOnlyVenue} from "./mocks/GateOnlyVenue.sol";
 
 /// @title GateStorageNamespaceTest
 /// @notice Pins WHERE the gate state lives (AO-514).
@@ -108,5 +112,135 @@ contract GateStorageNamespaceTest is Test {
         for (uint256 i = 0; i < 8; i++) {
             assertEq(vm.load(address(exchange), bytes32(i)), bytes32(0), "gate write hit a venue slot");
         }
+    }
+}
+
+/// @title GateReuseTest
+/// @notice The point of AO-514, asserted rather than argued: `GateOnlyVenue` inherits `FeeGate`
+///         and no order book. That it COMPILES is most of the proof; these tests add that it also
+///         works — a second venue with its own action numbering verifies and burns both
+///         attestations through the shared gate, and gets the restrictive `_paramsHashAllowed`
+///         default because it does not override the hook.
+contract GateReuseTest is Test {
+    GateOnlyVenue internal venue;
+
+    address internal admin = makeAddr("admin");
+    address internal actor = makeAddr("actor");
+
+    uint256 internal kycSignerPk = 0xACE1;
+    uint256 internal feeSignerPk = 0xFEE1;
+
+    address internal constant TOKEN_A = 0x1111111111111111111111111111111111111111;
+
+    function setUp() public {
+        venue = _deployVenue();
+    }
+
+    function _deployVenue() internal returns (GateOnlyVenue) {
+        GateOnlyVenue impl = new GateOnlyVenue();
+        bytes memory initData =
+            abi.encodeCall(GateOnlyVenue.initialize, (admin, vm.addr(kycSignerPk), vm.addr(feeSignerPk)));
+        return GateOnlyVenue(address(new ERC1967Proxy(address(impl), initData)));
+    }
+
+    /// The gate is genuinely shared: this venue's action 1 is its own, and the same
+    /// `KYC_OPERATOR_ROLE`/`FEE_OPERATOR_ROLE` machinery gates it.
+    function test_GateOnlyVenue_ConsumesBothAttestations() public {
+        GateTypes.KycAttestation memory kycAtt = _kyc(bytes32(0));
+        GateTypes.FeeAttestation memory feeAtt = _fee();
+
+        vm.prank(actor);
+        venue.settle(kycAtt, feeAtt);
+
+        assertTrue(venue.usedNonce(actor, 1));
+        assertTrue(venue.usedFeeNonce(actor, 2));
+    }
+
+    /// The `_paramsHashAllowed` default. `GateOnlyVenue` does not override the hook, so a
+    /// non-zero `paramsHash` must be refused rather than quietly accepted unchecked.
+    function test_GateOnlyVenue_RejectsAParamsHashItNeverBound() public {
+        GateTypes.KycAttestation memory kycAtt = _kyc(keccak256("anything"));
+        GateTypes.FeeAttestation memory feeAtt = _fee();
+
+        vm.prank(actor);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
+        venue.settle(kycAtt, feeAtt);
+    }
+
+    /// Cross-venue replay: an attestation signed for THIS venue must not carry over to another,
+    /// because the EIP-712 domain includes the verifying contract. The gate does not need to
+    /// know anything about venues for that to hold, which is why it can be shared at all.
+    function test_AnAttestationIsBoundToTheVenueThatVerifiesIt() public {
+        GateTypes.KycAttestation memory kycAtt = _kyc(bytes32(0));
+        GateTypes.FeeAttestation memory feeAtt = _fee();
+        GateOnlyVenue other = _deployVenue();
+
+        vm.prank(actor);
+        vm.expectRevert(IKycGate.KycBadSigner.selector);
+        other.settle(kycAtt, feeAtt);
+    }
+
+    // ── helpers ───────────────────────────────────────────────────────────────────────────────
+
+    function _digest(bytes32 structHash) internal view returns (bytes32) {
+        bytes32 domain = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("GateOnlyVenue")),
+                keccak256(bytes("1")),
+                block.chainid,
+                address(venue)
+            )
+        );
+        return keccak256(abi.encodePacked("\x19\x01", domain, structHash));
+    }
+
+    function _kyc(bytes32 paramsHash) internal view returns (GateTypes.KycAttestation memory att) {
+        uint8 action = venue.ACTION_SETTLE();
+        uint256 deadline = block.timestamp + 3 minutes;
+        bytes32 structHash =
+            keccak256(abi.encode(venue.KYC_TYPEHASH(), actor, action, uint256(0), uint256(1), deadline, paramsHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(kycSignerPk, _digest(structHash));
+        att = GateTypes.KycAttestation({
+            account: actor,
+            action: action,
+            orderId: 0,
+            nonce: 1,
+            deadline: deadline,
+            paramsHash: paramsHash,
+            signature: abi.encodePacked(r, s, v)
+        });
+    }
+
+    function _fee() internal view returns (GateTypes.FeeAttestation memory att) {
+        uint8 action = venue.ACTION_SETTLE();
+        uint256 deadline = block.timestamp + 3 minutes;
+        bytes32 structHash = keccak256(
+            abi.encode(
+                venue.FEE_TYPEHASH(),
+                actor,
+                action,
+                uint256(2),
+                deadline,
+                bytes32(0),
+                uint16(0),
+                uint16(0),
+                address(0),
+                TOKEN_A
+            )
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(feeSignerPk, _digest(structHash));
+        att = GateTypes.FeeAttestation({
+            account: actor,
+            action: action,
+            nonce: 2,
+            deadline: deadline,
+            paramsHash: bytes32(0),
+            makerFeeBps: 0,
+            takerFeeBps: 0,
+            feeCollector: address(0),
+            feeToken: TOKEN_A,
+            signature: abi.encodePacked(r, s, v)
+        });
     }
 }
