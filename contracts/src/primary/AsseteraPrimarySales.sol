@@ -1,0 +1,293 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
+import {ERC2771ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
+import {VenueSettler} from "./settle/VenueSettler.sol";
+import {MintSettler} from "./settle/MintSettler.sol";
+import {PrimaryTypes} from "./types/PrimaryTypes.sol";
+
+/// @title AsseteraPrimarySales — the constrained executor for primary market settlement
+/// @notice The router a buyer's FIRST acquisition of an asset goes through: we take the
+///         buyer's settlement currency, obtain the asset from wherever it comes from, deliver
+///         it, refund what was not spent and charge our fee. The exchange
+///         (`AsseteraECS`) is the secondary market and is a different contract, on purpose.
+///
+///         There are two settlement families, and they are `abstract contract` modules
+///         inherited into THIS one proxy — the same shape as `OrderBook`/`OfferBook` inside
+///         `AsseteraECS`, not separate deployments and not `delegatecall` targets:
+///
+///           * **S2 · third-party venue** (`VenueSettler`) — the constrained executor below.
+///             We hold no minting right, so we call somebody else's contract with calldata we
+///             did not author.
+///           * **S1 · mint** (`MintSettler`) — we hold the minting right, so there is no venue
+///             and no arbitrary calldata at all.
+///
+///         Why a separate proxy rather than a module inside the exchange: a separate pause
+///         lever, a separate audit scope, a separate upgrade cadence and, above all, a
+///         separate blast radius — the exchange holds every open order's escrow and a
+///         primary-sale bug must not be able to reach it. It also simply does not fit;
+///         `AsseteraECS` has under 2 kB of EIP-170 margin left.
+///
+///         **Three signatures, three signers, three nonce namespaces.** A settlement needs a
+///         KYC attestation (compliance backend), a fee attestation (fee service) and a
+///         settlement intent (settlement operator). All three are verified before any nonce is
+///         burned, so an invalid third cannot spend the first two. `SETTLEMENT_OPERATOR_ROLE`
+///         is distinct from the other two because it is the only one whose holder can cause a
+///         transfer.
+///
+///         **A different EIP-712 domain from the exchange's**, so cross-contract attestation
+///         replay is impossible by construction rather than by check: an attestation minted
+///         for `AsseteraECS` recovers to a different address here and is rejected.
+///
+///         **No on-chain allowlist of venues, selectors, assets or currencies.** Decided
+///         2026-08-13 after three rounds of narrowing; see `IntentGate` for the reasoning and
+///         `ISettlementLimits` for what absorbs the loss instead.
+///
+///         Identity is resolved via `_msgSender()` (ERC-2771) with the same trusted forwarder
+///         as the exchange, so a gasless primary sale works the way a gasless order does.
+///
+/// @dev    Assembled as: `PrimaryTypes` → `PrimaryStorage` (is `FeeGate`) → `IntentGate` →
+///         `SettlementLimits` → {`VenueSettler`, `MintSettler`} → this file, which adds the
+///         three concerns only the final contract needs (`Initializable`, `UUPSUpgradeable`,
+///         `ERC2771ContextUpgradeable`) plus the initializer, the admin surface and the frozen
+///         entry point.
+///
+///         ⚠️ **This file owns the inheritance list and the module stubs.** The family packets
+///         add to their own module file only. Nothing here should need to change when a family
+///         is implemented.
+contract AsseteraPrimarySales is
+    PrimaryTypes,
+    Initializable,
+    UUPSUpgradeable,
+    VenueSettler,
+    MintSettler,
+    ERC2771ContextUpgradeable
+{
+    /// @notice The fee-collector allowlist changed.
+    event CollectorAllowed(address indexed collector, bool allowed);
+    /// @notice The KYC gate for one primary-sale action was toggled.
+    event ComplianceRequiredSet(Action indexed action, bool required);
+
+    /// @param trustedForwarder ERC-2771 forwarder (relayer) — the SAME address the exchange
+    ///        uses, so the relayer story is unchanged. Immutable in implementation bytecode,
+    ///        therefore proxy-safe. `address(0)` disables meta-transactions.
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(address trustedForwarder) ERC2771ContextUpgradeable(trustedForwarder) {
+        _disableInitializers();
+    }
+
+    /// @notice Initialise the proxy.
+    /// @param admin            DEFAULT_ADMIN_ROLE (upgrade, role management, pause, caps,
+    ///                         collector allowlist). Multisig in production.
+    /// @param kycSigner        Initial KYC_OPERATOR_ROLE holder (the compliance backend).
+    /// @param feeSigner        Initial FEE_OPERATOR_ROLE holder (the fee service).
+    /// @param settlementSigner Initial SETTLEMENT_OPERATOR_ROLE holder (the settlement
+    ///                         operator). ⚠️ Give it its OWN key. It is the only one of the
+    ///                         three that can cause a transfer.
+    function initialize(address admin, address kycSigner, address feeSigner, address settlementSigner)
+        external
+        initializer
+    {
+        if (admin == address(0) || kycSigner == address(0) || feeSigner == address(0) || settlementSigner == address(0))
+        {
+            revert ZeroAddress();
+        }
+
+        __UUPSUpgradeable_init();
+        __AccessControl_init();
+        __ReentrancyGuard_init();
+        __Pausable_init();
+        // ⚠️ DELIBERATELY DIFFERENT from the exchange's "AsseteraExchange". The domain
+        //    separator is hashed from this string together with the verifying contract, so a
+        //    distinct name makes cross-contract attestation replay impossible by construction
+        //    — an exchange attestation recovers to a different address here and is rejected as
+        //    `KycBadSigner`, pinned by `test_ExchangeAttestation_CannotBeReplayedHere`.
+        //    `AsseteraSignerService` learns this domain through the per-chain allowlist IT
+        //    owns; the caller never supplies a verifying contract. Renaming it later would
+        //    invalidate every attestation and every intent in flight, and would not even take
+        //    effect on a live proxy: OZ v5 keeps `_name` in namespaced storage written only by
+        //    this `onlyInitializing` call.
+        __EIP712_init("AsseteraPrimarySales", "1");
+
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(KYC_OPERATOR_ROLE, kycSigner);
+        _grantRole(FEE_OPERATOR_ROLE, feeSigner);
+        _grantRole(SETTLEMENT_OPERATOR_ROLE, settlementSigner);
+
+        // ⚠️ EVERY action declared in `PrimaryTypes.Action` MUST appear below.
+        //    `complianceRequired` is a `mapping(uint8 => bool)` and is fail-OPEN: an action
+        //    nobody enables reads `false` and `KycGate._verifyKyc` returns on its first line,
+        //    so a forgotten action is an UNGATED primary sale rather than a gated one. A
+        //    comment is not enough to prevent that, which is why
+        //    `test_Initialize_GatesEveryDeclaredAction` asserts it action by action.
+        //
+        //    `Action.SettleMint` is enabled here even though the mint family has no entry
+        //    point yet. Enabling the gate BEFORE the feature exists is the point: the mint
+        //    packet inherits a closed gate instead of having to remember to close one.
+        GateData storage $ = _gate();
+        $.complianceRequired[uint8(Action.SettleVenue)] = true;
+        $.complianceRequired[uint8(Action.SettleMint)] = true;
+    }
+
+    // --------------------------------------------------------------------- //
+    //                            The entry point                            //
+    // --------------------------------------------------------------------- //
+
+    /// @notice Settle one primary purchase against a third-party venue (family S2).
+    ///
+    ///         The buyer is debited at most `intent.maxSettlementIn`, the venue is approved
+    ///         exactly `intent.venueQuoteIn` and may take less, whatever it does not take is
+    ///         refunded in the same transaction, `intent.buyerFee` goes to the allowlisted
+    ///         collector, and the buyer must end up holding at least `intent.minAssetOut` of
+    ///         `intent.assetToken` or the whole transaction reverts.
+    ///
+    /// @dev    ⚠️ **This signature is FROZEN.** The signer service builds `intent`, the
+    ///         marketplace API assembles the call and the indexer decodes the resulting
+    ///         `PrimarySettled`. `intentSignature` is its own argument rather than a field of
+    ///         the struct, because a struct cannot contain the signature over itself.
+    ///
+    ///         Order of operations, and why:
+    ///           1. every signature is verified BEFORE any nonce is burned, so an invalid
+    ///              third attestation cannot spend the first two;
+    ///           2. `orderId` is passed as a literal zero, which is how a non-zero one on the
+    ///              KYC attestation is rejected (`KycOrderMismatch`). There is no order book on
+    ///              this path, and leaving the field free would create a second, unchecked
+    ///              degree of freedom in a signature the compliance signer produces;
+    ///           3. the money is the settler family's job, behind an internal seam, so this
+    ///              file does not change when a family lands.
+    ///
+    /// @param venueCalldata   The opaque bytes to hand the venue. Bound by
+    ///                        `intent.calldataHash` and `intent.selector`; never what the
+    ///                        policy is expressed in.
+    /// @param intent          The settlement intent, signed by the settlement operator.
+    /// @param intentSignature That operator's EIP-712 signature over `intent`.
+    /// @param kyc             The compliance attestation, `paramsHash`-bound to `intent`.
+    /// @param fee             The fee attestation, `paramsHash`-bound to `intent`.
+    function settlePrimary(
+        bytes calldata venueCalldata,
+        SettlementIntent calldata intent,
+        bytes calldata intentSignature,
+        KycAttestation calldata kyc,
+        FeeAttestation calldata fee
+    ) external whenNotPaused nonReentrant {
+        uint8 action = uint8(Action.SettleVenue);
+
+        bytes32 paramsHash = _verifyIntent(intent, intentSignature);
+        _bindCalldata(venueCalldata, intent);
+        _bindAttestations(intent, paramsHash, kyc, fee);
+        // Family S2 only: on a third-party venue we do not control the proceeds side, so an
+        // issuer-side fee cannot be charged. Attesting one must revert rather than silently do
+        // nothing. The mint family, where we ARE the issuer, does not carry this restriction.
+        if (fee.makerFeeBps != 0) revert MakerFeeNotSupported();
+
+        _consumeKycAndFee(intent.buyer, action, 0, kyc, fee);
+        _consumeIntent(action, intent);
+
+        SettlementResult memory result = _settleVenue(venueCalldata, intent);
+
+        // ⚠️ `forge build` reports "Unreachable code" here, and that is the CORRECT reading
+        //    while no settlement family is implemented: `VenueSettler._settleVenue` reverts
+        //    unconditionally, so the compiler can prove this emit cannot run. The warning
+        //    disappears when the family packet fills the seam. Do not silence it by weakening
+        //    the stub — a seam that fails closed is what makes "compiles and tests with no
+        //    settler present" mean anything.
+        emit PrimarySettled(
+            intent.buyer,
+            intent.assetToken,
+            intent.venue,
+            result.assetDelivered,
+            intent.settlementToken,
+            result.venueIn,
+            result.refund,
+            result.fee,
+            intent.feeCollector,
+            intent.supplierReference,
+            intent.nonce
+        );
+    }
+
+    // --------------------------------------------------------------------- //
+    //                          Gate action policy                           //
+    // --------------------------------------------------------------------- //
+
+    /// @dev This router's answer to `KycGate._paramsHashAllowed`: TRUE for every action it
+    ///      declares, because every primary-sale action binds an intent and the attestation's
+    ///      `paramsHash` IS that intent's EIP-712 struct hash. The gate's default is the
+    ///      restrictive "no action binds parameters", which would reject every settlement, so
+    ///      this override is load-bearing rather than cosmetic.
+    ///
+    ///      `Action.None` is excluded deliberately: ordinal zero is an unset field, never a
+    ///      real action, and it must not be able to carry a bound `paramsHash`.
+    function _paramsHashAllowed(uint8 action) internal view virtual override returns (bool) {
+        return action == uint8(Action.SettleVenue) || action == uint8(Action.SettleMint);
+    }
+
+    // --------------------------------------------------------------------- //
+    //                             Admin surface                             //
+    // --------------------------------------------------------------------- //
+
+    /// @notice Add or remove an address from this router's fee-collector allowlist.
+    /// @dev A separate proxy means separate gate storage, so this allowlist is this
+    ///      contract's own and starts EMPTY — the exchange's entries do not carry over. A
+    ///      non-zero fee cannot be settled until a collector is listed here.
+    /// @param collector The candidate fee recipient.
+    /// @param allowed   Whether it is allowed.
+    function setAllowedCollector(address collector, bool allowed) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _gate().allowedCollectors[collector] = allowed;
+        emit CollectorAllowed(collector, allowed);
+    }
+
+    /// @notice Toggle the KYC gate for one primary-sale action.
+    /// @dev KYC ONLY. Turning it off does NOT disable fee verification (AC-884), and it does
+    ///      NOT disable intent verification either — a settlement always needs a valid intent
+    ///      from the settlement operator. Keeps the `Action` enum in its external signature so
+    ///      a Safe transaction is readable.
+    /// @param action   The action to toggle.
+    /// @param required Whether a KYC attestation is required for it.
+    function setComplianceRequired(Action action, bool required) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _gate().complianceRequired[uint8(action)] = required;
+        emit ComplianceRequiredSet(action, required);
+    }
+
+    /// @notice "Stop primary sales" lever, independent of the exchange's. Admin only.
+    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _pause();
+    }
+
+    /// @notice Resume primary sales. Admin only.
+    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _unpause();
+    }
+
+    // --------------------------------------------------------------------- //
+    //                       UUPS + ERC-2771 plumbing                        //
+    // --------------------------------------------------------------------- //
+
+    function _authorizeUpgrade(address) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
+    /// @dev First release. Nothing on chain reads it; it is the string ops uses to identify a
+    ///      deployed implementation. The MAJOR digit is the signal for a storage break.
+    function version() external pure virtual returns (string memory) {
+        return "1.0.0";
+    }
+
+    function _msgSender() internal view override(ContextUpgradeable, ERC2771ContextUpgradeable) returns (address) {
+        return ERC2771ContextUpgradeable._msgSender();
+    }
+
+    function _msgData() internal view override(ContextUpgradeable, ERC2771ContextUpgradeable) returns (bytes calldata) {
+        return ERC2771ContextUpgradeable._msgData();
+    }
+
+    function _contextSuffixLength()
+        internal
+        view
+        override(ContextUpgradeable, ERC2771ContextUpgradeable)
+        returns (uint256)
+    {
+        return ERC2771ContextUpgradeable._contextSuffixLength();
+    }
+}
