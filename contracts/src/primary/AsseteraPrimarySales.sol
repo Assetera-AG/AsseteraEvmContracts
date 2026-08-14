@@ -6,7 +6,6 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import {ERC2771ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
 import {VenueSettler} from "./settle/VenueSettler.sol";
-import {MintSettler} from "./settle/MintSettler.sol";
 import {PrimaryTypes} from "./types/PrimaryTypes.sol";
 
 /// @title AsseteraPrimarySales — the constrained executor for primary market settlement
@@ -67,14 +66,7 @@ import {PrimaryTypes} from "./types/PrimaryTypes.sol";
 ///         ⚠️ **This file owns the inheritance list and the module stubs.** The family packets
 ///         add to their own module file only. Nothing here should need to change when a family
 ///         is implemented.
-contract AsseteraPrimarySales is
-    PrimaryTypes,
-    Initializable,
-    UUPSUpgradeable,
-    VenueSettler,
-    MintSettler,
-    ERC2771ContextUpgradeable
-{
+contract AsseteraPrimarySales is PrimaryTypes, Initializable, UUPSUpgradeable, VenueSettler, ERC2771ContextUpgradeable {
     /// @notice The fee-collector allowlist changed.
     event CollectorAllowed(address indexed collector, bool allowed);
     /// @notice The KYC gate for one primary-sale action was toggled.

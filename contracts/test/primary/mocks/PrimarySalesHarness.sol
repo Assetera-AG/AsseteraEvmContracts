@@ -53,24 +53,44 @@ contract PrimarySalesHarness is AsseteraPrimarySales {
         return _intentStructHash(intent);
     }
 
-    /// @notice 🔴 A settler family that is NOT S2, standing in for the mint family and for
-    ///         whatever family lands after it: the shared preamble, and then straight into its
-    ///         own money path.
+    /// @dev The stand-in family's own money path, reached only once the shared preamble has
+    ///      passed. It reverts so the test can tell "got here" from "stopped earlier", and it
+    ///      reverts with an error declared HERE rather than in `src/`: the router has exactly
+    ///      one settlement family and no "not implemented" error of its own, and borrowing a
+    ///      production error for a test marker is how a marker outlives the thing it marked.
+    error AnotherFamilyMoneyPathReached();
+
+    /// @notice 🔴 A second settler family's entry point, which this router does not have and is
+    ///         not going to get: the shared preamble, and then straight into its own money path.
     ///
     ///         It exists to make one claim testable — that the per-transaction value cap is
-    ///         charged by `SettlementLimits._authorizeSettlement`, which every family runs,
-    ///         rather than by `VenueSettler`, which is the only family that exists. The charge
-    ///         used to live in S2's step 1, so every test of it went through S2 and none of them
-    ///         would have noticed the mint family shipping uncapped.
+    ///         charged by `SettlementLimits._authorizeSettlement`, which every caller of the
+    ///         preamble runs, rather than by `VenueSettler`, which is the only settler that
+    ///         exists. The charge used to live in `VenueSettler`'s step 1, so every test of it
+    ///         went through `settlePrimary` and none of them asserted anything about a path that
+    ///         did not go through `VenueSettler`.
+    ///
+    ///         ⚠️ It stands in for a family that was REMOVED, and the test is worth more for
+    ///         that, not less. `MintSettler` was deleted on 2026-08-14 (our own issuance now
+    ///         goes through the venue path, against a per-token sale contract), so nothing in
+    ///         `src/` reaches `_authorizeSettlement` except `settlePrimary`. That is exactly the
+    ///         shape in which "the cap is charged centrally" degrades into "the cap happens to
+    ///         be charged, because there is only one caller" without anyone noticing. This
+    ///         harness is the second caller, and it is the only thing that can tell the two
+    ///         apart.
     ///
     ///         What the pair of assertions looks like: with no cap set for the settlement
-    ///         currency this reverts `PerTxCapExceeded` and never reaches `_settleMint`; with a
-    ///         cap set it reverts `SettlerNotImplemented`, which is the family's own body. Move
-    ///         the charge out of the preamble and the first becomes the second.
+    ///         currency this reverts `PerTxCapExceeded` and never reaches the money path; with a
+    ///         cap set it reverts `AnotherFamilyMoneyPathReached`, which is the family's own
+    ///         body. Move the charge out of the preamble and the first becomes the second.
     ///
-    /// @dev    Deliberately mirrors what the mint packet's real entry point must do, and nothing
-    ///         more. No `whenNotPaused`, no `nonReentrant` and no calldata binding: those are
-    ///         the real entry point's business and are asserted against the real one.
+    /// @dev    Deliberately mirrors what any future entry point must do, and nothing more. No
+    ///         `whenNotPaused`, no `nonReentrant` and no calldata binding: those are the real
+    ///         entry point's business and are asserted against the real one.
+    ///
+    ///         It runs under `Action.SettleMint` because that ordinal is RESERVED and has no
+    ///         entry point in `src/` — so this cannot accidentally be `settlePrimary`'s path,
+    ///         and the attestations the test signs carry an ordinal the gates compare.
     function settleAsAnotherFamily(
         SettlementIntent calldata intent,
         bytes calldata intentSignature,
@@ -80,6 +100,6 @@ contract PrimarySalesHarness is AsseteraPrimarySales {
     ) external {
         bytes32 paramsHash = _verifyIntent(intent, intentSignature, buyerSignature);
         _authorizeSettlement(uint8(Action.SettleMint), intent, paramsHash, kyc, fee);
-        _settleMint(intent);
+        revert AnotherFamilyMoneyPathReached();
     }
 }

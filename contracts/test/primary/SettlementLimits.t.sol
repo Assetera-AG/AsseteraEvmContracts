@@ -8,7 +8,7 @@ import {PrimaryTypes} from "../../src/primary/types/PrimaryTypes.sol";
 import {GateTypes} from "../../src/types/GateTypes.sol";
 import {GateStorage} from "../../src/gates/GateStorage.sol";
 import {ISettlementLimits} from "../../src/primary/interfaces/ISettlementLimits.sol";
-import {ISettler} from "../../src/primary/interfaces/ISettler.sol";
+import {PrimarySalesHarness} from "./mocks/PrimarySalesHarness.sol";
 import {PrimarySalesTestBase} from "./PrimarySalesTestBase.sol";
 
 /// @notice `AsseteraPrimarySales` with the S2 seam filled by a stub that moves nothing, plus the
@@ -417,26 +417,31 @@ contract SettlementCapThroughTheEntryPointTest is SettlementLimitsTestBase {
 }
 
 /// @title SettlementCapAppliesToEveryFamilyTest
-/// @notice 🔴 The acceptance criterion for making the cap unskippable: it holds for a settler
-///         family that is NOT S2.
+/// @notice 🔴 The acceptance criterion for making the cap unskippable: it holds for a caller of
+///         the shared preamble that is NOT `settlePrimary`.
 ///
-///         Every other cap test in this repo goes through `settlePrimary`, which is family S2's
-///         entry point — and S2 is the only family that exists. That is precisely why the old
-///         arrangement was unsafe: `_consumeSettlementLimit` was called from `VenueSettler` and
-///         from nowhere else, `MintSettler` is a stub whose documented preamble listed the steps
-///         a mint entry point must replicate and OMITTED the cap, and every test in the suite
-///         would still have passed with the mint family shipping uncapped.
+///         Every other cap test in this repo goes through `settlePrimary`, which is the venue
+///         settler's entry point — and the venue settler is the only one that exists. That is
+///         precisely why the old arrangement was unsafe: `_consumeSettlementLimit` was called
+///         from `VenueSettler` and from nowhere else, the `MintSettler` stub that then stood
+///         beside it documented a preamble that OMITTED the cap, and every test in the suite
+///         would still have passed with that second family shipping uncapped.
 ///
-///         `PrimarySalesHarness.settleAsAnotherFamily` is a second family's entry point: the
-///         shared preamble, then straight into `_settleMint`. It charges nothing itself.
+///         ⚠️ That stub has since been deleted — our own issuance goes through the venue path,
+///         against a per-token sale contract — so `settlePrimary` is once again the only caller
+///         of `_authorizeSettlement` in `src/`. This test is what stops "charged centrally" from
+///         quietly decaying back into "charged by the one caller there happens to be".
+///
+///         `PrimarySalesHarness.settleAsAnotherFamily` is that second caller: the shared
+///         preamble, then straight into a money path of its own. It charges nothing itself.
 ///
 /// @dev    The pair below is the whole test. Uncapped, the call stops at `PerTxCapExceeded` and
-///         never reaches the family body; capped, it reaches the family body and stops at
-///         `SettlerNotImplemented`. Take the charge out of `_authorizeSettlement` and the first
-///         becomes the second.
+///         never reaches the money path; capped, it reaches it and stops at the harness's own
+///         `AnotherFamilyMoneyPathReached`. Take the charge out of `_authorizeSettlement` and
+///         the first becomes the second.
 contract SettlementCapAppliesToEveryFamilyTest is PrimarySalesTestBase {
-    /// The action the second family runs under. Not `SettleVenue`: the attestations carry the
-    /// ordinal and the gates compare it, so this cannot accidentally be S2's path.
+    /// The action the second caller runs under. Not `SettleVenue`: the attestations carry the
+    /// ordinal and the gates compare it, so this cannot accidentally be `settlePrimary`'s path.
     uint8 internal constant MINT_ACTION = uint8(PrimaryTypes.Action.SettleMint);
 
     function _submitAsAnotherFamily() internal {
@@ -452,9 +457,9 @@ contract SettlementCapAppliesToEveryFamilyTest is PrimarySalesTestBase {
         );
     }
 
-    /// 🔴 A family that never calls the caps module is capped anyway, because the preamble it
+    /// 🔴 A caller that never touches the caps module is capped anyway, because the preamble it
     /// cannot skip does the charging. This is the test that fails if the charge is moved back
-    /// into a settler family.
+    /// into a settler module.
     function test_AFamilyThatChargesNothingIsStillCharged() public {
         vm.prank(admin);
         harness.setSettlementCap(CURRENCY, 0); // closed, which is also the unconfigured default
@@ -471,13 +476,13 @@ contract SettlementCapAppliesToEveryFamilyTest is PrimarySalesTestBase {
     /// stops inside the family's own body. Without this, "it reverted" would prove nothing about
     /// WHERE it reverted.
     function test_TheSameFamilyReachesItsOwnBodyOnceTheCapIsOpen() public {
-        vm.expectRevert(ISettler.SettlerNotImplemented.selector);
+        vm.expectRevert(PrimarySalesHarness.AnotherFamilyMoneyPathReached.selector);
         _submitAsAnotherFamily();
     }
 
     /// And the charge is against the settlement token named in the intent, for the full
-    /// authorised debit — the same number S2 is charged, because the intent's amount model is
-    /// family-agnostic.
+    /// authorised debit — the same number `settlePrimary` is charged, because the intent's
+    /// amount model does not depend on who the venue is.
     function test_TheFamilyIsChargedTheFullAuthorisedDebit() public {
         vm.prank(admin);
         harness.setSettlementCap(CURRENCY, 1); // 1e6 raw, under the debit
