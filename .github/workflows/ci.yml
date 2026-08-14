@@ -41,8 +41,10 @@ jobs:
         run: forge build --sizes
 
       - name: Storage layout (upgrade-safety guard)
-        # Fails if the proxy's storage layout drifts from the committed snapshot — including
-        # drift introduced indirectly by a dependency bump. See script/storage-layout.sh.
+        # Fails if EITHER proxy's storage layout drifts from its committed snapshot —
+        # AsseteraECS (the exchange) and AsseteraPrimarySales (the primary-sales router) —
+        # including drift introduced indirectly by a dependency bump. The contract list lives in
+        # script/storage-layout.sh, not here, so adding a proxy is one edit rather than two.
         run: bash script/storage-layout.sh
 
       - name: Test
