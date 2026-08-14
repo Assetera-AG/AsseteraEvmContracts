@@ -15,8 +15,24 @@ examples/         consumer apps that import the SDK (proof + living docs)
 ```
 
 Point Foundry/Slither/reviewers at `contracts/`. Everything TypeScript lives under `packages/` and
-`examples/`. `contracts/src/` is grouped by domain (`exchange/`, `distribution/`, `token/`, `interfaces/`,
-`libraries/`).
+`examples/`. `contracts/src/` holds two deployed contracts, each an assembly of inherited modules behind one
+proxy — the exchange at the root, the primary-sales router under `primary/`:
+
+```
+src/AsseteraECS.sol          the exchange proxy's implementation — assembles the modules below
+src/core/                    order book, offer book, permit relay
+src/gates/                   KYC + fee attestation gates and their namespaced storage
+src/admin/                   exchange admin surface (pause, collectors, roles)
+src/storage/, src/types/     exchange ERC-7201 storage + structs/enums
+src/interfaces/, src/libs/   exchange-facing interfaces, shared math
+
+src/primary/AsseteraPrimarySales.sol   the primary-sales proxy's implementation (AO-516)
+src/primary/IntentGate.sol             settlement-intent verification + nonces
+src/primary/admin/                     per-currency settlement caps, collector allowlist
+src/primary/settle/                    the settlement families: VenueSettler (S2), MintSettler (S1, stub)
+src/primary/interfaces/                primary-sales interfaces (frozen by the skeleton packet)
+src/primary/storage/, src/primary/types/   primary ERC-7201 storage + structs/enums
+```
 
 ## Frozen identifiers — never rename ⚠️
 
@@ -37,9 +53,10 @@ genesis. Change any of these only as a deliberate, coordinated migration.
 
 - **Never commit to `main`.** `main` is protected (no direct/force push, linear history, 1 code-owner
   review, CI green, thread-resolution) and **squash-merged** → one tidy commit per PR.
-- **Branch naming — embed the Jira key** (ADR-0004 §6): ticketed work is `feat/AC-###-slug` (or
-  `fix/AC-###-slug`). The Jira automation matches on the branch name (branch → In Progress · PR → In
-  Test · merge → Shipped). Ticket-less chores use a `chore/…` prefix.
+- **Branch naming — embed the Jira key** (ADR-0004 §6): ticketed work is `feat/AO-###-slug` (or
+  `fix/AO-###-slug`). The Jira automation matches on the branch name (branch → In Progress · PR → In
+  Test · merge → Shipped). Ticket-less chores use a `chore/…` prefix. Branches and commits from before the
+  board rebuild carry `AC-` keys; that project is closed, so new work is always `AO-`.
 - Rebase on `main` before merging.
 
 ## Conventional Commits
@@ -49,9 +66,8 @@ genesis. Change any of these only as a deliberate, coordinated migration.
 
 | Scope | Area |
 |---|---|
-| `exchange` | `contracts/src/exchange/**` |
-| `distribution` | `contracts/src/distribution/**` |
-| `token` | `contracts/src/token/**` |
+| `exchange` | the exchange: `contracts/src/AsseteraECS.sol`, `core/**`, `gates/**`, `admin/**`, `storage/**`, `types/**` |
+| `primary` | the primary-sales router: `contracts/src/primary/**` |
 | `script` | `contracts/script/**` (deploy / verify / upgrade) |
 | `test` | `contracts/test/**` |
 | `sdk` | `packages/sdk/**` (the published package) |
@@ -59,8 +75,8 @@ genesis. Change any of these only as a deliberate, coordinated migration.
 | `ci` | `.github/workflows/**` |
 | `docs` | `contracts/docs/**`, README |
 
-e.g. `feat(exchange): add per-pair taker fee`, `fix(script): reuse existing forwarder on redeploy`,
-`feat(sdk): export typed exchange events`.
+e.g. `feat(exchange): add per-pair taker fee`, `feat(primary): settle against a venue by asserting measured
+deltas`, `fix(script): reuse existing forwarder on redeploy`, `feat(sdk): export typed exchange events`.
 
 ## Solidity style
 
