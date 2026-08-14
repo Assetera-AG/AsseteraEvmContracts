@@ -3,16 +3,16 @@ pragma solidity 0.8.28;
 
 import {AsseteraPrimarySales} from "../../../src/primary/AsseteraPrimarySales.sol";
 
-/// @notice `AsseteraPrimarySales` with the S2 seam filled by a fixed, measured-looking result
-///         and two internal hooks exposed for direct assertion.
+/// @notice `AsseteraPrimarySales` with the settlement seam filled by a fixed, measured-looking
+///         result, and two internal hooks exposed for direct assertion.
 ///
 ///         It exists for two reasons.
 ///
-///         First, the skeleton on its own reverts at the seam, so nothing that happens AFTER
-///         the seam — the three nonce burns, the settlement event — can be observed. Stubbing
-///         `_settleVenue` from OUTSIDE `src/` lets those be asserted while proving the same
-///         point the revert proves: a settlement family is swappable at a real boundary, and
-///         no line of `src/primary/settle/**` is needed to exercise the entry point.
+///         First, the real settler moves tokens, and the base fixture's settlement currency is
+///         a codeless address with no cap — so against `sales` nothing that happens AFTER the
+///         seam, the three nonce burns and the settlement event, can be observed at all.
+///         Stubbing `_settleVenue` from OUTSIDE `src/` lets those be asserted while proving
+///         the seam is a real boundary: not one line of `src/primary/settle/**` runs.
 ///
 ///         Second, `_paramsHashAllowed` is the one piece of gate policy this contract
 ///         overrides, and it is `internal`. Asserting it through behaviour alone would prove
@@ -30,8 +30,8 @@ contract PrimarySalesHarness is AsseteraPrimarySales {
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address trustedForwarder) AsseteraPrimarySales(trustedForwarder) {}
 
-    /// @dev The S2 seam, stubbed. Moves no tokens; returns the four numbers the entry point
-    ///      puts into `PrimarySettled` so the event's field mapping can be pinned exactly.
+    /// @dev The settlement seam, stubbed. Moves no tokens; returns the four numbers the entry
+    ///      point puts into `PrimarySettled` so the event's field mapping can be pinned exactly.
     function _settleVenue(bytes calldata, SettlementIntent calldata, uint16)
         internal
         pure

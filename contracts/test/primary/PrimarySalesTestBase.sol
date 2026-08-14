@@ -14,12 +14,12 @@ import {PrimarySalesHarness} from "./mocks/PrimarySalesHarness.sol";
 /// @notice Fixtures and signing helpers shared by the primary-sale test contracts.
 ///
 ///         Two proxies are deployed on purpose:
-///           * `sales` — the real `AsseteraPrimarySales`, with NO settlement family
-///             implemented. Everything up to the seam is exercised against this one, and the
-///             fact that it deploys and runs at all is the packet's central claim.
-///           * `harness` — the same contract with only the S2 seam stubbed from outside
+///           * `sales` — the real `AsseteraPrimarySales`, in a settlement currency no admin has
+///             ever sized. Everything up to the money path is exercised against this one, which
+///             is then stopped by the caps module at the first line that would move anything.
+///           * `harness` — the same contract with the settlement seam stubbed from outside
 ///             `src/`, so the three nonce burns and the settlement event, which live AFTER the
-///             seam, can be observed.
+///             seam, can be observed without moving tokens.
 ///
 /// @dev    ⚠️ Every struct LITERAL below names the contract that DECLARES the type
 ///         (`GateTypes.KycAttestation({…})`, `PrimaryTypes.SettlementIntent({…})`).
@@ -223,9 +223,9 @@ abstract contract PrimarySalesTestBase is Test {
         return _kycForAction(uint8(PrimaryTypes.Action.SettleVenue), domainName, target, orderId, paramsHash);
     }
 
-    /// The same, for an arbitrary action ordinal. Needed by the tests that exercise a settler
-    /// family other than S2 — the attestation carries the action and `_verifyKyc` compares it,
-    /// so a mint-family call cannot reuse a venue-family attestation.
+    /// The same, for an arbitrary action ordinal. Needed by the tests that drive a second caller
+    /// of the shared preamble — the attestation carries the action and `_verifyKyc` compares it,
+    /// so a call under another ordinal cannot reuse a `SettleVenue` attestation.
     function _kycForAction(uint8 action, string memory domainName, address target, uint256 orderId, bytes32 paramsHash)
         internal
         view

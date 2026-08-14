@@ -8,11 +8,15 @@ import {ISettler} from "../interfaces/ISettler.sol";
 import {FeeMath} from "../../libs/FeeMath.sol";
 
 /// @title VenueSettler
-/// @notice Family S2: the buyer settles against a third-party venue (Dinari, Backed, …) whose
-///         call we do not control and never allowlist.
+/// @notice The router's ONE settlement family: the buyer settles against a venue whose call we
+///         do not control and never allowlist — a third party (Dinari, Backed, …) or, for our
+///         own issuance, the per-token sale contract that fronts it. This module cannot tell
+///         them apart and does not try; the whole point of routing our own issuance through a
+///         separate sale contract is that it needs no privileged treatment here (the argument is
+///         in `AsseteraPrimarySales`).
 ///
 ///         `AsseteraPrimarySales.settlePrimary` has already done everything that is common to
-///         every family by the time this runs: all three signatures verified, the calldata
+///         every settlement by the time this runs: all three signatures verified, the calldata
 ///         bound by hash and selector, both attestations pinned to the intent's struct hash,
 ///         all three nonces burned. What is left is exactly the money, and that is this file.
 ///
@@ -24,7 +28,7 @@ import {FeeMath} from "../../libs/FeeMath.sol";
 ///           0. structural guards that cost two comparisons and a storage read — the venue may
 ///              not be either of the two tokens this settlement moves, and a non-zero fee may
 ///              only go to an allowlisted collector;
-///           1. (the value caps, charged for every family by
+///           1. (the value caps, charged for every settlement path by
 ///              `SettlementLimits._authorizeSettlement` before this function is entered);
 ///           2. snapshot `assetToken.balanceOf(intent.buyer)` and this contract's own
 ///              `settlementToken` balance;
@@ -47,10 +51,11 @@ import {FeeMath} from "../../libs/FeeMath.sol";
 ///         ⚠️ **Two deliberate departures from the ordered flow the skeleton packet sketched
 ///         for this file, both forced:**
 ///           * The sketch put the cap charge inside step 2 (with the pull), called by this
-///             family. It is charged before this function is entered at all, by
-///             `SettlementLimits._authorizeSettlement`, which every family runs — a cap each
-///             family remembers to charge is not a cap, and `MintSettler`'s documented preamble
-///             had already omitted it. Nothing observable changes for S2: the whole call is
+///             module. It is charged before this function is entered at all, by
+///             `SettlementLimits._authorizeSettlement`, which every settlement path runs — a cap
+///             each path remembers to charge is not a cap, and the mint stub that then stood
+///             beside this file had already omitted it from its documented preamble. Nothing
+///             observable changes for a venue settlement: the whole call is
 ///             atomic, and the charge still lands before the first external call, so a
 ///             settlement in a currency nobody sized is refused with
 ///             `PerTxCapExceeded(token, debit, 0)` before a single token call is made.
@@ -137,7 +142,7 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
     ///      that is not one of this settlement's own two tokens is still callable.
     error VenueIsASettledToken();
 
-    /// @dev The internal seam for family S2. Not an address, not a `delegatecall` target, not
+    /// @dev The settlement seam. Not an address, not a `delegatecall` target, not
     ///      an external call — one proxy, inherited modules (§4.5).
     ///
     ///      Takes the opaque venue calldata (already bound by hash and selector) and the
@@ -190,10 +195,10 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         uint256 debit = intent.venueQuoteIn + intent.buyerFee;
 
         // ── 1 · value caps ────────────────────────────────────────────────────────────────
-        // Charged by `SettlementLimits._authorizeSettlement`, which every family runs, rather
-        // than here — see that function for why a cap each family opts into is not a cap. It
-        // still runs before the first external call of this settlement; what changed is that a
-        // family cannot reach this line without it having run.
+        // Charged by `SettlementLimits._authorizeSettlement`, which every settlement path runs,
+        // rather than here — see that function for why a cap each path opts into is not a cap.
+        // It still runs before the first external call of this settlement; what changed is that
+        // no path can reach this line without it having run.
 
         // ── 2 · snapshots ─────────────────────────────────────────────────────────────────
         // The router's own pre-call balance, NOT zero: the invariant asserted at the end is
@@ -272,7 +277,7 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         // ── 7 · the delivery assertion ────────────────────────────────────────────────────
         // ⚠️ TODO(AO-550) — `intent.assetToken` may be a CLAIM token rather than the instrument
         //    the buyer bought, and nothing here can tell the difference. Every supplier we
-        //    settle against (Dinari, Ondo, our own minting) is atomic, and where a mint is
+        //    settle against (Dinari, Ondo, our own sale contract) is atomic, and where a mint is
         //    genuinely asynchronous it is fronted by a claim minted synchronously in this same
         //    transaction — which is exactly what makes this balance delta measurable and this
         //    contract correct either way.

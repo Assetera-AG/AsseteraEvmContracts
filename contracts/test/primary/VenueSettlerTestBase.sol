@@ -10,7 +10,8 @@ import {CappedPrimarySalesHarness} from "./mocks/CappedPrimarySalesHarness.sol";
 import {PrimarySalesTestBase} from "./PrimarySalesTestBase.sol";
 
 /// @title VenueSettlerTestBase
-/// @notice The fixture family S2 needs and `PrimarySalesTestBase` deliberately does not have:
+/// @notice The fixture `VenueSettler` needs and `PrimarySalesTestBase` deliberately does not
+///         have:
 ///         two REAL ERC-20s and a real venue. The shared base uses codeless placeholder
 ///         addresses because the skeleton packet never reached a transfer; the venue suites are
 ///         nothing but transfers.

@@ -59,8 +59,10 @@ interface IIntentGate {
     //    point is that there is one fee-policy implementation, not two.
     /// @dev The intent and the fee attestation name different collectors.
     error FeeCollectorMismatch();
-    /// @dev A non-zero `makerFeeBps` was attested on a family where we do not control the
-    ///      proceeds side. Reverts rather than silently doing nothing.
+    /// @dev A non-zero `makerFeeBps` was attested. The router never controls the proceeds side
+    ///      of a venue settlement, so an issuer-side fee cannot be charged on any path here —
+    ///      including our own issuance, whose proceeds sit in the per-token sale contract for
+    ///      the issuer to withdraw. Reverts rather than silently doing nothing.
     error MakerFeeNotSupported();
     /// @dev `maxSettlementIn < venueQuoteIn + buyerFee`: the buyer's own cap cannot cover the
     ///      debit the same signature authorises.

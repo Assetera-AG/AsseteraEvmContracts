@@ -14,15 +14,40 @@ import {PrimaryTypes} from "./types/PrimaryTypes.sol";
 ///         it, refund what was not spent and charge our fee. The exchange
 ///         (`AsseteraECS`) is the secondary market and is a different contract, on purpose.
 ///
-///         There are two settlement families, and they are `abstract contract` modules
-///         inherited into THIS one proxy — the same shape as `OrderBook`/`OfferBook` inside
-///         `AsseteraECS`, not separate deployments and not `delegatecall` targets:
+///         **There is ONE settlement family, and this router holds no minting right on any
+///         path.** It is `VenueSettler` — the constrained executor below, an `abstract
+///         contract` module inherited into THIS one proxy, the same shape as
+///         `OrderBook`/`OfferBook` inside `AsseteraECS`, not a separate deployment and not a
+///         `delegatecall` target. It calls somebody else's contract with calldata we did not
+///         author and judges the settlement on the balance deltas it measured afterwards.
 ///
-///           * **S2 · third-party venue** (`VenueSettler`) — the constrained executor below.
-///             We hold no minting right, so we call somebody else's contract with calldata we
-///             did not author.
-///           * **S1 · mint** (`MintSettler`) — we hold the minting right, so there is no venue
-///             and no arbitrary calldata at all.
+///         **Our own primary issuance is reached through that same path**, with the venue being
+///         a per-token sale contract we call exactly as we call Backed or Dinari. That contract
+///         is deployed one per token during issuer onboarding; holds the conversion rate and the
+///         settlement currency, set by us because pricing a primary offer is a compliance
+///         function performed through our interface; is granted the minting right BY THE ISSUER,
+///         so no minting right is ever held here; mints only against payment it has actually
+///         received from its caller, the way Backed will not mint unless it receives the USDC;
+///         refuses every caller but this router, because the KYC and fee gates live here; lets
+///         the issuer withdraw the proceeds, with an optional forwarding address; carries an
+///         optional issuance cap; and has immutable logic with rotatable role addresses.
+///
+///         🔴 **The reason is a security one, not a tidiness one: that sale contract is the only
+///         control in the whole design that actually bounds a compromised settlement signer.**
+///         Every other candidate was tried and failed. A venue allowlist does not help, because
+///         the attacker names the genuine venue. A value cap does not help, because it bounds
+///         the wrong quantity. A structural recipient on a mint path does not help, because the
+///         attacker simply sets themselves as `intent.buyer`. The sale contract DOES help,
+///         because the economics are enforced on-chain by a contract we do not have to trust a
+///         signature for: craft an intent with a zero quote and the sale contract's own pull
+///         from this router fails, so nothing is minted. **The signer cannot mint without
+///         paying, whatever they sign.** A `MintSettler` module holding the minting right inside
+///         this proxy would have had no such property, which is why it was deleted rather than
+///         left waiting to be filled (2026-08-14).
+///
+///         Building the sale contract is AO-137 and lives OUTSIDE this repo's current scope.
+///         Nothing here has to change when it lands: to this router it is an address in a signed
+///         intent, like any other venue.
 ///
 ///         Why a separate proxy rather than a module inside the exchange: a separate pause
 ///         lever, a separate audit scope, a separate upgrade cadence and, above all, a
@@ -58,14 +83,13 @@ import {PrimaryTypes} from "./types/PrimaryTypes.sol";
 ///         as the exchange, so a gasless primary sale works the way a gasless order does.
 ///
 /// @dev    Assembled as: `PrimaryTypes` → `PrimaryStorage` (is `FeeGate`) → `IntentGate` →
-///         `SettlementLimits` → {`VenueSettler`, `MintSettler`} → this file, which adds the
-///         three concerns only the final contract needs (`Initializable`, `UUPSUpgradeable`,
+///         `SettlementLimits` → `VenueSettler` → this file, which adds the three concerns only
+///         the final contract needs (`Initializable`, `UUPSUpgradeable`,
 ///         `ERC2771ContextUpgradeable`) plus the initializer, the admin surface and the frozen
 ///         entry point.
 ///
-///         ⚠️ **This file owns the inheritance list and the module stubs.** The family packets
-///         add to their own module file only. Nothing here should need to change when a family
-///         is implemented.
+///         ⚠️ **This file owns the inheritance list.** The settlement money path is
+///         `VenueSettler`'s and changes there; nothing here should need to change with it.
 contract AsseteraPrimarySales is PrimaryTypes, Initializable, UUPSUpgradeable, VenueSettler, ERC2771ContextUpgradeable {
     /// @notice The fee-collector allowlist changed.
     event CollectorAllowed(address indexed collector, bool allowed);
@@ -146,7 +170,10 @@ contract AsseteraPrimarySales is PrimaryTypes, Initializable, UUPSUpgradeable, V
     //                            The entry point                            //
     // --------------------------------------------------------------------- //
 
-    /// @notice Settle one primary purchase against a third-party venue (family S2).
+    /// @notice Settle one primary purchase against a venue. THE only settlement entry point:
+    ///         a third party's contract and the per-token sale contract that fronts our own
+    ///         issuance both arrive here, and this function cannot tell them apart because
+    ///         there is nothing to tell apart — both are an address in a signed intent.
     ///
     ///         The buyer is debited at most `intent.maxSettlementIn`, the venue is approved
     ///         exactly `intent.venueQuoteIn` and may take less, whatever it does not take is
@@ -197,13 +224,25 @@ contract AsseteraPrimarySales is PrimaryTypes, Initializable, UUPSUpgradeable, V
         KycAttestation calldata kyc,
         FeeAttestation calldata fee
     ) external whenNotPaused nonReentrant {
+        // Hardcoded, never taken from the caller or from the intent: the action ordinal is what
+        // the two attestations are signed against, so letting the request choose it would let a
+        // request choose which compliance policy it is screened under. This literal is also the
+        // whole reason `Action.SettleMint` is unreachable today — see the enum.
         uint8 action = uint8(Action.SettleVenue);
 
         bytes32 paramsHash = _verifyIntent(intent, intentSignature, buyerSignature);
         _bindCalldata(venueCalldata, intent);
-        // Family S2 only: on a third-party venue we do not control the proceeds side, so an
-        // issuer-side fee cannot be charged. Attesting one must revert rather than silently do
-        // nothing. The mint family, where we ARE the issuer, does not carry this restriction.
+        // The router does not control the proceeds side of a venue settlement, so an
+        // issuer-side fee cannot be charged here. Attesting one must revert rather than
+        // silently do nothing.
+        //
+        // ⚠️ This holds on EVERY path, including our own issuance, and that is a consequence of
+        //    the sale-contract design rather than an oversight. When we are the issuer the
+        //    proceeds sit in the sale contract and the issuer withdraws them from there; the
+        //    conversion rate we set is where the issuer economics are expressed. An earlier
+        //    revision of this comment said the mint family "does not carry this restriction",
+        //    written when a mint family was going to exist inside this proxy. It does not, so
+        //    neither does the exception.
         //
         // ⚠️ BEFORE `_bindAttestations`, and the order is the point rather than an accident.
         //    Behind it, a non-zero maker fee attested against a collector that is not on this
@@ -214,11 +253,11 @@ contract AsseteraPrimarySales is PrimaryTypes, Initializable, UUPSUpgradeable, V
         //    because this is exactly the kind of line a later tidy-up reorders back.
         if (fee.makerFeeBps != 0) revert MakerFeeNotSupported();
         // The shared preamble: both attestations bound, the per-transaction value cap charged,
-        // all three nonces burned. It is shared so that the cap is charged for EVERY family
-        // rather than by every family — see `SettlementLimits._authorizeSettlement`.
+        // all three nonces burned. It is shared so that the cap is charged FOR every settlement
+        // path rather than BY every settlement path — see `SettlementLimits._authorizeSettlement`.
         _authorizeSettlement(action, intent, paramsHash, kyc, fee);
 
-        // `fee.takerFeeBps` is carried into the family so it can cross-check `intent.buyerFee`
+        // `fee.takerFeeBps` is carried into the settler so it can cross-check `intent.buyerFee`
         // against what the FEE signer attested. Two independent signers must agree on one
         // number; without this the basis points are decorative. Internal signature only.
         SettlementResult memory result = _settleVenue(venueCalldata, intent, fee.takerFeeBps);
@@ -256,6 +295,13 @@ contract AsseteraPrimarySales is PrimaryTypes, Initializable, UUPSUpgradeable, V
     ///
     ///      `Action.None` is excluded deliberately: ordinal zero is an unset field, never a
     ///      real action, and it must not be able to carry a bound `paramsHash`.
+    ///
+    ///      `Action.SettleMint` is included even though nothing in `src/` runs under it. It is a
+    ///      RESERVED ordinal rather than a dead one (see `PrimaryTypes.Action`), and the answer
+    ///      to "does this action bind an intent" is a property of the action, not of whether an
+    ///      entry point happens to exist yet. Answering `false` here would be the one that has
+    ///      to be remembered later; answering `true` costs nothing, because an ordinal with no
+    ///      entry point cannot present an attestation at all.
     function _paramsHashAllowed(uint8 action) internal view virtual override returns (bool) {
         return action == uint8(Action.SettleVenue) || action == uint8(Action.SettleMint);
     }

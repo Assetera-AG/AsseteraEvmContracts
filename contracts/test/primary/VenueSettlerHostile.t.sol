@@ -21,7 +21,7 @@ import {
 import {VenueSettlerTestBase} from "./VenueSettlerTestBase.sol";
 
 /// @title HostileSettlementBase
-/// @notice The fixture the adversarial S2 suites share: `VenueSettlerTestBase`'s two real
+/// @notice The fixture the adversarial venue suites share: `VenueSettlerTestBase`'s two real
 ///         ERC-20s and real router, plus a `HostileVenue` and the helpers needed to point a
 ///         settlement at an arbitrary token pair.
 ///

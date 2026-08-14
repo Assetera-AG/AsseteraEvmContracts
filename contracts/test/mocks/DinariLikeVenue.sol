@@ -27,7 +27,7 @@ import {FaucetToken} from "./FaucetToken.sol";
 ///              is the buyer's, not its own.
 ///
 /// @dev    Deliberately synchronous. Real Dinari fills asynchronously — an operator settles
-///         the order in a later transaction — which family S2 does not model; the executor
+///         the order in a later transaction — which the constrained executor does not model; it
 ///         asserts a delivery it measured inside one transaction. A mock that filled later
 ///         could not exercise a single line of the assertion this packet is about.
 ///

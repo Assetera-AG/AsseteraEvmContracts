@@ -240,7 +240,8 @@ contract PrimarySalesDomainTest is PrimarySalesTestBase {
 ///         `_expectReachesTheMoneyPath`.
 ///
 /// @dev    ⚠️ This marker has moved twice and the CLAIM has not moved at all. It was
-///         `SettlerNotImplemented` while the S2 seam was empty, then
+///         `SettlerNotImplemented` while the settlement seam was empty (that error has since
+///         been deleted along with the mint stub that was its last raiser), then
 ///         `SettlementLimitsNotImplemented` while the caps were a stub, and it is now the real
 ///         caps module refusing an unconfigured currency. Each time the assertion is the same
 ///         one: a well-formed settlement runs the whole verification path and is then stopped
@@ -809,9 +810,10 @@ contract PrimarySalesBuyerConsentTest is PrimarySalesTestBase {
 }
 
 /// @title PrimarySalesSettledTest
-/// @notice What happens AFTER the seam, observed through a harness whose S2 family is stubbed
-///         from outside `src/`. Stubbing it there rather than in `src/primary/settle/**` keeps
-///         the claim honest: no line of a settlement family exists yet.
+/// @notice What happens AFTER the seam, observed through a harness whose settler is stubbed from
+///         outside `src/`. Stubbing it there rather than in `src/primary/settle/**` keeps the
+///         claim honest: the entry point's own behaviour is asserted without one line of
+///         `VenueSettler` running.
 contract PrimarySalesSettledTest is PrimarySalesTestBase {
     event PrimarySettled(
         address indexed buyer,

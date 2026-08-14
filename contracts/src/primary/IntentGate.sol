@@ -18,17 +18,21 @@ import {IIntentGate} from "./interfaces/IIntentGate.sol";
 ///         for why it is the same payload rather than a separate consent struct, why it is
 ///         checked with ERC-1271 support, and why `INTENT_TYPEHASH` did not move when it landed.
 ///
-///         It sits below the settler families rather than inside the assembled contract on
-///         purpose: both families need exactly this verification, and a family module cannot
-///         call a function declared in the contract that inherits it.
+///         It sits below the settler module rather than inside the assembled contract on
+///         purpose: a settler module cannot call a function declared in the contract that
+///         inherits it, and this verification has to be reachable from anything that settles.
 ///
 /// @dev    ⚠️ **Nothing here checks `venue`, `selector`, `assetToken` or `settlementToken`
 ///         against any on-chain list, and that is a decision rather than an omission**
 ///         (2026-08-13, after three rounds of narrowing). An allowlist did not bound a
 ///         compromised signer's loss to the buyer — the attacker names the *genuine* venue
 ///         and selector with `minAssetOut = 0` — and it could not have protected the minting
-///         right, because a generic mint path would have had to allowlist `(ourToken, mint)`
-///         for the feature to work at all. What absorbs the loss instead: the value caps
+///         right either, back when a mint path inside this router was still planned: such a
+///         path would have had to allowlist `(ourToken, mint)` for the feature to work at all.
+///         That half is now moot, because there is no mint path — our own issuance goes through
+///         a per-token sale contract that mints only against payment received, and it is that
+///         contract, not any list here, that bounds a compromised signer (see
+///         `AsseteraPrimarySales`). What absorbs the rest of the loss: the value caps
 ///         (`ISettlementLimits`), never asking the buyer for an unlimited allowance, and
 ///         signer hardening with a durable audit log of every intent signed.
 ///
@@ -120,8 +124,9 @@ abstract contract IntentGate is PrimaryStorage, IIntentGate {
         if (!hasRole(SETTLEMENT_OPERATOR_ROLE, signer)) revert IntentBadSigner();
 
         // The buyer's own consent to these exact terms, checked HERE rather than in the entry
-        // point because both settler families need it and the mint family has no entry point
-        // yet. A guarantee the caller has to remember to make is not a guarantee.
+        // point: every settlement needs it, and a guarantee each caller has to remember to make
+        // is not a guarantee. Verifying the intent and taking the buyer's consent are one call,
+        // so no future entry point can acquire the first without the second.
         if (!SignatureChecker.isValidSignatureNow(intent.buyer, digest, buyerSignature)) {
             revert BuyerConsentBadSignature();
         }

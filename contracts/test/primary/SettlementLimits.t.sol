@@ -11,8 +11,8 @@ import {ISettlementLimits} from "../../src/primary/interfaces/ISettlementLimits.
 import {PrimarySalesHarness} from "./mocks/PrimarySalesHarness.sol";
 import {PrimarySalesTestBase} from "./PrimarySalesTestBase.sol";
 
-/// @notice `AsseteraPrimarySales` with the S2 seam filled by a stub that moves nothing, plus the
-///         internal hook exposed for direct assertion.
+/// @notice `AsseteraPrimarySales` with the settlement seam filled by a stub that moves nothing,
+///         plus the internal hook exposed for direct assertion.
 ///
 ///         It does NOT extend `PrimarySalesHarness`, and that is a compiler fact rather than a
 ///         preference: that harness's `_settleVenue` is `internal pure override` — non-virtual,
@@ -20,16 +20,16 @@ import {PrimarySalesTestBase} from "./PrimarySalesTestBase.sol";
 ///         the intent and attestation builders — comes from `PrimarySalesTestBase`.
 ///
 /// @dev    ⚠️ **The stub deliberately does NOT charge the cap, and it used to.** The charge is
-///         made once, by `SettlementLimits._authorizeSettlement`, which every settler family
-///         runs before it moves anything — a cap each family opted into was not a cap, and the
-///         mint family's documented preamble omitted it entirely. A stub that charged again
+///         made once, by `SettlementLimits._authorizeSettlement`, which every settlement path
+///         runs before it moves anything — a cap each path opted into was not a cap, and the
+///         mint stub's documented preamble omitted it entirely. A stub that charged again
 ///         would be asserting a duplicate rather than the real path.
 ///
 ///         The number the preamble charges is `venueQuoteIn + buyerFee`, the full authorised
-///         debit, before the family is entered: the refund is not known until after the venue
+///         debit, before the settler is entered: the refund is not known until after the venue
 ///         has been called. These suites are about the module — what it stores, how it converts,
 ///         and that it refuses what exceeds the cap — plus the settlement-level assertions at
-///         the end, which are now about the preamble rather than about S2.
+///         the end, which are now about the preamble rather than about the settler.
 contract SettlementCapsHarness is AsseteraPrimarySales {
     /// Measured delivery, above `MIN_ASSET_OUT`. Nothing in this packet reads it.
     uint256 public constant STUB_ASSET_DELIVERED = 42e18;
@@ -370,10 +370,11 @@ contract SettlementCapEnforcementTest is SettlementLimitsTestBase {
 ///         is charged on the number the FAMILY hands over, and a cap that refuses leaves nothing
 ///         behind.
 contract SettlementCapThroughTheEntryPointTest is SettlementLimitsTestBase {
-    /// 🔴 The number a settlement is charged, and WHERE it is charged. The stub family charges
+    /// 🔴 The number a settlement is charged, and WHERE it is charged. The stub settler charges
     /// nothing at all, so a settlement that is still refused proves the charge comes from the
-    /// shared preamble rather than from the family — which is the whole property, since the only
-    /// family that exists is S2 and the mint family would otherwise have shipped uncapped.
+    /// shared preamble rather than from the settler — which is the whole property, since
+    /// `VenueSettler` is the only settler there is and a second one would otherwise have
+    /// shipped uncapped, as the deleted mint stub was on course to.
     ///
     /// The amount in the error is the FULL authorised debit rather than anything net of the
     /// stub's refund, because the refund is not known before the venue is called.

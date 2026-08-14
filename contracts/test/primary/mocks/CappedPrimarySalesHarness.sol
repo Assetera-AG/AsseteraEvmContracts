@@ -4,7 +4,7 @@ pragma solidity 0.8.28;
 import {AsseteraPrimarySales} from "../../../src/primary/AsseteraPrimarySales.sol";
 import {ISettlementLimits} from "../../../src/primary/interfaces/ISettlementLimits.sol";
 
-/// @notice `AsseteraPrimarySales` with the REAL S2 settler and a MOCK `ISettlementLimits`.
+/// @notice `AsseteraPrimarySales` with the REAL `VenueSettler` and a MOCK `ISettlementLimits`.
 ///
 ///         The venue settler charges `_consumeSettlementLimit` before it moves anything, and
 ///         the real module reads an unset cap as CLOSED, so every test of the money path would

@@ -29,7 +29,7 @@ src/interfaces/, src/libs/   exchange-facing interfaces, shared math
 src/primary/AsseteraPrimarySales.sol   the primary-sales proxy's implementation (AO-516)
 src/primary/IntentGate.sol             settlement-intent verification + nonces
 src/primary/admin/                     per-currency settlement caps, collector allowlist
-src/primary/settle/                    the settlement families: VenueSettler (S2), MintSettler (S1, stub)
+src/primary/settle/                    VenueSettler — the ONE settlement family (our own issuance is a venue too)
 src/primary/interfaces/                primary-sales interfaces (frozen by the skeleton packet)
 src/primary/storage/, src/primary/types/   primary ERC-7201 storage + structs/enums
 ```

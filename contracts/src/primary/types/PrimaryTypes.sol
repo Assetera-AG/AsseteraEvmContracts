@@ -46,13 +46,35 @@ abstract contract PrimaryTypes is GateTypes {
     ///
     ///         Ordinals are append-only: `AsseteraSignerService` signs the ordinal, so
     ///         renumbering silently re-points every attestation in flight.
+    ///
+    ///         ⚠️ **`SettleMint` (2) is RESERVED, not dead, and it is currently UNREACHABLE.**
+    ///         `AsseteraPrimarySales.settlePrimary` hardcodes `Action.SettleVenue` and is the
+    ///         only settlement entry point there is, so no transaction can run under ordinal 2.
+    ///         It is held anyway because the settlement mechanics and the COMPLIANCE question
+    ///         are not the same question: subscribing to our own issuance and buying a
+    ///         third-party asset go down one code path — the sale contract is just another venue
+    ///         — but they may carry different appropriateness treatment, and the ordinal is what
+    ///         the compliance signer signs. Keeping it means that distinction can be made
+    ///         without renumbering anything, which is the one thing this enum must never do.
+    ///
+    ///         ⚠️ **Holding an unreachable ordinal is only safe because the compliance gate on
+    ///         this router is fail-CLOSED, and that is a recent property rather than a
+    ///         long-standing one.** `AsseteraPrimarySales.complianceRequired` overrides the
+    ///         shared getter to read an EXEMPTION out of the router's own namespace, so an
+    ///         ordinal nobody enabled is GATED rather than ungated;
+    ///         `test_ComplianceGate_IsClosedForEveryOrdinal` walks all 256 of them. Under the
+    ///         previous fail-open arrangement — a `mapping(uint8 => bool)` written by an
+    ///         initializer that enumerated this enum — a reserved ordinal would have been a hole:
+    ///         the day somebody gave it an entry point without also remembering the initializer
+    ///         line, it would have settled unscreened. Do not reserve ordinals here again if
+    ///         that override is ever removed.
     enum Action {
         None, // 0 — never gated, never accepted; a zero action is an unset field
-        SettleVenue, // 1 — S2: a third-party venue, executed through the constrained executor
-        SettleMint // 2 — S1: we hold the minting right; no arbitrary calldata in this family
+        SettleVenue, // 1 — a venue settlement through the constrained executor: a third party's
+        // contract, or the per-token sale contract fronting our own issuance
+        SettleMint // 2 — RESERVED and unreachable; see the ⚠️ above before giving it a caller
         // S3 ("observed", recorded rather than executed) has no ordinal yet: it may end up
-        // off-chain only. Appending it later is safe; enabling it in the initializer is not
-        // optional if it lands.
+        // off-chain only. Appending it later is safe, and it is gated the moment it exists.
     }
 
     // --------------------------------------------------------------------- //

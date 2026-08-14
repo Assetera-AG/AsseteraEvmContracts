@@ -7,12 +7,12 @@ pragma solidity 0.8.28;
 ///         token.
 ///
 ///         ⚠️ The charge is made ONCE, by `SettlementLimits._authorizeSettlement`, for every
-///         settler family — not by each family, which is what it used to be and which left the
-///         mint family free to ship uncapped. The number is `venueQuoteIn + buyerFee`, the full
-///         authorised debit, BEFORE any external call, because the refund is unknown until after
-///         a venue has been called and a cap checked afterwards is a check made after the money
-///         moved. Earlier wording here promised "the amount ACTUALLY DEBITED rather than the
-///         quoted one"; nothing implements that and it is gone.
+///         settlement path — not by each path, which is what it used to be and which left the
+///         then-planned mint family free to ship uncapped. The number is `venueQuoteIn +
+///         buyerFee`, the full authorised debit, BEFORE any external call, because the refund is
+///         unknown until after a venue has been called and a cap checked afterwards is a check
+///         made after the money moved. Earlier wording here promised "the amount ACTUALLY
+///         DEBITED rather than the quoted one"; nothing implements that and it is gone.
 ///
 /// @dev    ⚠️ **This is a bound on BUGS, not on theft, and the distinction decides how to size
 ///         it.** An earlier revision of this module carried a per-day cap as well and was
@@ -28,9 +28,17 @@ pragma solidity 0.8.28;
 ///             flight.
 ///           * A daily cap without somebody watching does not prevent a loss, it schedules one:
 ///             the drain takes a few days instead of an afternoon.
-///           * The structural controls are elsewhere and are real: three signatures from three
-///             distinct roles with both attestations bound to the intent's struct hash, a mint
-///             family with no arbitrary calldata, exact-amount approvals, and a pause.
+///           * The structural controls are elsewhere and are real: four signatures from four
+///             distinct parties (the buyer among them) with both attestations bound to the
+///             intent's struct hash, exact-amount approvals, and a pause.
+///           * 🔴 And for OUR OWN issuance specifically, the control that actually bites is not
+///             in this repo at all: the per-token sale contract the router calls (AO-137). It
+///             holds the minting right the router deliberately does not, and it mints only
+///             against payment it has received, so an intent with a zero quote makes its own
+///             pull fail and nothing is minted. The signer cannot mint without paying, whatever
+///             they sign. `AsseteraPrimarySales`'s header carries the full argument, including
+///             why the alternatives — an allowlist, a value cap, a structural recipient — each
+///             failed to bound the same attacker.
 ///
 ///         What a per-transaction cap **does** catch, reliably and for two storage reads, is an
 ///         arithmetic or decimals bug: treating 6-decimal USDC as 18-decimal is a factor of a
@@ -42,9 +50,11 @@ pragma solidity 0.8.28;
 ///         ⚠️ Do not reintroduce a venue or selector allowlist here either. Nothing on-chain
 ///         constrains what the router calls, deliberately (decided 2026-08-13): an allowlist did
 ///         not bound a compromised signer's loss, because the attacker names the genuine venue
-///         and selector with `minAssetOut = 0`, and it could not have protected the minting
-///         right, since a generic mint path would have had to allowlist `(ourToken, mint)` for
-///         the feature to work at all.
+///         and selector with `minAssetOut = 0`. It could not have protected the minting right
+///         either, back when a mint path inside this router was still planned — such a path
+///         would have had to allowlist `(ourToken, mint)` for the feature to work at all, which
+///         authorises exactly the call it was meant to refuse. That is now moot in the strongest
+///         way available: the router holds no minting right on any path.
 interface ISettlementLimits {
     /// @notice The per-transaction cap for one settlement token changed.
     /// @param token      The settlement currency the cap applies to.
