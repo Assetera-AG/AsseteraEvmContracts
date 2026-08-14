@@ -43,7 +43,7 @@ comment; this list exists so you see the hazard *before* you grep.
 | Identifier | Where | Why it is frozen |
 |---|---|---|
 | `"AsseteraExchange"` | `contracts/src/AsseteraECS.sol` — `__EIP712_init("AsseteraExchange", "1")` | The EIP-712 domain name is baked into the deployed proxies' ERC-7201 namespaced storage. Changing it invalidates **every** KYC/fee attestation (the signer service pins the same string). |
-| `"AsseteraExchange.impl"` / `"AsseteraExchange.proxy"` | `contracts/script/Deploy.s.sol` | CREATE3 **salt labels** — `DeployBase._salt()` hashes the string into the salt, so the label *determines the deployed address*. A rename misses the live proxy (`0x58c3Fb1B69ca985A5461CcEfFd0Fe590b653F213` on Amoy + Sepolia) and deploys a **second, empty venue**. |
+| `"AsseteraExchange.impl"` / `"AsseteraExchange.proxy"` | `contracts/script/Deploy.s.sol` | CREATE3 **salt labels** — `DeployBase._salt()` hashes the string into the salt, so the label *determines the deployed address*. A rename computes a different address and deploys a **second, empty venue**. ⚠️ `EXCHANGE_SALT_VERSION` is `"v2"` since the gate extraction (AO-514), so the exchange address has deliberately moved off the old `0x58c3Fb1B69ca985A5461CcEfFd0Fe590b653F213` (Amoy + Sepolia) and nothing there is migrated; the *labels* stay frozen regardless. |
 
 The same class of hazard exists outside this repo: the `@subsquid/pipes` portal cursor key
 `assetera-exchange-${chainId}` in **AsseteraEvmIndexerService** — renaming it silently re-indexes from

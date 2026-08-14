@@ -113,10 +113,13 @@ contract Deploy is DeployBase {
         //    part of the initcode, but CREATE3 makes the address initcode-independent, so there is no
         //    front-run window and the address is identical across chains and across future upgrades).
         //    ⚠️ DO NOT RENAME THE SALT LABEL to "AsseteraECS.proxy" (AC-837). `_salt` hashes this string
-        //    into the CREATE3 salt, so the label IS the address. Changing it would make a re-run compute a
-        //    fresh address, miss the existing Amoy/Sepolia proxy at 0x58c3Fb1B…F213, and deploy a second
-        //    venue instead of no-op'ing. Same reasoning for the ".impl" CREATE2 label above. The labels
-        //    move to "AsseteraECS.*" only at the planned production fresh deploy.
+        //    into the CREATE3 salt, so the label IS the address, and a rename silently computes a different
+        //    one. Same reasoning for the ".impl" CREATE2 label above. The labels move to "AsseteraECS.*"
+        //    only at the planned production fresh deploy.
+        //    ⚠️ The address this computes has ALREADY moved off the old Amoy/Sepolia proxy at
+        //    0x58c3Fb1B…F213: `EXCHANGE_SALT_VERSION` is "v2" since AO-514's gate extraction, so the next
+        //    run takes the fresh-deploy branch below rather than no-op'ing on the live proxy. Nothing at the
+        //    old address is migrated — see the note on that constant.
         bytes32 proxySalt = _salt(deployer, "AsseteraExchange.proxy");
         exchangeProxy = computeCreate3Address(proxySalt, deployer);
         // Only a fresh proxy deployment sets the recorded creation block/timestamp; an upgrade or no-op re-run
