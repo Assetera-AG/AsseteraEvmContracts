@@ -440,6 +440,32 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
         );
     }
 
+    /// 🔴 The ORDERING, pinned on its own because the previous arrangement was true and useless.
+    /// A non-zero maker fee attested against a collector that is not on this router's allowlist
+    /// has two defects, and the check that ran first decided which one the caller was told
+    /// about. Behind `_bindAttestations` it reverted `FeeCollectorNotAllowed`, which sends
+    /// whoever reads it to list a collector — for a family that cannot charge a maker fee at any
+    /// collector.
+    ///
+    /// The maker-fee check therefore runs BEFORE the attestation binding, and this test fails if
+    /// a later refactor moves it back.
+    function test_SettlePrimary_RejectsANonZeroMakerFeeBeforeTheCollectorChecks() public {
+        PrimaryTypes.SettlementIntent memory intent = _intent();
+        intent.feeCollector = stranger; // never allowlisted on this router
+        bytes32 paramsHash = _paramsHash(intent);
+
+        vm.prank(buyer);
+        vm.expectRevert(IIntentGate.MakerFeeNotSupported.selector);
+        sales.settlePrimary(
+            VENUE_CALLDATA,
+            intent,
+            _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
+            _kyc(address(sales), paramsHash),
+            _fee(address(sales), paramsHash, 25, 50, stranger, CURRENCY)
+        );
+    }
+
     function test_SettlePrimary_RejectsAnIntentSignedByTheFeeOperator() public {
         PrimaryTypes.SettlementIntent memory intent = _intent();
         bytes32 paramsHash = _paramsHash(intent);

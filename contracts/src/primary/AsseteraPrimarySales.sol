@@ -209,11 +209,19 @@ contract AsseteraPrimarySales is
 
         bytes32 paramsHash = _verifyIntent(intent, intentSignature, buyerSignature);
         _bindCalldata(venueCalldata, intent);
-        _bindAttestations(intent, paramsHash, kyc, fee);
         // Family S2 only: on a third-party venue we do not control the proceeds side, so an
         // issuer-side fee cannot be charged. Attesting one must revert rather than silently do
         // nothing. The mint family, where we ARE the issuer, does not carry this restriction.
+        //
+        // ⚠️ BEFORE `_bindAttestations`, and the order is the point rather than an accident.
+        //    Behind it, a non-zero maker fee attested against a collector that is not on this
+        //    router's allowlist reverted with `FeeCollectorNotAllowed` — a true statement about
+        //    a request whose actual defect is that this family cannot charge a maker fee at
+        //    all, sending whoever reads the revert to fix the wrong thing. The specific error
+        //    wins. Pinned by `test_SettlePrimary_RejectsANonZeroMakerFeeBeforeTheCollectorChecks`,
+        //    because this is exactly the kind of line a later tidy-up reorders back.
         if (fee.makerFeeBps != 0) revert MakerFeeNotSupported();
+        _bindAttestations(intent, paramsHash, kyc, fee);
 
         _consumeKycAndFee(intent.buyer, action, 0, kyc, fee);
         _consumeIntent(action, intent);
