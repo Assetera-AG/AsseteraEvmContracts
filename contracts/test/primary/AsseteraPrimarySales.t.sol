@@ -12,6 +12,7 @@ import {IKycGate} from "../../src/interfaces/IKycGate.sol";
 import {IFeeGate} from "../../src/interfaces/IFeeGate.sol";
 import {IIntentGate} from "../../src/primary/interfaces/IIntentGate.sol";
 import {AsseteraECS} from "../../src/AsseteraECS.sol";
+import {ContractWalletBuyer} from "./mocks/ContractWalletBuyer.sol";
 import {PrimarySalesTestBase} from "./PrimarySalesTestBase.sol";
 
 /// @title PrimarySalesInitTest
@@ -175,7 +176,12 @@ contract PrimarySalesDomainTest is PrimarySalesTestBase {
         vm.prank(buyer);
         vm.expectRevert(IKycGate.KycBadSigner.selector);
         sales.settlePrimary(
-            VENUE_CALLDATA, intent, _signIntent(address(sales), intent), stolen, _fee(address(sales), paramsHash)
+            VENUE_CALLDATA,
+            intent,
+            _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
+            stolen,
+            _fee(address(sales), paramsHash)
         );
     }
 
@@ -191,7 +197,12 @@ contract PrimarySalesDomainTest is PrimarySalesTestBase {
         vm.prank(buyer);
         _expectReachesTheMoneyPath();
         sales.settlePrimary(
-            VENUE_CALLDATA, intent, _signIntent(address(sales), intent), att, _fee(address(sales), paramsHash)
+            VENUE_CALLDATA,
+            intent,
+            _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
+            att,
+            _fee(address(sales), paramsHash)
         );
     }
 
@@ -239,6 +250,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(PRIMARY_DOMAIN_NAME, address(sales), 7, paramsHash),
             _fee(address(sales), paramsHash)
         );
@@ -254,6 +266,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(PRIMARY_DOMAIN_NAME, address(sales), 0, keccak256("some other settlement")),
             _fee(address(sales), paramsHash)
         );
@@ -269,6 +282,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(address(sales), paramsHash),
             _fee(address(sales), keccak256("some other settlement"))
         );
@@ -288,6 +302,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             tampered,
             _signIntent(address(sales), signedIntent),
+            _signBuyerConsent(address(sales), signedIntent),
             _kyc(address(sales), _paramsHash(signedIntent)),
             _fee(address(sales), _paramsHash(signedIntent))
         );
@@ -303,6 +318,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(address(sales), paramsHash),
             _fee(address(sales), paramsHash)
         );
@@ -318,6 +334,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             hex"a9059cbb0000000000000000000000000000000000000000000000000000000000000002",
             intent,
             _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(address(sales), paramsHash),
             _fee(address(sales), paramsHash)
         );
@@ -337,6 +354,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(address(sales), paramsHash),
             _fee(address(sales), paramsHash)
         );
@@ -355,6 +373,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(address(sales), paramsHash),
             _fee(address(sales), paramsHash, 0, 50, collector, ASSET)
         );
@@ -373,6 +392,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(address(sales), paramsHash),
             _fee(address(sales), paramsHash, 0, 50, other, CURRENCY)
         );
@@ -391,6 +411,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(address(sales), paramsHash),
             _fee(address(sales), paramsHash, 0, 50, stranger, CURRENCY)
         );
@@ -408,6 +429,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(address(sales), paramsHash),
             _fee(address(sales), paramsHash, 25, 50, collector, CURRENCY)
         );
@@ -423,6 +445,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntentWith(feeSignerPk, address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(address(sales), paramsHash),
             _fee(address(sales), paramsHash)
         );
@@ -438,6 +461,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntentWith(kycSignerPk, address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(address(sales), paramsHash),
             _fee(address(sales), paramsHash)
         );
@@ -447,13 +471,14 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
         PrimaryTypes.SettlementIntent memory intent = _intent();
         bytes32 paramsHash = _paramsHash(intent);
         bytes memory sig = _signIntent(address(sales), intent);
+        bytes memory buyerSig = _signBuyerConsent(address(sales), intent);
         GateTypes.KycAttestation memory kyc = _kyc(address(sales), paramsHash);
         GateTypes.FeeAttestation memory fee = _fee(address(sales), paramsHash);
 
         vm.warp(intent.deadline + 1);
         vm.prank(buyer);
         vm.expectRevert(IIntentGate.IntentExpired.selector);
-        sales.settlePrimary(VENUE_CALLDATA, intent, sig, kyc, fee);
+        sales.settlePrimary(VENUE_CALLDATA, intent, sig, buyerSig, kyc, fee);
     }
 
     /// A hard cap on freshness, mirroring `MAX_KYC_TTL`, so a leaked intent has a bounded life
@@ -469,6 +494,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(address(sales), paramsHash),
             _fee(address(sales), paramsHash)
         );
@@ -487,6 +513,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(address(sales), paramsHash),
             _fee(address(sales), paramsHash)
         );
@@ -507,6 +534,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(address(sales), paramsHash),
             _fee(address(sales), paramsHash)
         );
@@ -523,6 +551,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(address(sales), paramsHash),
             _fee(address(sales), paramsHash, 0, 50, collector, ASSET)
         );
@@ -539,6 +568,7 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(address(sales), paramsHash),
             _fee(address(sales), paramsHash)
         );
@@ -552,6 +582,178 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
 
         vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         _settle(sales);
+    }
+}
+
+/// @title PrimarySalesBuyerConsentTest
+/// @notice 🔴 The buyer's own signature over the settlement intent — the one signature on the
+///         path that is not ours.
+///
+///         What it defends against: a compromised `SETTLEMENT_OPERATOR_ROLE` key. That signer
+///         chooses every field of the intent, `minAssetOut` included, so without the buyer's
+///         countersignature the executor's central guarantee ("the buyer received at least
+///         `minAssetOut`") is a guarantee about a number the attacker picked. Setting it to one
+///         wei satisfies every check in the contract and drains the buyer's allowance.
+///
+///         Why the buyer's wallet cannot supply this protection by itself: ERC-2771. The buyer
+///         signs a `ForwardRequest` whose `data` is opaque bytes, and no wallet renders opaque
+///         bytes as balance changes. An EIP-712 payload with named fields is the only thing on
+///         this path a wallet can put in front of a human.
+///
+/// @dev    ⚠️ Both signatures are over ONE digest and are NOT interchangeable: the operator's
+///         is accepted only if it recovers to a `SETTLEMENT_OPERATOR_ROLE` holder, the buyer's
+///         only if it validates for `intent.buyer`. Both directions of the swap are pinned
+///         below, because "one digest" is exactly the shape that invites the assumption that
+///         either signature will do.
+contract PrimarySalesBuyerConsentTest is PrimarySalesTestBase {
+    /// The buyer as a contract wallet, and the EOA that wallet answers for. A separate key from
+    /// `buyerPk` on purpose: an ERC-1271 test that reused it could pass on the EOA branch of
+    /// `SignatureChecker` without ever calling `isValidSignature`.
+    uint256 internal walletOwnerPk = 0x5AFE;
+
+    /// Submit a settlement to `harness` — whose settler seam is stubbed, so a valid one actually
+    /// completes — with `buyerSignature` supplied verbatim. Everything else is well-formed, so a
+    /// revert here is about consent and nothing else.
+    function _settleWithBuyerSignature(bytes memory buyerSignature) internal {
+        PrimaryTypes.SettlementIntent memory intent = _intent();
+        bytes32 paramsHash = _paramsHash(intent);
+        vm.prank(intent.buyer);
+        harness.settlePrimary(
+            VENUE_CALLDATA,
+            intent,
+            _signIntent(address(harness), intent),
+            buyerSignature,
+            _kyc(address(harness), paramsHash),
+            _fee(address(harness), paramsHash)
+        );
+    }
+
+    /// 🔴 The happy path: the buyer signed these exact terms and the settlement completes.
+    function test_BuyerConsent_AcceptsTheBuyersSignatureOverTheSameIntent() public {
+        _settleWithBuyerSignature(_signBuyerConsent(address(harness), _intent()));
+
+        assertTrue(harness.usedIntentNonce(buyer, INTENT_NONCE), "the settlement did not complete");
+    }
+
+    /// An omitted signature is the shape a caller written against the old five-argument selector
+    /// produces, so it must fail loudly rather than be treated as "no objection".
+    function test_BuyerConsent_RejectsAnEmptySignature() public {
+        vm.expectRevert(IIntentGate.BuyerConsentBadSignature.selector);
+        _settleWithBuyerSignature("");
+    }
+
+    /// Malformed bytes of the right length are refused the same way — through the named error,
+    /// not through a bare panic out of the recovery library.
+    function test_BuyerConsent_RejectsAMalformedSignature() public {
+        vm.expectRevert(IIntentGate.BuyerConsentBadSignature.selector);
+        _settleWithBuyerSignature(new bytes(65));
+    }
+
+    /// Somebody else's valid signature over the right intent is still not the buyer's.
+    function test_BuyerConsent_RejectsASignatureFromTheWrongKey() public {
+        uint256 strangerPk = 0xDECAF;
+        vm.expectRevert(IIntentGate.BuyerConsentBadSignature.selector);
+        _settleWithBuyerSignature(_signIntentWith(strangerPk, address(harness), _intent()));
+    }
+
+    /// 🔴 **The attack this whole mechanism exists to stop.** The buyer signed an intent with a
+    /// real delivery floor; the compromised settlement operator submits one with the floor at a
+    /// single wei, correctly signed by itself. Every other check in the contract passes — the
+    /// buyer is the actor, both attestations are bound to the submitted intent's hash, the
+    /// nonces are fresh — and the settlement is refused only because the buyer's signature is
+    /// over different terms.
+    function test_BuyerConsent_RejectsASignatureOverADifferentIntent() public {
+        PrimaryTypes.SettlementIntent memory consented = _intent();
+
+        PrimaryTypes.SettlementIntent memory submitted = _intent();
+        submitted.minAssetOut = 1;
+        assertTrue(consented.minAssetOut != submitted.minAssetOut, "fixture: the two intents must differ");
+        bytes32 paramsHash = _paramsHash(submitted);
+
+        vm.prank(buyer);
+        vm.expectRevert(IIntentGate.BuyerConsentBadSignature.selector);
+        harness.settlePrimary(
+            VENUE_CALLDATA,
+            submitted,
+            _signIntent(address(harness), submitted),
+            _signBuyerConsent(address(harness), consented),
+            _kyc(address(harness), paramsHash),
+            _fee(address(harness), paramsHash)
+        );
+    }
+
+    /// One digest, two slots, and the slots are not interchangeable. The operator's signature is
+    /// perfectly valid — it is simply not the buyer's.
+    function test_BuyerConsent_RejectsTheOperatorsSignatureInTheBuyerSlot() public {
+        vm.expectRevert(IIntentGate.BuyerConsentBadSignature.selector);
+        _settleWithBuyerSignature(_signIntent(address(harness), _intent()));
+    }
+
+    /// And the other direction: the buyer's signature does not authorise a settlement, because
+    /// the buyer holds no role. `IntentBadSigner` rather than `BuyerConsentBadSignature`, which
+    /// is what tells an operator which of the two went wrong.
+    function test_BuyerConsent_RejectsTheBuyersSignatureInTheOperatorSlot() public {
+        PrimaryTypes.SettlementIntent memory intent = _intent();
+        bytes32 paramsHash = _paramsHash(intent);
+
+        vm.prank(buyer);
+        vm.expectRevert(IIntentGate.IntentBadSigner.selector);
+        harness.settlePrimary(
+            VENUE_CALLDATA,
+            intent,
+            _signBuyerConsent(address(harness), intent),
+            _signBuyerConsent(address(harness), intent),
+            _kyc(address(harness), paramsHash),
+            _fee(address(harness), paramsHash)
+        );
+    }
+
+    /// 🔴 An ERC-1271 contract wallet is a first-class buyer. This is why the check is
+    /// `SignatureChecker.isValidSignatureNow` and not `ECDSA.recover`: a Safe or an embedded
+    /// smart account has no private key of its own, so an EOA-only check would refuse exactly
+    /// the clients a regulated brokerage most wants to serve.
+    ///
+    /// The fixture's `buyer` is repointed at the wallet so that every helper — the intent, both
+    /// attestations, the prank — is built for it, which is what makes the wallet the ACTOR as
+    /// well as the signer.
+    function test_BuyerConsent_AcceptsAnErc1271ContractWallet() public {
+        ContractWalletBuyer wallet = new ContractWalletBuyer(vm.addr(walletOwnerPk));
+        buyer = address(wallet);
+
+        PrimaryTypes.SettlementIntent memory intent = _intent();
+        _settleWithBuyerSignature(_signIntentWith(walletOwnerPk, address(harness), intent));
+
+        assertTrue(harness.usedIntentNonce(address(wallet), INTENT_NONCE), "the wallet's settlement did not complete");
+    }
+
+    /// The mutation that proves the test above exercised the ERC-1271 branch rather than passing
+    /// for some unrelated reason: the same wallet, the same owner signature, refused the moment
+    /// the wallet stops returning the magic value. Contract signatures are revocable in a way
+    /// ECDSA ones are not, which is why validity is asserted at settlement time and nowhere
+    /// else.
+    function test_BuyerConsent_RejectsARevokedErc1271Signature() public {
+        ContractWalletBuyer wallet = new ContractWalletBuyer(vm.addr(walletOwnerPk));
+        buyer = address(wallet);
+        wallet.setRevoked(true);
+
+        vm.expectRevert(IIntentGate.BuyerConsentBadSignature.selector);
+        _settleWithBuyerSignature(_signIntentWith(walletOwnerPk, address(harness), _intent()));
+    }
+
+    /// A contract that is not a wallet at all — no `isValidSignature` to call — is refused
+    /// rather than reverting undecodably out of the staticcall. `intent.buyer` is chosen by the
+    /// settlement operator, so "the buyer has code but no ERC-1271 support" is a case that
+    /// reaches this line in production.
+    ///
+    /// ⚠️ The stand-in is the OTHER primary-sale proxy rather than the forwarder, which would
+    /// have been the obvious pick and is the wrong one: pranking as the trusted forwarder makes
+    /// ERC-2771 read the actor out of the calldata suffix, so the test would be about
+    /// meta-transaction decoding instead of about consent.
+    function test_BuyerConsent_RejectsABuyerContractThatIsNotAWallet() public {
+        buyer = address(sales);
+
+        vm.expectRevert(IIntentGate.BuyerConsentBadSignature.selector);
+        _settleWithBuyerSignature(_signBuyerConsent(address(harness), _intent()));
     }
 }
 
@@ -626,6 +828,11 @@ contract PrimarySalesSettledTest is PrimarySalesTestBase {
     /// the buyer is still resolved from the meta-transaction sender, not from `msg.sender`.
     /// Without this, primary sales would be the one flow in the product that requires the
     /// buyer to hold native gas.
+    ///
+    /// ⚠️ The buyer signs TWICE on this path and the two are not the same object: a
+    /// `ForwardRequest` whose `data` is opaque bytes, and the `SettlementIntent` inside those
+    /// bytes. That is exactly why the intent signature exists — the forwarder signature is what
+    /// no wallet can render as balance changes, and the intent signature is what it can.
     function test_SettlePrimary_ResolvesTheBuyerThroughTheTrustedForwarder() public {
         PrimaryTypes.SettlementIntent memory intent = _intent();
         bytes32 paramsHash = _paramsHash(intent);
@@ -635,6 +842,7 @@ contract PrimarySalesSettledTest is PrimarySalesTestBase {
                 VENUE_CALLDATA,
                 intent,
                 _signIntent(address(harness), intent),
+                _signBuyerConsent(address(harness), intent),
                 _kyc(address(harness), paramsHash),
                 _fee(address(harness), paramsHash)
             )
@@ -711,6 +919,7 @@ contract PrimarySalesAdminTest is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntentWith(feeSignerPk, address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
             _kyc(address(sales), paramsHash),
             _fee(address(sales), paramsHash)
         );

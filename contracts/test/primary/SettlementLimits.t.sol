@@ -113,8 +113,12 @@ abstract contract SettlementLimitsTestBase is PrimarySalesTestBase {
     }
 
     /// A full settlement through the frozen entry point, for `who`. Mirrors
-    /// `PrimarySalesTestBase._settle`, which pins `buyer` into all three payloads.
-    function _settleThrough(address who) internal {
+    /// `PrimarySalesTestBase._settle`, which pins `buyer` into all four payloads.
+    ///
+    /// `whoPk` is a parameter rather than `buyerPk` closed over, because `who` is the intent's
+    /// buyer and the buyer signs the intent: a helper that took only the address would silently
+    /// build a settlement the buyer never consented to the moment anyone passed a second party.
+    function _settleThrough(address who, uint256 whoPk) internal {
         PrimaryTypes.SettlementIntent memory intent = _intent();
         intent.buyer = who;
         bytes32 paramsHash = _paramsHash(intent);
@@ -124,6 +128,7 @@ abstract contract SettlementLimitsTestBase is PrimarySalesTestBase {
             VENUE_CALLDATA,
             intent,
             _signIntentWith(settlementSignerPk, address(caps), intent),
+            _signIntentWith(whoPk, address(caps), intent),
             _kycFor(who, paramsHash),
             _feeFor(who, paramsHash)
         );
@@ -380,12 +385,12 @@ contract SettlementCapThroughTheEntryPointTest is SettlementLimitsTestBase {
         assertLt(caps.perTxCap(CURRENCY), DEBITED, "fixture: the cap must bite");
 
         vm.expectRevert();
-        _settleThrough(buyer);
+        _settleThrough(buyer, buyerPk);
     }
 
     /// A settlement inside the cap goes through and burns its nonce.
     function test_Settlement_SucceedsWithinTheCap() public {
-        _settleThrough(buyer);
+        _settleThrough(buyer, buyerPk);
         assertTrue(caps.usedIntentNonce(buyer, INTENT_NONCE), "the intent nonce must be burned");
     }
 
@@ -396,7 +401,7 @@ contract SettlementCapThroughTheEntryPointTest is SettlementLimitsTestBase {
         caps.setSettlementCap(CURRENCY, 1);
 
         vm.expectRevert();
-        _settleThrough(buyer);
+        _settleThrough(buyer, buyerPk);
 
         assertFalse(caps.usedIntentNonce(buyer, INTENT_NONCE), "a refused settlement burned a nonce");
     }
@@ -407,7 +412,7 @@ contract SettlementCapThroughTheEntryPointTest is SettlementLimitsTestBase {
         caps.setSettlementCap(CURRENCY, 0);
 
         vm.expectRevert(abi.encodeWithSelector(ISettlementLimits.PerTxCapExceeded.selector, CURRENCY, DEBITED, 0));
-        _settleThrough(buyer);
+        _settleThrough(buyer, buyerPk);
     }
 }
 

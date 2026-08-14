@@ -177,6 +177,18 @@ abstract contract PrimarySalesTestBase is Test {
         return _sign(pk, _digest(PRIMARY_DOMAIN_NAME, target, _paramsHash(intent)));
     }
 
+    /// The buyer's own signature over the SAME digest the settlement operator signs. A separate
+    /// helper from `_signIntent` even though the body is one call, because which PARTY signed is
+    /// the whole subject of the buyer-consent tests and `_signIntentWith(buyerPk, …)` at a call
+    /// site reads like a typo rather than like a claim.
+    function _signBuyerConsent(address target, PrimaryTypes.SettlementIntent memory intent)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return _signIntentWith(buyerPk, target, intent);
+    }
+
     /// A KYC attestation for the venue-settlement action, signed under `domainName` for
     /// `target`. `domainName` is a parameter so the cross-contract replay test can mint one
     /// under the EXCHANGE's domain and prove it is refused here.
@@ -248,8 +260,8 @@ abstract contract PrimarySalesTestBase is Test {
 
     // ── calls ─────────────────────────────────────────────────────────────────────────────
 
-    /// The whole happy path, assembled: a well-formed intent plus the two attestations bound
-    /// to it, submitted by the buyer.
+    /// The whole happy path, assembled: a well-formed intent, both signatures over it and the
+    /// two attestations bound to it, submitted by the buyer.
     function _settle(AsseteraPrimarySales target) internal {
         PrimaryTypes.SettlementIntent memory intent = _intent();
         bytes32 paramsHash = _paramsHash(intent);
@@ -258,6 +270,7 @@ abstract contract PrimarySalesTestBase is Test {
             VENUE_CALLDATA,
             intent,
             _signIntent(address(target), intent),
+            _signBuyerConsent(address(target), intent),
             _kyc(address(target), paramsHash),
             _fee(address(target), paramsHash)
         );

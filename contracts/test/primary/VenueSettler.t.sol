@@ -156,6 +156,7 @@ abstract contract VenueSettlerTestBase is PrimarySalesTestBase {
             data,
             intent,
             _signIntent(address(target), intent),
+            _signBuyerConsent(address(target), intent),
             _kyc(address(target), paramsHash),
             _fee(address(target), paramsHash, 0, takerBps, intent.feeCollector, address(currency))
         );
