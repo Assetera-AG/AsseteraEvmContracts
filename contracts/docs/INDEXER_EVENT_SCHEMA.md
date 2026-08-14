@@ -273,6 +273,7 @@ Event summary — **`AsseteraPrimarySales` (the primary market)**, a **different
 | `PrimarySettled` | `settlePrimary` — one per completed primary settlement |
 | `IntentConsumed` | `settlePrimary`, on settlement-intent consumption |
 | `SettlementCapSet` | `setSettlementCap` (admin) |
+| `WhitelistHandshake` | `whitelistHandshake` (admin) — a venue funding-wallet handshake, no analogue on the exchange |
 | `CollectorAllowed` | `setAllowedCollector` (admin) — **same signature and same `topic0`** as the exchange's |
 | `ComplianceRequiredSet` | `setComplianceRequired` (admin) — **same `topic0`** as the exchange's, but a **different `Action` ordinal set** |
 | `KycConsumed` | `settlePrimary`, when `complianceRequired[action]` — **same `topic0`** as the exchange's, different ordinals |
@@ -582,6 +583,16 @@ Three things follow for an indexer:
 - **It has a THIRD nonce namespace** — settlement intents — on top of the KYC and fee namespaces
   it inherits. Three independent signers, three independent single-use counters. See
   `IntentConsumed` below.
+- **A settlement carries FOUR signatures, not three.** The compliance backend, the fee service and
+  the settlement operator sign the three payloads above; the **buyer** signs the settlement intent
+  too, over the very same EIP-712 digest the settlement operator signs. It is a fourth signature
+  but not a fourth nonce namespace — the buyer signs the intent, so the intent's own single-use
+  nonce is the buyer's replay protection as well. `settlePrimary` takes both signatures as
+  separate arguments and they are **not interchangeable**: the operator's is accepted only if it
+  recovers to a `SETTLEMENT_OPERATOR_ROLE` holder, the buyer's only if it validates for
+  `intent.buyer` (ERC-1271 aware, so a Safe or an embedded smart account is a valid buyer).
+  ⚠️ `INTENT_TYPEHASH` is **unchanged** by this — the struct did not move, only the
+  `settlePrimary` selector did.
 
 #### `Action` (uint8) — `AsseteraPrimarySales`' own set, **not** the exchange's
 
@@ -693,8 +704,8 @@ service decides the terms, and the settlement operator (`SETTLEMENT_OPERATOR_ROL
 decides that money moves and where. A shared counter would let one signer invalidate another's
 payload. A single `settlePrimary` call therefore burns **three** nonces and emits up to three
 consumption events (`IntentConsumed`, `FeeConsumed`, and `KycConsumed` when the KYC gate is on) —
-all three signatures are verified before **any** nonce is burned, so an invalid third cannot spend
-the first two.
+all four signatures — the three payloads plus the buyer's countersignature on the intent — are
+verified before **any** nonce is burned, so an invalid one cannot spend the others.
 
 For joining: `IntentConsumed` and `PrimarySettled` from the same transaction share `(buyer, nonce)`.
 Both attestations riding along carry a `paramsHash` equal to the intent's EIP-712 struct hash
@@ -724,6 +735,33 @@ Admin config event — the analogue of `CollectorAllowed`, useful for validating
 seen in `PrimarySettled` was within the cap in force at the time. ⚠️ **A cap of zero means "this
 token cannot be settled in at all", not "unlimited"** — every token starts unconfigured and
 fails closed, and clearing a cap emits `SettlementCapSet(token, 0, 0, 0)`.
+
+---
+
+### `WhitelistHandshake`
+
+```solidity
+event WhitelistHandshake(address indexed destination, uint256 amount);
+```
+- **topic0:** `0x95a1ea0f6d9b937e6e314bb73abd153560ef93b7048bb65aa6f4b4ba2f668af1`
+- **Indexed:** `destination`
+- **Data:** `amount`
+- **Emitted by:** `AsseteraPrimarySales`, **not** `AsseteraECS`
+
+| Field | Description |
+|---|---|
+| `destination` | the address the venue nominated for its funding-wallet whitelist |
+| `amount` | the native currency forwarded, in full, in the same call (`msg.value`) |
+
+Admin-only, and the **only** movement of native currency anywhere in this estate's contracts.
+Third-party venues such as Backed onboard a funding wallet by having it nominate an address and
+move a token amount of native currency to it; the funding wallet has to be this router, because
+the router is what holds the buyer allowances and makes the venue calls.
+
+⚠️ **Pass-through only: the router has no `receive()` and no sweep.** It never holds a native
+balance — a bare value transfer to it still reverts — so there is no "sweep" event to watch for
+and no accumulating balance to reconcile. Nothing about a settlement flows through this event;
+it exists for the audit trail of an operational one-off.
 
 ---
 
