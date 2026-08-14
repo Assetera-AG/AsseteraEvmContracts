@@ -94,8 +94,18 @@ interface ISettler {
     /// @dev The venue delivered less than the buyer signed for. A revert, never a silent bad fill.
     error InsufficientAssetDelivered(uint256 delivered, uint256 minAssetOut);
 
-    /// @dev The router's own settlement-token balance did not return to its pre-call value.
-    ///      The invariant is zero STANDING balance, not that the venue consumed the whole quote.
+    /// @dev The router's own balance of one of the two settled tokens did not return to its
+    ///      pre-call value. The invariant is zero STANDING balance, not that the venue consumed
+    ///      the whole quote.
+    ///
+    ///      ⚠️ **Both legs, deliberately one error.** It was the settlement leg only until the
+    ///      review of PR #58; the asset leg is now held to the same standard, because asset
+    ///      token a venue misdirected to the router otherwise accumulated with no sweep and no
+    ///      event. Asset that lands here during a settlement is FORWARDED to the buyer (the
+    ///      increase over the pre-call baseline, never the whole balance) and this error is what
+    ///      proves the forward actually moved it. One selector rather than two: the two are the
+    ///      same invariant on two tokens, the failing token is in the trace, and splitting them
+    ///      would be an ABI change buying a consumer nothing it can act on differently.
     error RouterBalanceChanged();
 
     /// @dev The settlement-token pull did not move exactly what it was asked to move: the

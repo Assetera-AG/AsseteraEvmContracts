@@ -10,6 +10,7 @@ import {AsseteraPrimarySales} from "../../src/primary/AsseteraPrimarySales.sol";
 import {PrimaryTypes} from "../../src/primary/types/PrimaryTypes.sol";
 import {ISettler} from "../../src/primary/interfaces/ISettler.sol";
 import {ISettlementLimits} from "../../src/primary/interfaces/ISettlementLimits.sol";
+import {FaucetToken} from "../mocks/FaucetToken.sol";
 import {HostileVenue} from "./mocks/HostileVenue.sol";
 import {
     FeeOnTransferCurrency,
@@ -602,9 +603,11 @@ contract VenueSettlerLyingVenueTest is HostileSettlementBase {
         assertEq(asset.balanceOf(buyer), generous, "the buyer must keep every unit delivered");
     }
 
-    /// 🔴 And nobody else can claim the excess, because the asset never passes through this
-    /// contract: the venue delivers to a recipient named in ITS calldata and the router only
-    /// ever reads the buyer's balance. The router holds no asset before, during or after.
+    /// 🔴 And nobody else can claim the excess. On this script the venue delivers straight to the
+    /// buyer, so the asset never passes through the router at all; when it does pass through —
+    /// see the misdirected-delivery tests below — it is forwarded on in the same call. Either
+    /// way the router's asset balance is back at its pre-call value by the end, which step 9 of
+    /// `_settleVenue` now asserts rather than leaving to the venue's good manners.
     function test_LyingVenue_OverDeliveryLeavesNothingForAnyoneElseToClaim() public {
         bytes memory data = _encode(_script(QUOTE, MIN_OUT * 1_000));
         PrimaryTypes.SettlementIntent memory intent = _hostileIntent(data);
@@ -617,18 +620,90 @@ contract VenueSettlerLyingVenueTest is HostileSettlementBase {
         assertEq(asset.balanceOf(address(hostile)), 0, "the venue kept part of the delivery");
     }
 
-    /// Delivering to the ROUTER instead of the buyer is not delivery. This is what makes the
-    /// measurement the buyer's balance rather than a transfer the router observed, and it is
-    /// also what stops the router being usable as a delivery sink an operator could later sweep.
-    function test_LyingVenue_DeliveringToTheRouterIsNotDelivery() public {
+    /// 🔴 Delivering to the ROUTER instead of the buyer is FORWARDED to the buyer and counts as
+    /// delivery.
+    ///
+    /// ⚠️ **The old behaviour — the settlement reverting with `InsufficientAssetDelivered(0, …)`
+    /// — was deliberately replaced on review of PR #58, not regressed into.** The router asserted
+    /// nothing about its own ASSET balance, so token a venue misdirected here simply accumulated,
+    /// with no sweep and no event. The router is now not allowed to hold asset token at all, and
+    /// what lands here during the call is forwarded rather than reverted on, because
+    /// `minAssetOut` is a floor and not a ceiling: more than expected reaching the buyer is fine,
+    /// and refusing an otherwise honest settlement over the venue's choice of recipient is not.
+    ///
+    /// The forward happens BEFORE the delivery delta is measured, which is what this test pins:
+    /// the buyer ends up with the full `ASSET_OUT` and the floor is cleared by token that never
+    /// went to them directly.
+    function test_LyingVenue_DeliveringToTheRouterIsForwardedToTheBuyer() public {
         HostileVenue.Script memory script = _script(QUOTE, ASSET_OUT);
         script.recipient = address(router);
         bytes memory data = _encode(script);
         PrimaryTypes.SettlementIntent memory intent = _hostileIntent(data);
 
         _approveDebit(address(router), intent);
-        vm.expectRevert(abi.encodeWithSelector(ISettler.InsufficientAssetDelivered.selector, 0, MIN_OUT));
+        vm.expectEmit(true, true, true, true, address(router));
+        emit ISettler.PrimarySettled(
+            buyer,
+            address(asset),
+            address(hostile),
+            ASSET_OUT,
+            address(currency),
+            QUOTE,
+            0,
+            FEE,
+            collector,
+            SUPPLIER_REF,
+            INTENT_NONCE
+        );
         _submitFull(data, intent, TAKER_BPS);
+
+        assertEq(asset.balanceOf(buyer), ASSET_OUT, "the misdirected delivery did not reach the buyer");
+        assertEq(asset.balanceOf(address(router)), 0, "the router kept asset a stranger could sweep");
+    }
+
+    /// 🔴 A venue that SPLITS the delivery between the buyer and the router still settles, and
+    /// this is the case that forces the forward to run before the delta is measured rather than
+    /// after the settlement. Each half alone is below `minAssetOut`; together they clear it.
+    function test_LyingVenue_ASplitDeliveryCountsInFullOnceTheRouterHalfIsForwarded() public {
+        uint256 half = MIN_OUT / 2 + 1; // each leg alone is under the floor, the pair is over it
+        HostileVenue.Script memory script = _script(QUOTE, half);
+        script.recipient = address(router);
+        // The second leg, delivered directly to the buyer from inside the SAME venue call. The
+        // script has one recipient, so the venue's generic call-out step is what splits it.
+        script.reenterTarget = address(asset);
+        script.reenterData = abi.encodeCall(FaucetToken.mint, (buyer, half));
+        bytes memory data = _encode(script);
+        PrimaryTypes.SettlementIntent memory intent = _hostileIntent(data);
+
+        _approveDebit(address(router), intent);
+        _submitFull(data, intent, TAKER_BPS);
+
+        assertEq(asset.balanceOf(buyer), half * 2, "the router's half never reached the buyer");
+        assertEq(asset.balanceOf(address(router)), 0, "the router kept the half it was sent");
+    }
+
+    /// 🔴 The forward moves the INCREASE, never the whole balance. A donation that was sitting
+    /// in the router before this settlement belongs to nobody in it, and handing it to whichever
+    /// buyer happens to settle next would be the mirror of the bug the settlement-token snapshot
+    /// already avoids. The two legs are deliberately symmetrical.
+    /// The donation sits here BEFORE a settlement that itself misdirects delivery to the router,
+    /// so the forward is genuinely exercised and the only question is how much it moves. A
+    /// version that only donated (with honest delivery) would never enter the branch and would
+    /// pass against a router that swept its whole balance.
+    function test_LyingVenue_APreExistingAssetDonationIsNotHandedToTheBuyer() public {
+        uint256 donation = 7e18;
+        asset.mint(address(router), donation);
+
+        HostileVenue.Script memory script = _script(QUOTE, ASSET_OUT);
+        script.recipient = address(router);
+        bytes memory data = _encode(script);
+        PrimaryTypes.SettlementIntent memory intent = _hostileIntent(data);
+
+        _approveDebit(address(router), intent);
+        _submitFull(data, intent, TAKER_BPS);
+
+        assertEq(asset.balanceOf(buyer), ASSET_OUT, "the buyer was handed somebody else's donation");
+        assertEq(asset.balanceOf(address(router)), donation, "the donation was swept out of the router");
     }
 
     /// The delivery boundary is inclusive: exactly `minAssetOut` settles.

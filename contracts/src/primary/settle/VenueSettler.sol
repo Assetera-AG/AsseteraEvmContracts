@@ -29,8 +29,8 @@ import {FeeMath} from "../../libs/FeeMath.sol";
 ///              the two tokens this settlement moves — plus the buyer-fee cross-check;
 ///           1. (the value caps, charged for every settlement path by
 ///              `SettlementLimits._authorizeSettlement` before this function is entered);
-///           2. snapshot `assetToken.balanceOf(intent.buyer)` and this contract's own
-///              `settlementToken` balance;
+///           2. snapshot `assetToken.balanceOf(intent.buyer)` and this contract's OWN
+///              `settlementToken` AND `assetToken` balances;
 ///           3. pull `venueQuoteIn + buyerFee` from the buyer — never an unlimited allowance,
 ///              always an exact amount for this one settlement — and MEASURE what arrived,
 ///              refusing the settlement (`SettlementPullMismatch`) if the currency delivered
@@ -39,12 +39,14 @@ import {FeeMath} from "../../libs/FeeMath.sol";
 ///              `venueCalldata`;
 ///           5. set the approval back to zero and measure what the venue actually consumed;
 ///           6. refund whatever the venue did not consume to the buyer;
-///           7. assert the measured asset delta is at least `minAssetOut`
+///           7. forward to the buyer any ASSET token that landed on this contract during the
+///              call — the increase over the step-2 baseline, never the whole balance — and
+///              then assert the measured asset delta is at least `minAssetOut`
 ///              (`InsufficientAssetDelivered`) — a revert, never a silent bad fill;
 ///           8. transfer `buyerFee` to `intent.feeCollector`;
-///           9. assert this contract's settlement-token balance returned to its PRE-CALL
-///              value (`RouterBalanceChanged`) — against the pre-call balance, not against the
-///              venue having consumed the whole quote;
+///           9. assert this contract's settlement-token AND asset-token balances returned to
+///              their PRE-CALL values (`RouterBalanceChanged`) — against the pre-call balances,
+///              not against the venue having consumed the whole quote;
 ///          10. return the four MEASURED numbers.
 ///
 ///         ⚠️ **Two deliberate departures from the ordered flow the skeleton packet sketched
@@ -81,6 +83,19 @@ import {FeeMath} from "../../libs/FeeMath.sol";
 ///         both silently. Step 3 now measures the pull and refuses anything other than the
 ///         exact amount, which makes such a currency unsettleable rather than lossy. That is a
 ///         listing decision, taken at the first line that moves money.
+///
+///         ⚠️ **The zero-standing-balance invariant is asserted on BOTH tokens, and the asset
+///         half only landed on review of PR #58.** The settlement leg always asserted that this
+///         contract's balance returned to its pre-call value; the asset leg asserted nothing, so
+///         asset token a venue misdirected here accumulated silently with no sweep and no event.
+///         The router is not allowed to hold asset token, real or dust. What lands here during
+///         the call is FORWARDED to the buyer rather than reverted on, because `minAssetOut` is
+///         a floor and not a ceiling: more than expected reaching the buyer is fine, and
+///         refusing an otherwise honest settlement over the venue's choice of recipient is not.
+///         The two legs are deliberately symmetrical — both snapshot in step 2, both move only
+///         the INCREASE over that snapshot, both assert the return to it in step 9 — so a
+///         pre-existing donation from a third party is never handed to whichever buyer happens
+///         to settle next, on either token.
 ///
 ///         ⚠️ **What the balance-delta assertion does and does not survive.** An earlier
 ///         version of this comment claimed a rebase "cannot occur mid-call". That is false —
@@ -206,11 +221,17 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         // no path can reach this line without it having run.
 
         // ── 2 · snapshots ─────────────────────────────────────────────────────────────────
-        // The router's own pre-call balance, NOT zero: the invariant asserted at the end is
+        // The router's own pre-call balances, NOT zero: the invariant asserted at the end is
         // "no standing balance was created", and a stray donation sitting here must neither
         // be counted as venue consumption nor be swept into the refund.
+        //
+        // The ASSET baseline is the same statement about the other token, and it exists for
+        // exactly the same reason the settlement one does: step 7 forwards only what this call
+        // added, so a third party's donation is never handed to whichever buyer happens to
+        // settle next. Keep the two symmetrical.
         uint256 buyerAssetBefore = asset.balanceOf(intent.buyer);
         uint256 routerBefore = currency.balanceOf(address(this));
+        uint256 routerAssetBefore = asset.balanceOf(address(this));
 
         // ── 3 · pull exactly this settlement's debit, and MEASURE what arrived ────────────
         // The buyer's allowance to this router is the true ceiling on a compromised settlement
@@ -279,7 +300,30 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         // router would contradict the zero-standing-balance invariant.
         if (refund != 0) currency.safeTransfer(intent.buyer, refund);
 
-        // ── 7 · the delivery assertion ────────────────────────────────────────────────────
+        // ── 7 · forward misdirected asset, then the delivery assertion ────────────────────
+        // 🔴 The router is not allowed to hold asset token, real or dust. This contract holds
+        //    no asset by design, so anything a venue put here is somebody's delivery, and
+        //    without this it would sit here with no sweep and no event.
+        //
+        //    FORWARDED rather than reverted on: `minAssetOut` is a floor and not a ceiling, so
+        //    more than expected reaching the buyer is fine, and refusing an otherwise honest
+        //    settlement over the venue's choice of recipient is not.
+        //
+        //    ⚠️ The INCREASE over the step-2 baseline, NEVER the whole balance. This is the
+        //    same reasoning already written down for the settlement-token snapshot, and the two
+        //    are deliberately symmetrical: a pre-existing donation from a third party is not
+        //    this settlement's money and must not be handed to whichever buyer happens to
+        //    settle next.
+        //
+        //    ⚠️ BEFORE the delivery delta is measured, which is why this sits here rather than
+        //    beside the step-9 assertion. A venue that splits delivery between the buyer and
+        //    the router would otherwise fail `minAssetOut` even though the buyer ends up
+        //    holding everything.
+        uint256 routerAssetAfter = asset.balanceOf(address(this));
+        if (routerAssetAfter > routerAssetBefore) {
+            asset.safeTransfer(intent.buyer, routerAssetAfter - routerAssetBefore);
+        }
+
         // ⚠️ TODO(AO-550) — `intent.assetToken` may be a CLAIM token rather than the instrument
         //    the buyer bought, and nothing here can tell the difference. Every supplier we
         //    settle against (Dinari, Ondo, our own sale contract) is atomic, and where a mint is
@@ -303,10 +347,16 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         // ── 8 · our fee ───────────────────────────────────────────────────────────────────
         if (intent.buyerFee != 0) currency.safeTransfer(intent.feeCollector, intent.buyerFee);
 
-        // ── 9 · no standing balance ───────────────────────────────────────────────────────
-        // Against the PRE-CALL balance, which is the actual invariant, and not against zero
+        // ── 9 · no standing balance, on EITHER token ──────────────────────────────────────
+        // Against the PRE-CALL balances, which is the actual invariant, and not against zero
         // (a donation would break that) nor against the venue having consumed the whole quote.
+        //
+        // The asset leg closes step 7: it holds only if the forward actually moved what it was
+        // asked to move, so a fee-on-transfer asset — or a venue that pushed more asset at us
+        // after the forward, from a callback the token itself made — is refused rather than
+        // leaving a standing balance nobody can sweep.
         if (currency.balanceOf(address(this)) != routerBefore) revert RouterBalanceChanged();
+        if (asset.balanceOf(address(this)) != routerAssetBefore) revert RouterBalanceChanged();
 
         // ── 10 · the four measured numbers ────────────────────────────────────────────────
         result = SettlementResult({assetDelivered: delivered, venueIn: venueIn, refund: refund, fee: intent.buyerFee});
