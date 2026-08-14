@@ -109,8 +109,14 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
     ///
     /// @param venueCalldata The opaque bytes to hand the venue.
     /// @param intent        The verified settlement intent.
+    /// @param takerFeeBps   The basis points from the FEE attestation, carried in so that the
+    ///                      two signatures can be made to agree about the fee. The seam takes
+    ///                      this rather than reading it from storage because nothing on the
+    ///                      path stores it, and rather than decoding `msg.data` because that
+    ///                      would be fragile. It is an INTERNAL signature: the external ABI,
+    ///                      the storage layout and every signed payload are untouched.
     /// @return result       The four measured numbers: delivery, consumption, refund, fee.
-    function _settleVenue(bytes calldata venueCalldata, SettlementIntent calldata intent)
+    function _settleVenue(bytes calldata venueCalldata, SettlementIntent calldata intent, uint16 takerFeeBps)
         internal
         virtual
         returns (SettlementResult memory result)
@@ -119,11 +125,18 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         if (intent.venue == intent.settlementToken || intent.venue == intent.assetToken) {
             revert VenueIsASettledToken();
         }
-        // `IntentGate._bindAttestations` only reaches the collector allowlist when the ATTESTED
-        // basis points are non-zero. A settlement signer who sets `buyerFee` on an intent whose
-        // fee attestation says zero bps would otherwise pay an arbitrary address. This is the
-        // half of the fee cross-check that is reachable from the intent alone; see
-        // `_assertBuyerFee` for the half that is not.
+        // 🔴 The cross-check that makes the attested basis points mean something. Without it
+        //    `buyerFee` is whatever the settlement signer typed and the two signatures silently
+        //    disagree about the fee. It runs before anything moves.
+        _assertBuyerFee(intent, takerFeeBps);
+        // Defence in depth, and currently UNREACHABLE — said plainly rather than left to look
+        // load-bearing. With the cross-check above wired, zero attested bps force `buyerFee` to
+        // zero, and non-zero bps mean `IntentGate._bindAttestations` has already required both
+        // `allowedCollectors(feeAtt.feeCollector)` and `feeAtt.feeCollector ==
+        // intent.feeCollector`. Kept because it is two comparisons on a path whose whole job is
+        // to bound a compromised signer, and because it stops being unreachable the moment
+        // either of those upstream checks is relaxed. Delete it only together with a test that
+        // proves the upstream pair still holds.
         if (intent.buyerFee != 0 && !allowedCollectors(intent.feeCollector)) {
             revert FeeCollectorNotAllowed(intent.feeCollector);
         }
@@ -211,41 +224,43 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
 
     /// @dev The buyer fee the attested `takerFeeBps` implies on `venueQuoteIn`.
     ///
-    ///      **Rounded UP**, which is the direction that favours us rather than the payer, and
-    ///      is therefore deliberately NOT `FeeMath.feeAmount` — that helper floors, benefiting
-    ///      the payer, and is documented as matching every existing exchange call site
-    ///      exactly. `FeeMath.ceilDiv` is the same library's other rounding primitive and is
-    ///      already how `OrderBook` computes an amount DUE from a buyer.
+    ///      **`FeeMath.feeAmount`, which FLOORS**, and that choice is load-bearing rather than
+    ///      incidental. The rounding direction here is an interop contract with
+    ///      `AsseteraSignerService` and `AsseteraMarketplaceAPI`, which compute the same number
+    ///      off-chain: if the two sides disagree by one wei, every settlement whose fee does
+    ///      not divide exactly reverts. `feeAmount` is documented in its own library as
+    ///      matching every existing exchange call site exactly, and every fee in this system
+    ///      floors, so it is the number the rest of the estate already produces.
     ///
-    ///      ⚠️ The rounding direction is an interop contract with `AsseteraSignerService`: it
-    ///      must compute `buyerFee` the same way or every settlement whose fee does not divide
-    ///      exactly reverts on a one-wei disagreement. Pinned by hardcoded vectors in
-    ///      `test/primary/VenueSettler.t.sol`, the way the exchange pins its own fee maths.
+    ///      An earlier revision rounded UP on the reasoning that it favours us over the payer.
+    ///      That is true and it is the wrong trade: it buys at most one wei per settlement and
+    ///      pays for it by making the contract disagree with every other fee calculation we
+    ///      run. `FeeMath.ceilDiv` exists for price arithmetic — an amount DUE from a buyer in
+    ///      `OrderBook` — and is not used for a fee anywhere in this codebase.
+    ///
+    ///      Pinned by hardcoded vectors in `test/primary/VenueSettler.t.sol`, the way the
+    ///      exchange pins its own fee maths.
     ///
     /// @param venueQuoteIn The venue's firm quote, in the settlement currency.
     /// @param takerFeeBps  The basis points the fee service attested.
-    /// @return The fee that pair implies, rounded up.
+    /// @return The fee that pair implies, floored.
     function _expectedBuyerFee(uint256 venueQuoteIn, uint16 takerFeeBps) internal pure returns (uint256) {
-        return FeeMath.ceilDiv(venueQuoteIn * takerFeeBps, FeeMath.BPS_DENOMINATOR);
+        return FeeMath.feeAmount(venueQuoteIn, takerFeeBps);
     }
 
     /// @dev Assert that the settlement operator's `buyerFee` is the fee service's
     ///      `takerFeeBps` applied to the same intent's `venueQuoteIn`. Two independent signers
     ///      must agree on one number, or the basis points are decorative.
     ///
-    ///      🔴 **NOT WIRED. `_settleVenue` cannot call this and the gap is real, not stylistic.**
-    ///      The frozen seam is `_settleVenue(bytes, SettlementIntent)`; `takerFeeBps` lives on
-    ///      the `FeeAttestation`, which the seam does not carry, nothing on the path stores,
-    ///      and no `virtual` hook below this module exposes. Threading it through is one added
-    ///      parameter here plus one changed argument at the single call site in
-    ///      `AsseteraPrimarySales.settlePrimary` — an INTERNAL signature, so the frozen
-    ///      external ABI, the storage layout and every signed payload are untouched. That file
-    ///      is owned by another packet, so this one leaves the function tested and ready
-    ///      rather than editing it.
+    ///      Called from `_settleVenue` before anything moves. `takerFeeBps` lives on the
+    ///      `FeeAttestation`, which nothing on the path stores and no `virtual` hook below this
+    ///      module exposes, so the seam carries it as a third parameter. That is an INTERNAL
+    ///      signature: the frozen external ABI, the storage layout and every signed payload are
+    ///      untouched by it.
     ///
-    ///      Until it is wired, `intent.buyerFee` is bounded by three things and by nothing
-    ///      else: `maxSettlementIn` (the same signer's own cap), the buyer's exact per-call
-    ///      allowance, and the collector allowlist check at the top of `_settleVenue`.
+    ///      ⚠️ Without this the settlement signer alone decides the fee, bounded only by
+    ///      `maxSettlementIn` (its own number) and the buyer's per-call allowance, and the
+    ///      attested basis points become decorative while both signatures still verify.
     ///
     /// @param intent       The verified settlement intent.
     /// @param takerFeeBps  The basis points from the fee attestation bound to that intent.

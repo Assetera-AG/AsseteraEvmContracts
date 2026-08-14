@@ -32,7 +32,7 @@ contract PrimarySalesHarness is AsseteraPrimarySales {
 
     /// @dev The S2 seam, stubbed. Moves no tokens; returns the four numbers the entry point
     ///      puts into `PrimarySettled` so the event's field mapping can be pinned exactly.
-    function _settleVenue(bytes calldata, SettlementIntent calldata)
+    function _settleVenue(bytes calldata, SettlementIntent calldata, uint16)
         internal
         pure
         override

@@ -17,8 +17,9 @@ pragma solidity 0.8.28;
 ///
 ///         ```solidity
 ///         // settle/VenueSettler.sol — S2, filled by the constrained-executor packet
-///         function _settleVenue(bytes calldata venueCalldata, SettlementIntent calldata intent)
-///             internal virtual returns (SettlementResult memory);
+///         function _settleVenue(
+///             bytes calldata venueCalldata, SettlementIntent calldata intent, uint16 takerFeeBps
+///         ) internal virtual returns (SettlementResult memory);
 ///
 ///         // settle/MintSettler.sol — S1, filled by the mint packet
 ///         function _settleMint(SettlementIntent calldata intent)
