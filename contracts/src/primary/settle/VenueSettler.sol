@@ -25,9 +25,8 @@ import {FeeMath} from "../../libs/FeeMath.sol";
 ///         balance deltas THIS contract measured. Bind the outcome, not the bytes.
 ///
 /// @dev    The ordered flow of `_settleVenue`, and why each step is where it is:
-///           0. structural guards that cost two comparisons and a storage read — the venue may
-///              not be either of the two tokens this settlement moves, and a non-zero fee may
-///              only go to an allowlisted collector;
+///           0. structural guards that cost two comparisons — the venue may not be either of
+///              the two tokens this settlement moves — plus the buyer-fee cross-check;
 ///           1. (the value caps, charged for every settlement path by
 ///              `SettlementLimits._authorizeSettlement` before this function is entered);
 ///           2. snapshot `assetToken.balanceOf(intent.buyer)` and this contract's own
@@ -175,17 +174,23 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         //    `buyerFee` is whatever the settlement signer typed and the two signatures silently
         //    disagree about the fee. It runs before anything moves.
         _assertBuyerFee(intent, takerFeeBps);
-        // Defence in depth, and currently UNREACHABLE — said plainly rather than left to look
-        // load-bearing. With the cross-check above wired, zero attested bps force `buyerFee` to
-        // zero, and non-zero bps mean `IntentGate._bindAttestations` has already required both
-        // `allowedCollectors(feeAtt.feeCollector)` and `feeAtt.feeCollector ==
-        // intent.feeCollector`. Kept because it is two comparisons on a path whose whole job is
-        // to bound a compromised signer, and because it stops being unreachable the moment
-        // either of those upstream checks is relaxed. Delete it only together with a test that
-        // proves the upstream pair still holds.
-        if (intent.buyerFee != 0 && !allowedCollectors(intent.feeCollector)) {
-            revert FeeCollectorNotAllowed(intent.feeCollector);
-        }
+        // ⚠️ **A local `allowedCollectors(intent.feeCollector)` check USED TO STAND HERE and was
+        //    removed on review of PR #58. Do not "restore" it.** Its own comment already called
+        //    it provably unreachable, and a guard that cannot fire is not evidencing the
+        //    invariant it claims to guard — it only costs a storage read on every fee-bearing
+        //    settlement. Unreachable because the cross-check on the line above forces
+        //    `buyerFee == 0` whenever the attested bps are zero, and non-zero bps mean
+        //    `IntentGate._bindAttestations` has ALREADY required both
+        //    `allowedCollectors(feeAtt.feeCollector)` (via `FeeGate._validateFees`) and
+        //    `feeAtt.feeCollector == intent.feeCollector`.
+        //
+        //    The invariant is therefore evidenced where it is actually enforced, by two tests in
+        //    `test/primary/AsseteraPrimarySales.t.sol`:
+        //    `test_SettlePrimary_RejectsAnUnlistedCollector` (a fee to a collector this router
+        //    never listed) and `test_SettlePrimary_RejectsACollectorThatDisagreesWithTheIntent`
+        //    (a listed collector that is not the one the buyer signed for). If either upstream
+        //    check is ever relaxed, fix it there — a second copy of the rule down here is how
+        //    the two silently drift apart.
 
         IERC20 currency = IERC20(intent.settlementToken);
         IERC20 asset = IERC20(intent.assetToken);
