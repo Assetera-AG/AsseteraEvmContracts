@@ -3,11 +3,15 @@ pragma solidity 0.8.28;
 
 /// @title ISettlementLimits
 /// @notice The admin surface and vocabulary of the per-transaction settlement cap: the largest
-///         amount one settlement may debit from a buyer, per settlement token, enforced on the
-///         amount ACTUALLY DEBITED rather than on the quoted one.
+///         amount one settlement may put at risk of being debited from a buyer, per settlement
+///         token.
 ///
-///         Frozen by the skeleton packet so the constrained-executor packet can code against it
-///         with a mock and not wait for the implementation.
+///         ⚠️ Which number a family hands over is that family's decision, not this interface's.
+///         `VenueSettler` (S2) charges `venueQuoteIn + buyerFee` — the full authorised debit —
+///         BEFORE its first external call, because the refund is unknown until after the venue
+///         has been called and a cap checked afterwards is a check made after the money moved.
+///         Earlier wording here promised "the amount ACTUALLY DEBITED rather than the quoted
+///         one"; nothing implements that and it is gone.
 ///
 /// @dev    ⚠️ **This is a bound on BUGS, not on theft, and the distinction decides how to size
 ///         it.** An earlier revision of this module carried a per-day cap as well and was
@@ -60,9 +64,6 @@ interface ISettlementLimits {
     /// @dev The token reports more decimals than any real settlement currency, and converting a
     ///      whole-unit cap at that scale would be arithmetic nobody intended.
     error TokenDecimalsImplausible(address token, uint256 decimals);
-    /// @dev The caps module has not been implemented yet. Fails closed: an unimplemented cap
-    ///      must block a settlement, never wave it through.
-    error SettlementLimitsNotImplemented();
 
     /// @notice Per-transaction cap on the amount debited, for one settlement token, in the
     ///         token's own RAW units. Zero means the token cannot be settled in at all.

@@ -41,18 +41,23 @@ import {FeeMath} from "../../libs/FeeMath.sol";
 ///              venue having consumed the whole quote;
 ///          10. return the four MEASURED numbers.
 ///
-///         ⚠️ **Two deliberate departures from the stub's ordered flow, both forced:**
-///           * The stub put the cap charge inside step 2 (with the pull). It is charged FIRST
+///         ⚠️ **Two deliberate departures from the ordered flow the skeleton packet sketched
+///         for this file, both forced:**
+///           * The sketch put the cap charge inside step 2 (with the pull). It is charged FIRST
 ///             here instead. Nothing observable changes — the whole call is atomic, so a cap
 ///             breach reverts the same transaction either way — but the cheapest check runs
-///             before the first external call, and with the caps module unimplemented the seam
-///             fails closed on `SettlementLimitsNotImplemented` rather than on a token call.
-///             ⚠️ `SettlementLimits`' own doc comment asks for the amount debited "after the
-///             refund is known"; the stub for THIS file asks for `venueQuoteIn + buyerFee`.
-///             They cannot both hold. This file charges the stub's number, which is the
-///             conservative one: it is never below the net debit, so the cap can only ever be
-///             tighter than the alternative, never looser.
-///           * The stub asserted the router balance in step 4, before the fee transfer of step
+///             before the first external call, so a settlement in a currency nobody sized is
+///             refused with `PerTxCapExceeded(token, debit, 0)` before a single token call is
+///             made rather than after one.
+///             ⚠️ **The number charged is `venueQuoteIn + buyerFee`, the FULL authorised debit,
+///             not the net one.** `ISettlementLimits` and `SettlementLimits` are written around
+///             "the amount actually debited, after the refund is known", and that cannot hold
+///             for a charge made before the venue has been called: the refund is not known yet.
+///             The full debit is the conservative reading — it is never below the net one, so
+///             the cap can only ever bite earlier, never later — and it is the number a human
+///             sizing the cap is looking at, because it is the most the buyer can be asked for.
+///             Do not "fix" this by moving the charge below the money.
+///           * The sketch asserted the router balance in step 4, before the fee transfer of step
 ///             6. That is not satisfiable: between the refund and the fee transfer the router
 ///             still holds exactly `buyerFee`. The assertion is made once, LAST, where it is
 ///             strongest — it then also catches a fee transfer that silently moved nothing.
@@ -62,14 +67,13 @@ import {FeeMath} from "../../libs/FeeMath.sol";
 ///         (which is what tokenised equities are) ACROSS blocks and reasons about a raw
 ///         balance is wrong.
 ///
-///         ⚠️ `forge build` reports "Unreachable code" for every statement below the
-///         `_consumeSettlementLimit` call, and that is the CORRECT reading while the value-caps
-///         module (AO-517) is a stub that reverts unconditionally: the compiler can prove no
-///         line of the money path runs. It is the same warning `AsseteraPrimarySales` documents
-///         on its own `emit`, for the same reason, and every one of them disappears when that
-///         packet fills its seam. Do not silence them by moving the charge below the money —
-///         charging the caps before the first external call is what makes "the caps are not
-///         implemented" mean "nothing can move" rather than "the venue was called anyway".
+///         ⚠️ **An unset cap is CLOSED, and this file is where that becomes a settlement-level
+///         property rather than a module-level one.** `SettlementLimits` reads zero as "this
+///         currency cannot be settled in at all", and because the charge is step 1 here, a
+///         currency nobody deliberately sized cannot reach a single line of the money path —
+///         no pull, no approval, no venue call. Every settlement currency therefore needs an
+///         explicit `setSettlementCap` before the first primary sale in it can succeed, which
+///         is the intended deployment step and not a bug to route around.
 ///
 ///         The adversarial suite — a lying venue, reentrancy, rebasing and fee-on-transfer
 ///         tokens, replay, over-delivery — is AO-551 and lives outside this packet.

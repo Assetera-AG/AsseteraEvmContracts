@@ -191,12 +191,12 @@ contract AsseteraPrimarySales is
         // number; without this the basis points are decorative. Internal signature only.
         SettlementResult memory result = _settleVenue(venueCalldata, intent, fee.takerFeeBps);
 
-        // ⚠️ `forge build` reports "Unreachable code" here, and that is the CORRECT reading
-        //    while no settlement family is implemented: `VenueSettler._settleVenue` reverts
-        //    unconditionally, so the compiler can prove this emit cannot run. The warning
-        //    disappears when the family packet fills the seam. Do not silence it by weakening
-        //    the stub — a seam that fails closed is what makes "compiles and tests with no
-        //    settler present" mean anything.
+        // Every amount below is MEASURED by the family, every identifier is one the settlement
+        // operator signed. That split is what lets `AsseteraEvmIndexerService` build an
+        // activity-ledger leg with no supplier-specific decoder — nothing here is relayed from
+        // whatever the venue chose to emit. ⚠️ `ISettler.PrimarySettled` is FROZEN: `topic0` is
+        // derived from its signature, so a field added, reordered or retyped stops matching the
+        // deployed filter silently.
         emit PrimarySettled(
             intent.buyer,
             intent.assetToken,

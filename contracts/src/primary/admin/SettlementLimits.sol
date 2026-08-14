@@ -6,10 +6,17 @@ import {IntentGate} from "../IntentGate.sol";
 import {ISettlementLimits} from "../interfaces/ISettlementLimits.sol";
 
 /// @title SettlementLimits
-/// @notice A per-transaction cap on settled value, per settlement token, enforced on the amount
-///         ACTUALLY DEBITED from the buyer — the quote minus whatever the venue did not take —
-///         rather than on the quoted one. The settler families call `_consumeSettlementLimit`
-///         once the refund is known.
+/// @notice A per-transaction cap on settled value, per settlement token. This module stores and
+///         compares; WHICH number a settlement is judged on is each settler family's decision,
+///         made where it calls `_consumeSettlementLimit`.
+///
+///         ⚠️ `VenueSettler` (S2) charges `venueQuoteIn + buyerFee` — the FULL authorised debit
+///         — as its step 1, before the first external call, because the refund is not known
+///         until after the venue has been called and a charge made afterwards would be a check
+///         made after the money moved. An earlier revision of this file described the charge as
+///         "the amount actually debited, after the refund is known"; that is not what any
+///         family does and the wording is gone. The full debit is the conservative reading: it
+///         is never below the net one, so the cap can only ever bite earlier.
 ///
 ///         **Size this as a bound on BUGS, not as a loss limit.** See `ISettlementLimits` for
 ///         why the per-day cap that used to live here was withdrawn on 2026-08-14: what bounds a
@@ -108,8 +115,8 @@ abstract contract SettlementLimits is IntentGate, ISettlementLimits {
     // --------------------------------------------------------------------- //
 
     /// @dev Charge one settlement against the cap for its settlement token, and revert if it
-    ///      does not fit. Called by each settler family with the amount actually debited from
-    ///      the buyer — after the refund is known, not the quote.
+    ///      does not fit. Each settler family decides which number it hands over; S2 hands the
+    ///      full authorised debit (`venueQuoteIn + buyerFee`) before its first external call.
     ///
     ///      A pure comparison: no external call, no conversion, no state write. The conversion
     ///      happened once, in `setSettlementCap`.
@@ -121,8 +128,8 @@ abstract contract SettlementLimits is IntentGate, ISettlementLimits {
     ///      rather than something a future packet has to remember.
     ///
     /// @param token         The settlement currency being debited.
-    /// @param amountDebited The amount ACTUALLY taken from the buyer: quote plus fee, minus the
-    ///                      refund the venue did not consume.
+    /// @param amountDebited The amount this settlement puts at risk of being taken from the
+    ///                      buyer. For S2 that is `venueQuoteIn + buyerFee`.
     function _consumeSettlementLimit(address token, uint256 amountDebited) internal virtual {
         uint256 cap = _primary().settlementPerTxCap[token];
         // ⚠️ The `cap == 0` test is load-bearing and not redundant with the comparison after it.

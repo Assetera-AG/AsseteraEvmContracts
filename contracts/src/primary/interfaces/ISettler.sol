@@ -75,10 +75,12 @@ interface ISettler {
         uint256 nonce
     );
 
-    /// @dev The skeleton's default body for both seams. `AsseteraPrimarySales` is deployable
-    ///      and fully testable with no family implemented, which is what proves the seam is a
-    ///      real boundary rather than a comment; a settlement attempted against an unfilled
-    ///      family fails closed, here, after every signature has already been checked.
+    /// @dev The skeleton's default body for a seam nobody has filled. S2 (`VenueSettler`) is
+    ///      implemented, so this is now reachable only through S1 (`MintSettler`), and it stays
+    ///      until the mint packet lands. `AsseteraPrimarySales` being deployable and fully
+    ///      testable with a family unfilled is what proves the seam is a real boundary rather
+    ///      than a comment: the settlement fails closed HERE, after every signature has already
+    ///      been checked and before anything moves.
     error SettlerNotImplemented();
 
     /// @dev The venue delivered less than the buyer signed for. A revert, never a silent bad fill.
