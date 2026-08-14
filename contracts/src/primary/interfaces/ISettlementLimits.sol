@@ -6,12 +6,13 @@ pragma solidity 0.8.28;
 ///         amount one settlement may put at risk of being debited from a buyer, per settlement
 ///         token.
 ///
-///         ⚠️ Which number a family hands over is that family's decision, not this interface's.
-///         `VenueSettler` (S2) charges `venueQuoteIn + buyerFee` — the full authorised debit —
-///         BEFORE its first external call, because the refund is unknown until after the venue
-///         has been called and a cap checked afterwards is a check made after the money moved.
-///         Earlier wording here promised "the amount ACTUALLY DEBITED rather than the quoted
-///         one"; nothing implements that and it is gone.
+///         ⚠️ The charge is made ONCE, by `SettlementLimits._authorizeSettlement`, for every
+///         settler family — not by each family, which is what it used to be and which left the
+///         mint family free to ship uncapped. The number is `venueQuoteIn + buyerFee`, the full
+///         authorised debit, BEFORE any external call, because the refund is unknown until after
+///         a venue has been called and a cap checked afterwards is a check made after the money
+///         moved. Earlier wording here promised "the amount ACTUALLY DEBITED rather than the
+///         quoted one"; nothing implements that and it is gone.
 ///
 /// @dev    ⚠️ **This is a bound on BUGS, not on theft, and the distinction decides how to size
 ///         it.** An earlier revision of this module carried a per-day cap as well and was

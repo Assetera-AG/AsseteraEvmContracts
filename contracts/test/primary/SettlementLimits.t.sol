@@ -8,26 +8,28 @@ import {PrimaryTypes} from "../../src/primary/types/PrimaryTypes.sol";
 import {GateTypes} from "../../src/types/GateTypes.sol";
 import {GateStorage} from "../../src/gates/GateStorage.sol";
 import {ISettlementLimits} from "../../src/primary/interfaces/ISettlementLimits.sol";
+import {ISettler} from "../../src/primary/interfaces/ISettler.sol";
 import {PrimarySalesTestBase} from "./PrimarySalesTestBase.sol";
 
-/// @notice `AsseteraPrimarySales` with the S2 seam filled by a stub that CHARGES THE CAP the way
-///         the constrained executor will, plus the internal hook exposed for direct assertion.
+/// @notice `AsseteraPrimarySales` with the S2 seam filled by a stub that moves nothing, plus the
+///         internal hook exposed for direct assertion.
 ///
 ///         It does NOT extend `PrimarySalesHarness`, and that is a compiler fact rather than a
 ///         preference: that harness's `_settleVenue` is `internal pure override` — non-virtual,
 ///         so it cannot be overridden again. Everything else — the fixtures, the three signers,
 ///         the intent and attestation builders — comes from `PrimarySalesTestBase`.
 ///
-/// @dev    ⚠️ The stub charges `venueQuoteIn + buyerFee - refund`, which is deliberately
-///         DIFFERENT from every quoted number in the intent, so a test that passes here cannot
-///         also pass against a module that ignores what it was handed and reads the intent.
+/// @dev    ⚠️ **The stub deliberately does NOT charge the cap, and it used to.** The charge is
+///         made once, by `SettlementLimits._authorizeSettlement`, which every settler family
+///         runs before it moves anything — a cap each family opted into was not a cap, and the
+///         mint family's documented preamble omitted it entirely. A stub that charged again
+///         would be asserting a duplicate rather than the real path.
 ///
-///         ⚠️ **That is NOT the number the real `VenueSettler` hands over.** S2 charges
-///         `venueQuoteIn + buyerFee`, the full authorised debit, before its first external call
-///         — the refund is not known until after the venue has been called. These suites are
-///         about the module: what it stores, how it converts, and that it refuses whatever
-///         number exceeds the cap. Which number a family passes is asserted where that family
-///         lives, in `VenueSettler.t.sol`.
+///         The number the preamble charges is `venueQuoteIn + buyerFee`, the full authorised
+///         debit, before the family is entered: the refund is not known until after the venue
+///         has been called. These suites are about the module — what it stores, how it converts,
+///         and that it refuses what exceeds the cap — plus the settlement-level assertions at
+///         the end, which are now about the preamble rather than about S2.
 contract SettlementCapsHarness is AsseteraPrimarySales {
     /// Measured delivery, above `MIN_ASSET_OUT`. Nothing in this packet reads it.
     uint256 public constant STUB_ASSET_DELIVERED = 42e18;
@@ -37,8 +39,9 @@ contract SettlementCapsHarness is AsseteraPrimarySales {
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address trustedForwarder) AsseteraPrimarySales(trustedForwarder) {}
 
-    /// @dev Moves no tokens. Charges the cap with the DEBITED amount and reports the four
-    ///      numbers the entry point puts into `PrimarySettled`.
+    /// @dev Moves no tokens and charges nothing: the cap has already been charged by the shared
+    ///      preamble by the time a family runs. Reports the four numbers the entry point puts
+    ///      into `PrimarySettled`.
     ///
     ///      The third parameter is the attested `takerFeeBps`, which the real `VenueSettler`
     ///      cross-checks `intent.buyerFee` against. This stub REPLACES that settler wholesale,
@@ -46,10 +49,10 @@ contract SettlementCapsHarness is AsseteraPrimarySales {
     ///      and the fee cross-check is pinned where it lives, in `VenueSettler.t.sol`.
     function _settleVenue(bytes calldata, SettlementIntent calldata intent, uint16)
         internal
+        pure
         override
         returns (SettlementResult memory)
     {
-        _consumeSettlementLimit(intent.settlementToken, intent.venueQuoteIn + intent.buyerFee - STUB_REFUND);
         return SettlementResult({
             assetDelivered: STUB_ASSET_DELIVERED,
             venueIn: intent.venueQuoteIn - STUB_REFUND,
@@ -81,8 +84,10 @@ abstract contract SettlementLimitsTestBase is PrimarySalesTestBase {
     /// A settlement currency that does not answer `decimals()` at all.
     address internal constant CURRENCY_MUTE = address(0x3007);
 
-    /// The debit one `_settleThrough` produces: `QUOTE_IN + BUYER_FEE - STUB_REFUND`.
-    uint256 internal constant DEBITED = QUOTE_IN + BUYER_FEE - 10e6;
+    /// The debit one `_settleThrough` is charged for: the FULL authorised debit, charged by the
+    /// shared preamble before any family runs. It is not net of `STUB_REFUND`, because the
+    /// refund is not known until after a venue has been called.
+    uint256 internal constant DEBITED = QUOTE_IN + BUYER_FEE;
 
     /// The cap the suites run under, in WHOLE tokens. `QUOTE_IN` is 1_000e6, so ten thousand
     /// whole units is comfortably above one settlement and nowhere near a decimals mistake.
@@ -103,13 +108,6 @@ abstract contract SettlementLimitsTestBase is PrimarySalesTestBase {
         caps.setAllowedCollector(collector, true);
         caps.setSettlementCap(CURRENCY, CAP_WHOLE);
         vm.stopPrank();
-    }
-
-    /// Give an address code and a `decimals()` answer. Both are needed: the setter refuses an
-    /// address with no code before it ever calls, which is what makes a plain EOA fail closed.
-    function _mockDecimals(address token, uint8 d) internal {
-        vm.etch(token, hex"00");
-        vm.mockCall(token, abi.encodeWithSignature("decimals()"), abi.encode(d));
     }
 
     /// A full settlement through the frozen entry point, for `who`. Mirrors
@@ -372,19 +370,21 @@ contract SettlementCapEnforcementTest is SettlementLimitsTestBase {
 ///         is charged on the number the FAMILY hands over, and a cap that refuses leaves nothing
 ///         behind.
 contract SettlementCapThroughTheEntryPointTest is SettlementLimitsTestBase {
-    /// The module charges what it is handed and does not go looking at the intent for a number
-    /// of its own. The stub's debit differs from every quoted number in the intent, so an
-    /// implementation that read `venueQuoteIn` instead would fail this.
-    function test_Settlement_ChargesTheAmountTheFamilyHandsOver() public {
+    /// 🔴 The number a settlement is charged, and WHERE it is charged. The stub family charges
+    /// nothing at all, so a settlement that is still refused proves the charge comes from the
+    /// shared preamble rather than from the family — which is the whole property, since the only
+    /// family that exists is S2 and the mint family would otherwise have shipped uncapped.
+    ///
+    /// The amount in the error is the FULL authorised debit rather than anything net of the
+    /// stub's refund, because the refund is not known before the venue is called.
+    function test_Settlement_IsChargedByTheSharedPreambleNotByTheFamily() public {
+        // A raw cap strictly under the debit, set directly so no rounding to whole units can
+        // blur the boundary this test depends on.
         vm.prank(admin);
-        caps.setSettlementCap(CURRENCY, 0);
-        // A raw cap strictly between the two numbers, set directly so no rounding to whole units
-        // can blur the boundary this test depends on.
-        vm.prank(admin);
-        caps.setSettlementCap(CURRENCY, 1); // 1e6 raw, well under both
+        caps.setSettlementCap(CURRENCY, 1); // 1e6 raw
         assertLt(caps.perTxCap(CURRENCY), DEBITED, "fixture: the cap must bite");
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(ISettlementLimits.PerTxCapExceeded.selector, CURRENCY, DEBITED, 1e6));
         _settleThrough(buyer, buyerPk);
     }
 
@@ -413,6 +413,81 @@ contract SettlementCapThroughTheEntryPointTest is SettlementLimitsTestBase {
 
         vm.expectRevert(abi.encodeWithSelector(ISettlementLimits.PerTxCapExceeded.selector, CURRENCY, DEBITED, 0));
         _settleThrough(buyer, buyerPk);
+    }
+}
+
+/// @title SettlementCapAppliesToEveryFamilyTest
+/// @notice 🔴 The acceptance criterion for making the cap unskippable: it holds for a settler
+///         family that is NOT S2.
+///
+///         Every other cap test in this repo goes through `settlePrimary`, which is family S2's
+///         entry point — and S2 is the only family that exists. That is precisely why the old
+///         arrangement was unsafe: `_consumeSettlementLimit` was called from `VenueSettler` and
+///         from nowhere else, `MintSettler` is a stub whose documented preamble listed the steps
+///         a mint entry point must replicate and OMITTED the cap, and every test in the suite
+///         would still have passed with the mint family shipping uncapped.
+///
+///         `PrimarySalesHarness.settleAsAnotherFamily` is a second family's entry point: the
+///         shared preamble, then straight into `_settleMint`. It charges nothing itself.
+///
+/// @dev    The pair below is the whole test. Uncapped, the call stops at `PerTxCapExceeded` and
+///         never reaches the family body; capped, it reaches the family body and stops at
+///         `SettlerNotImplemented`. Take the charge out of `_authorizeSettlement` and the first
+///         becomes the second.
+contract SettlementCapAppliesToEveryFamilyTest is PrimarySalesTestBase {
+    /// The action the second family runs under. Not `SettleVenue`: the attestations carry the
+    /// ordinal and the gates compare it, so this cannot accidentally be S2's path.
+    uint8 internal constant MINT_ACTION = uint8(PrimaryTypes.Action.SettleMint);
+
+    function _submitAsAnotherFamily() internal {
+        PrimaryTypes.SettlementIntent memory intent = _intent();
+        bytes32 paramsHash = _paramsHash(intent);
+        vm.prank(buyer);
+        harness.settleAsAnotherFamily(
+            intent,
+            _signIntent(address(harness), intent),
+            _signBuyerConsent(address(harness), intent),
+            _kycForAction(MINT_ACTION, PRIMARY_DOMAIN_NAME, address(harness), 0, paramsHash),
+            _feeForAction(MINT_ACTION, address(harness), paramsHash, 0, 50, collector, CURRENCY)
+        );
+    }
+
+    /// 🔴 A family that never calls the caps module is capped anyway, because the preamble it
+    /// cannot skip does the charging. This is the test that fails if the charge is moved back
+    /// into a settler family.
+    function test_AFamilyThatChargesNothingIsStillCharged() public {
+        vm.prank(admin);
+        harness.setSettlementCap(CURRENCY, 0); // closed, which is also the unconfigured default
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISettlementLimits.PerTxCapExceeded.selector, CURRENCY, QUOTE_IN + BUYER_FEE, uint256(0)
+            )
+        );
+        _submitAsAnotherFamily();
+    }
+
+    /// The mutation of the test above: with a cap open, the same call gets past the preamble and
+    /// stops inside the family's own body. Without this, "it reverted" would prove nothing about
+    /// WHERE it reverted.
+    function test_TheSameFamilyReachesItsOwnBodyOnceTheCapIsOpen() public {
+        vm.expectRevert(ISettler.SettlerNotImplemented.selector);
+        _submitAsAnotherFamily();
+    }
+
+    /// And the charge is against the settlement token named in the intent, for the full
+    /// authorised debit — the same number S2 is charged, because the intent's amount model is
+    /// family-agnostic.
+    function test_TheFamilyIsChargedTheFullAuthorisedDebit() public {
+        vm.prank(admin);
+        harness.setSettlementCap(CURRENCY, 1); // 1e6 raw, under the debit
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISettlementLimits.PerTxCapExceeded.selector, CURRENCY, QUOTE_IN + BUYER_FEE, uint256(1e6)
+            )
+        );
+        _submitAsAnotherFamily();
     }
 }
 

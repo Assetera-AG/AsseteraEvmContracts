@@ -221,10 +221,10 @@ contract AsseteraPrimarySales is
         //    wins. Pinned by `test_SettlePrimary_RejectsANonZeroMakerFeeBeforeTheCollectorChecks`,
         //    because this is exactly the kind of line a later tidy-up reorders back.
         if (fee.makerFeeBps != 0) revert MakerFeeNotSupported();
-        _bindAttestations(intent, paramsHash, kyc, fee);
-
-        _consumeKycAndFee(intent.buyer, action, 0, kyc, fee);
-        _consumeIntent(action, intent);
+        // The shared preamble: both attestations bound, the per-transaction value cap charged,
+        // all three nonces burned. It is shared so that the cap is charged for EVERY family
+        // rather than by every family — see `SettlementLimits._authorizeSettlement`.
+        _authorizeSettlement(action, intent, paramsHash, kyc, fee);
 
         // `fee.takerFeeBps` is carried into the family so it can cross-check `intent.buyerFee`
         // against what the FEE signer attested. Two independent signers must agree on one

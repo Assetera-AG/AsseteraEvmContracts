@@ -63,6 +63,10 @@ abstract contract PrimarySalesTestBase is Test {
     uint256 internal constant MIN_ASSET_OUT = 40e18;
     bytes32 internal constant SUPPLIER_REF = keccak256("dinari:quote:42");
 
+    /// The per-transaction cap opened on the `harness` fixture, in WHOLE tokens. Comfortably
+    /// above one settlement, so it never bites and never becomes the reason a test passes.
+    uint256 internal constant HARNESS_CAP_WHOLE = 10_000;
+
     uint256 internal constant INTENT_NONCE = 1;
     uint256 internal constant KYC_NONCE = 2;
     uint256 internal constant FEE_NONCE = 3;
@@ -104,10 +108,29 @@ abstract contract PrimarySalesTestBase is Test {
         PrimarySalesHarness harnessImpl = new PrimarySalesHarness(address(forwarder));
         harness = PrimarySalesHarness(address(new ERC1967Proxy(address(harnessImpl), initData)));
 
+        // `CURRENCY` needs code and a `decimals()` answer before a cap can be sized against it.
+        // Both are mocked because this base moves no tokens; what it needs is an address the cap
+        // setter will accept.
+        _mockDecimals(CURRENCY, 6);
+
         vm.startPrank(admin);
         sales.setAllowedCollector(collector, true);
         harness.setAllowedCollector(collector, true);
+        // ⚠️ The cap is opened on `harness` and DELIBERATELY NOT on `sales`. The per-transaction
+        //    cap is charged by the shared preamble every settler family runs, so an uncapped
+        //    currency stops a settlement before the family is reached — which is exactly what
+        //    `_expectReachesTheMoneyPath` relies on for `sales`, and exactly what would stop the
+        //    `harness` suites from ever observing what happens after the seam.
+        harness.setSettlementCap(CURRENCY, HARNESS_CAP_WHOLE);
         vm.stopPrank();
+    }
+
+    /// Give an address code and a `decimals()` answer. Both are needed: `setSettlementCap`
+    /// refuses an address with no code before it ever calls, which is what makes a plain EOA
+    /// fail closed.
+    function _mockDecimals(address token, uint8 d) internal {
+        vm.etch(token, hex"00");
+        vm.mockCall(token, abi.encodeWithSignature("decimals()"), abi.encode(d));
     }
 
     // ── intent ────────────────────────────────────────────────────────────────────────────
@@ -197,7 +220,17 @@ abstract contract PrimarySalesTestBase is Test {
         view
         returns (GateTypes.KycAttestation memory)
     {
-        uint8 action = uint8(PrimaryTypes.Action.SettleVenue);
+        return _kycForAction(uint8(PrimaryTypes.Action.SettleVenue), domainName, target, orderId, paramsHash);
+    }
+
+    /// The same, for an arbitrary action ordinal. Needed by the tests that exercise a settler
+    /// family other than S2 — the attestation carries the action and `_verifyKyc` compares it,
+    /// so a mint-family call cannot reuse a venue-family attestation.
+    function _kycForAction(uint8 action, string memory domainName, address target, uint256 orderId, bytes32 paramsHash)
+        internal
+        view
+        returns (GateTypes.KycAttestation memory)
+    {
         uint256 deadline = block.timestamp + 3 minutes;
         bytes32 structHash =
             keccak256(abi.encode(KYC_TYPEHASH, buyer, action, orderId, KYC_NONCE, deadline, paramsHash));
@@ -228,7 +261,21 @@ abstract contract PrimarySalesTestBase is Test {
         address feeCollector,
         address feeToken
     ) internal view returns (GateTypes.FeeAttestation memory) {
-        uint8 action = uint8(PrimaryTypes.Action.SettleVenue);
+        return _feeForAction(
+            uint8(PrimaryTypes.Action.SettleVenue), target, paramsHash, makerFeeBps, takerFeeBps, feeCollector, feeToken
+        );
+    }
+
+    /// The same, for an arbitrary action ordinal. See `_kycForAction`.
+    function _feeForAction(
+        uint8 action,
+        address target,
+        bytes32 paramsHash,
+        uint16 makerFeeBps,
+        uint16 takerFeeBps,
+        address feeCollector,
+        address feeToken
+    ) internal view returns (GateTypes.FeeAttestation memory) {
         uint256 deadline = block.timestamp + 3 minutes;
         bytes32 structHash = keccak256(
             abi.encode(
@@ -277,15 +324,16 @@ abstract contract PrimarySalesTestBase is Test {
     }
 
     /// 🔴 The revert a well-formed settlement against `sales` ends at, and the MARKER three
-    /// suites use to mean "every gate passed and execution got into the settler's money path".
+    /// suites use to mean "every signature and both attestations passed, and the settlement
+    /// reached the last check before the money".
     ///
     /// `CURRENCY` is never given a cap on the `sales` fixture, and an unset cap is CLOSED, so
-    /// `VenueSettler`'s step 1 refuses the settlement before its first token call. The error is
-    /// a stronger marker than the `SettlementLimitsNotImplemented` it replaced, because it is
-    /// not a bare selector: it carries the settlement token and `QUOTE_IN + BUYER_FEE`, so it
-    /// also proves the intent's own numbers survived every gate intact. A settlement that
-    /// stopped anywhere earlier reverts with a different error, and one that got past this line
-    /// would fail on `ASSET`/`CURRENCY` being bare addresses with no code.
+    /// the shared preamble refuses the settlement on its last line — after the three nonce
+    /// burns, before the settler family is entered. The error is a stronger marker than the
+    /// `SettlementLimitsNotImplemented` it replaced, because it is not a bare selector: it
+    /// carries the settlement token and `QUOTE_IN + BUYER_FEE`, so it also proves the intent's
+    /// own numbers survived every gate intact. A settlement that stopped anywhere earlier
+    /// reverts with a different error.
     function _expectReachesTheMoneyPath() internal {
         vm.expectRevert(
             abi.encodeWithSelector(

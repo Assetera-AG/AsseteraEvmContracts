@@ -24,7 +24,8 @@ import {FeeMath} from "../../libs/FeeMath.sol";
 ///           0. structural guards that cost two comparisons and a storage read — the venue may
 ///              not be either of the two tokens this settlement moves, and a non-zero fee may
 ///              only go to an allowlisted collector;
-///           1. charge the value caps with the full debit, BEFORE any external call;
+///           1. (the value caps, charged for every family by
+///              `SettlementLimits._authorizeSettlement` before this function is entered);
 ///           2. snapshot `assetToken.balanceOf(intent.buyer)` and this contract's own
 ///              `settlementToken` balance;
 ///           3. pull `venueQuoteIn + buyerFee` from the buyer — never an unlimited allowance,
@@ -45,14 +46,16 @@ import {FeeMath} from "../../libs/FeeMath.sol";
 ///
 ///         ⚠️ **Two deliberate departures from the ordered flow the skeleton packet sketched
 ///         for this file, both forced:**
-///           * The sketch put the cap charge inside step 2 (with the pull). It is charged FIRST
-///             here instead. Nothing observable changes — the whole call is atomic, so a cap
-///             breach reverts the same transaction either way — but the cheapest check runs
-///             before the first external call, so a settlement in a currency nobody sized is
-///             refused with `PerTxCapExceeded(token, debit, 0)` before a single token call is
-///             made rather than after one.
+///           * The sketch put the cap charge inside step 2 (with the pull), called by this
+///             family. It is charged before this function is entered at all, by
+///             `SettlementLimits._authorizeSettlement`, which every family runs — a cap each
+///             family remembers to charge is not a cap, and `MintSettler`'s documented preamble
+///             had already omitted it. Nothing observable changes for S2: the whole call is
+///             atomic, and the charge still lands before the first external call, so a
+///             settlement in a currency nobody sized is refused with
+///             `PerTxCapExceeded(token, debit, 0)` before a single token call is made.
 ///             ⚠️ **The number charged is `venueQuoteIn + buyerFee`, the FULL authorised debit,
-///             not the net one.** `ISettlementLimits` and `SettlementLimits` are written around
+///             not the net one.** `ISettlementLimits` and `SettlementLimits` were written around
 ///             "the amount actually debited, after the refund is known", and that cannot hold
 ///             for a charge made before the venue has been called: the refund is not known yet.
 ///             The full debit is the conservative reading — it is never below the net one, so
@@ -186,8 +189,11 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         // arithmetic to compare it against `maxSettlementIn`, so this addition cannot overflow.
         uint256 debit = intent.venueQuoteIn + intent.buyerFee;
 
-        // ── 1 · value caps, before the first external call ─────────────────────────────────
-        _consumeSettlementLimit(intent.settlementToken, debit);
+        // ── 1 · value caps ────────────────────────────────────────────────────────────────
+        // Charged by `SettlementLimits._authorizeSettlement`, which every family runs, rather
+        // than here — see that function for why a cap each family opts into is not a cap. It
+        // still runs before the first external call of this settlement; what changed is that a
+        // family cannot reach this line without it having run.
 
         // ── 2 · snapshots ─────────────────────────────────────────────────────────────────
         // The router's own pre-call balance, NOT zero: the invariant asserted at the end is

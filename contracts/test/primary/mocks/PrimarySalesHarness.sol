@@ -52,4 +52,34 @@ contract PrimarySalesHarness is AsseteraPrimarySales {
     function intentStructHash(SettlementIntent calldata intent) external pure returns (bytes32) {
         return _intentStructHash(intent);
     }
+
+    /// @notice 🔴 A settler family that is NOT S2, standing in for the mint family and for
+    ///         whatever family lands after it: the shared preamble, and then straight into its
+    ///         own money path.
+    ///
+    ///         It exists to make one claim testable — that the per-transaction value cap is
+    ///         charged by `SettlementLimits._authorizeSettlement`, which every family runs,
+    ///         rather than by `VenueSettler`, which is the only family that exists. The charge
+    ///         used to live in S2's step 1, so every test of it went through S2 and none of them
+    ///         would have noticed the mint family shipping uncapped.
+    ///
+    ///         What the pair of assertions looks like: with no cap set for the settlement
+    ///         currency this reverts `PerTxCapExceeded` and never reaches `_settleMint`; with a
+    ///         cap set it reverts `SettlerNotImplemented`, which is the family's own body. Move
+    ///         the charge out of the preamble and the first becomes the second.
+    ///
+    /// @dev    Deliberately mirrors what the mint packet's real entry point must do, and nothing
+    ///         more. No `whenNotPaused`, no `nonReentrant` and no calldata binding: those are
+    ///         the real entry point's business and are asserted against the real one.
+    function settleAsAnotherFamily(
+        SettlementIntent calldata intent,
+        bytes calldata intentSignature,
+        bytes calldata buyerSignature,
+        KycAttestation calldata kyc,
+        FeeAttestation calldata fee
+    ) external {
+        bytes32 paramsHash = _verifyIntent(intent, intentSignature, buyerSignature);
+        _authorizeSettlement(uint8(Action.SettleMint), intent, paramsHash, kyc, fee);
+        _settleMint(intent);
+    }
 }

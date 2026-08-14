@@ -6,17 +6,24 @@ import {IntentGate} from "../IntentGate.sol";
 import {ISettlementLimits} from "../interfaces/ISettlementLimits.sol";
 
 /// @title SettlementLimits
-/// @notice A per-transaction cap on settled value, per settlement token. This module stores and
-///         compares; WHICH number a settlement is judged on is each settler family's decision,
-///         made where it calls `_consumeSettlementLimit`.
+/// @notice A per-transaction cap on settled value, per settlement token. This module stores it,
+///         compares against it, and — through `_authorizeSettlement` — CHARGES it, once, for
+///         every settler family.
 ///
-///         ⚠️ `VenueSettler` (S2) charges `venueQuoteIn + buyerFee` — the FULL authorised debit
-///         — as its step 1, before the first external call, because the refund is not known
-///         until after the venue has been called and a charge made afterwards would be a check
-///         made after the money moved. An earlier revision of this file described the charge as
-///         "the amount actually debited, after the refund is known"; that is not what any
-///         family does and the wording is gone. The full debit is the conservative reading: it
-///         is never below the net one, so the cap can only ever bite earlier.
+///         ⚠️ **The charge is central, and it did not use to be.** It was `VenueSettler`'s step
+///         1, called by family S2 and by nothing else; `MintSettler` is a stub whose documented
+///         preamble omitted it, so the mint family could have shipped with no cap applied and
+///         nothing structural would have stopped it. A per-transaction cap each family opts into
+///         is not a cap. It now sits in the preamble every family must run to burn the intent
+///         nonce, so no family can debit without having been charged.
+///
+///         ⚠️ The number charged is `venueQuoteIn + buyerFee`, the FULL authorised debit, before
+///         any external call, because the refund is not known until after a venue has been
+///         called and a charge made afterwards would be a check made after the money moved. An
+///         earlier revision of this file described the charge as "the amount actually debited,
+///         after the refund is known"; that is not what happens and the wording is gone. The
+///         full debit is the conservative reading: never below the net one, so the cap can only
+///         ever bite earlier.
 ///
 ///         **Size this as a bound on BUGS, not as a loss limit.** See `ISettlementLimits` for
 ///         why the per-day cap that used to live here was withdrawn on 2026-08-14: what bounds a
@@ -115,21 +122,20 @@ abstract contract SettlementLimits is IntentGate, ISettlementLimits {
     // --------------------------------------------------------------------- //
 
     /// @dev Charge one settlement against the cap for its settlement token, and revert if it
-    ///      does not fit. Each settler family decides which number it hands over; S2 hands the
-    ///      full authorised debit (`venueQuoteIn + buyerFee`) before its first external call.
+    ///      does not fit.
     ///
     ///      A pure comparison: no external call, no conversion, no state write. The conversion
     ///      happened once, in `setSettlementCap`.
     ///
-    ///      ⚠️ This only bounds a family that CALLS it. The cap is a convention between this
-    ///      module and each settler, not something the entry point enforces on their behalf.
-    ///      Worth revisiting when the mint family lands: the entry point already receives the
-    ///      measured debit back from the family, so charging centrally would make it structural
-    ///      rather than something a future packet has to remember.
+    ///      ⚠️ **Do not call this from a settler family.** It is called once, from
+    ///      `_authorizeSettlement` below, which every family runs before it moves anything. An
+    ///      earlier revision left the call to each family and `MintSettler`'s documented
+    ///      preamble omitted it entirely, so the mint packet could have shipped with no cap
+    ///      applied and nothing would have complained.
     ///
     /// @param token         The settlement currency being debited.
     /// @param amountDebited The amount this settlement puts at risk of being taken from the
-    ///                      buyer. For S2 that is `venueQuoteIn + buyerFee`.
+    ///                      buyer: `venueQuoteIn + buyerFee`, the full authorised debit.
     function _consumeSettlementLimit(address token, uint256 amountDebited) internal virtual {
         uint256 cap = _primary().settlementPerTxCap[token];
         // ⚠️ The `cap == 0` test is load-bearing and not redundant with the comparison after it.
@@ -138,6 +144,61 @@ abstract contract SettlementLimits is IntentGate, ISettlementLimits {
         //    nothing with a zero fee produces one, and it must not be the one debit an
         //    unconfigured currency accepts.
         if (cap == 0 || amountDebited > cap) revert PerTxCapExceeded(token, amountDebited, cap);
+    }
+
+    /// @dev 🔴 **The preamble EVERY settler family runs, and the reason the cap cannot be
+    ///      skipped.** It binds both attestations to the intent, burns all three nonces, and
+    ///      charges the value cap — in that order. Every signature on the path has already been
+    ///      verified by `_verifyIntent` and by the two gates before a single nonce is burned, so
+    ///      an invalid one still cannot spend the others.
+    ///
+    ///      ⚠️ **The cap is charged HERE rather than by each family, and that is the whole
+    ///      point of the function existing.** It used to be `VenueSettler`'s step 1, called by
+    ///      S2 and by nothing else: `MintSettler` is a stub, its documented preamble listed the
+    ///      four steps a mint entry point must replicate and omitted the cap, and nothing
+    ///      structural would have stopped the mint family shipping uncapped. A per-transaction
+    ///      value cap that each family opts into is not a cap. A family cannot reach its own
+    ///      money path without burning the intent nonce, it cannot burn the intent nonce without
+    ///      calling this, and it cannot call this without being charged.
+    ///
+    ///      The number charged is `venueQuoteIn + buyerFee`, the FULL authorised debit, not the
+    ///      net one — the refund is not known until after the venue has been called, and a
+    ///      charge made afterwards would be a check made after the money moved. The full debit
+    ///      is the conservative reading: never below the net one, so the cap can only bite
+    ///      earlier. It is also the number a human sizing the cap is looking at, because it is
+    ///      the most the buyer can be asked for. Both families debit the same way — the intent's
+    ///      amount model is family-agnostic — so one number serves both.
+    ///
+    ///      This lives in the CAPS module rather than in the entry point because that is the
+    ///      lowest point in the linearization that can reach the gates and the cap at once,
+    ///      and because both families inherit it while neither inherits the other. It runs
+    ///      AFTER `_verifyIntent`, which each family calls first: that one returns the
+    ///      `paramsHash` this needs, and family S2 binds its venue calldata in between.
+    ///
+    /// @param action     The primary-sale action ordinal this settlement runs under.
+    /// @param intent     The already-verified settlement intent.
+    /// @param paramsHash The intent's EIP-712 struct hash, as returned by `_verifyIntent`.
+    /// @param kycAtt     The compliance attestation.
+    /// @param feeAtt     The fee attestation.
+    function _authorizeSettlement(
+        uint8 action,
+        SettlementIntent calldata intent,
+        bytes32 paramsHash,
+        KycAttestation calldata kycAtt,
+        FeeAttestation calldata feeAtt
+    ) internal {
+        _bindAttestations(intent, paramsHash, kycAtt, feeAtt);
+        _consumeKycAndFee(intent.buyer, action, 0, kycAtt, feeAtt);
+        _consumeIntent(action, intent);
+        // LAST, and the position is deliberate. The cap is an operational limit rather than a
+        // property of the request, so checking it ahead of the signatures would let a currency
+        // nobody has sized yet report `PerTxCapExceeded` for a settlement whose real defect is a
+        // bad signature — the wrong answer to the wrong question. It still runs before the
+        // family is entered and therefore before the first token call.
+        //
+        // `IntentGate._verifyIntent` already evaluated this sum under checked arithmetic to
+        // compare it against `maxSettlementIn`, so it cannot overflow.
+        _consumeSettlementLimit(intent.settlementToken, intent.venueQuoteIn + intent.buyerFee);
     }
 
     /// @dev The token's decimals, or a revert naming the token. `decimals()` is not part of the

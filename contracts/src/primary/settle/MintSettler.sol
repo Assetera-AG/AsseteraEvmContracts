@@ -24,14 +24,22 @@ import {ISettler} from "../interfaces/ISettler.sol";
 ///             `Action.SettleMint`, which is KYC-gated already and would be gated even if it
 ///             were not declared: `AsseteraPrimarySales.complianceRequired` overrides the shared
 ///             fail-open getter so that every ordinal is required until an admin exempts it.
-///           * The same four-step preamble the venue path uses, reachable because
-///             `IntentGate` sits BELOW this module: `_verifyIntent(intent, intentSignature,
-///             buyerSignature)` — the buyer's own signature over the intent is checked inside
-///             the gate, so this family gets it for free and cannot forget it —
-///             `_bindAttestations`,
-///             `_consumeKycAndFee(buyer, uint8(Action.SettleMint), 0, kyc, fee)`,
-///             `_consumeIntent`. `orderId` is zero here too; there is no order book on this
-///             path either.
+///           * The same TWO-CALL preamble the venue path uses, reachable because `IntentGate`
+///             and `SettlementLimits` both sit BELOW this module:
+///
+///             ```solidity
+///             bytes32 paramsHash = _verifyIntent(intent, intentSignature, buyerSignature);
+///             _authorizeSettlement(uint8(Action.SettleMint), intent, paramsHash, kyc, fee);
+///             ```
+///
+///             The buyer's own signature over the intent is checked inside the first, so this
+///             family gets it for free and cannot forget it. The second binds both attestations,
+///             charges the per-transaction value cap and burns all three nonces.
+///             ⚠️ An earlier version of this list spelled the preamble out step by step and
+///             OMITTED the cap, which is precisely how the mint family would have shipped
+///             uncapped. There is now nothing to omit: the cap is inside
+///             `_authorizeSettlement`, and a family cannot burn the intent nonce without it.
+///             `orderId` is zero here too; there is no order book on this path either.
 ///           * `_settleMint`, and an emit of `PrimarySettled` with `venue` set to the minted
 ///             token, so the indexer builds the same activity-ledger leg for both families.
 ///
