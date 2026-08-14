@@ -55,6 +55,25 @@ abstract contract PrimaryStorage is PrimaryTypes, FeeGate, ReentrancyGuardUpgrad
         ///      operator) and issued independently of the KYC and fee attestations, so it
         ///      must not share their counters.
         mapping(address buyer => mapping(uint256 nonce => bool used)) usedIntentNonce;
+        // ── settlement value caps (AO-517), APPENDED ──────────────────────────────────────
+        // Everything below is keyed by SETTLEMENT TOKEN and by nothing else. There is
+        // deliberately no buyer dimension: the per-day cap bounds what the router as a whole
+        // can move in a day, so splitting it per buyer would let a compromised settlement
+        // signer mint fresh buyers and spend the cap once each.
+        /// @dev Per-transaction cap on the amount debited, per settlement token. ZERO means
+        ///      "no settlement in this token at all" rather than "unlimited" — the fail-closed
+        ///      default for a token nobody has configured. See `SettlementLimits`.
+        mapping(address token => uint256 cap) settlementPerTxCap;
+        /// @dev Per-day cap on the amount debited, per settlement token, across every buyer.
+        mapping(address token => uint256 cap) settlementPerDayCap;
+        /// @dev The cap window the accumulator below belongs to (`block.timestamp / 1 days`).
+        ///      Stored rather than inferred, because a stale accumulator has to read as an
+        ///      EMPTY one and there is no other way to tell the two apart.
+        mapping(address token => uint256 windowIndex) settlementCapWindow;
+        /// @dev How much has been debited in `settlementCapWindow[token]`. Meaningless on its
+        ///      own — always read it through `SettlementLimits.settledToday`, which returns
+        ///      zero when the stored window is not the current one.
+        mapping(address token => uint256 amount) settledInCapWindow;
     }
 
     // keccak256(abi.encode(uint256(keccak256("assetera.storage.PrimarySales")) - 1)) & ~bytes32(uint256(0xff))
@@ -65,10 +84,12 @@ abstract contract PrimaryStorage is PrimaryTypes, FeeGate, ReentrancyGuardUpgrad
     ///      base this one is written from sibling modules (the intent gate, the value caps,
     ///      the settler families) rather than only from within itself.
     ///
-    ///      The settlement value caps (AO-517) APPEND their fields to `PrimaryData`. Appending
-    ///      to an ERC-7201 struct is upgrade-safe — the region is addressed by a constant hash
-    ///      and existing members keep their offsets — and no other packet in the wave touches
-    ///      this file, so the append is not a parallel-edit conflict.
+    ///      The settlement value caps (AO-517) APPENDED their four mappings to `PrimaryData`.
+    ///      Appending to an ERC-7201 struct is upgrade-safe — the region is addressed by a
+    ///      constant hash and existing members keep their offsets — and no other packet in the
+    ///      wave touches this file, so the append was not a parallel-edit conflict.
+    ///      ⚠️ `usedIntentNonce` must stay at offset 0: `PrimaryStorageNamespace.t.sol` derives
+    ///      its slot from that offset and asserts a real write lands there.
     function _primary() internal pure returns (PrimaryData storage $) {
         // solhint-disable-next-line no-inline-assembly
         assembly {
