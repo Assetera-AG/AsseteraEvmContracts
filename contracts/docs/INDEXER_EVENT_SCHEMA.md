@@ -5,6 +5,7 @@
 **Proxy pattern:** UUPS (ERC-1967) — index the **proxy** address; ABI/events come from the **implementation**
 **Meta-tx:** ERC-2771 (see [Actor resolution](#actor-resolution-erc-2771-meta-tx) — do not key identity off `tx.from`)
 **Source of truth:** `src/AsseteraECS.sol`. This document is generated from that file directly (event/error signatures hashed independently), not from the checked-in `abi/AsseteraECS.json`, which is stale — see [Schema versioning](#schema-versioning--breaking-change) below.
+**Second contract:** the primary market is `AsseteraPrimarySales` (`src/primary/AsseteraPrimarySales.sol`) — a **separate proxy at a separate address**, with its own EIP-712 domain, its own roles, its own nonce namespaces and its own events. Its event set is documented in [§4 · Primary sales](#primary-sales--a-second-contract-at-a-second-address). ⚠️ **Do not point one address filter at every event in this document.**
 
 | Network | Chain ID | Proxy address | Forwarder |
 |---|---|---|---|
@@ -26,7 +27,7 @@ Regenerate after any contract change with `forge build` (emits `out/AsseteraECS.
 
 ## 2. Public interface reference
 
-All state-changing functions accept a `KycAttestation calldata att` (or two, for two-party actions) unless noted. The three fee-setting actions (`placeOrder`, `placeOrderWithPermit`, `makeOffer`) additionally require a `FeeAttestation calldata feeAtt` from the separate fee service — fees are no longer carried inside `KycAttestation`. See [§4](#kycattestation-off-chain-struct) for both structs' shapes.
+All state-changing functions accept a `KycAttestation calldata att` (or two, for two-party actions) unless noted. The three fee-setting actions (`placeOrder`, `placeOrderWithPermit`, `makeOffer`) additionally require a `FeeAttestation calldata feeAtt` from the separate fee service — fees are no longer carried inside `KycAttestation`. See [§3](#kycattestation-off-chain-struct) for both structs' shapes.
 
 ### Maker actions
 
@@ -85,7 +86,7 @@ since a "stop the venue" lever is worth keeping active.
 
 | Function | Returns |
 |---|---|
-| `getOrder(uint256 id)` | `Order` struct (see [§4](#order-struct)) — point read only; enumeration/pagination is served off-chain by the indexer |
+| `getOrder(uint256 id)` | `Order` struct (see [§3](#order-struct)) — point read only; enumeration/pagination is served off-chain by the indexer |
 | `getOffer(uint256 id)` | `Offer` struct |
 | `totalOrders()` / `totalOffers()` | `uint256` — highest assigned id (ids are `1..total`) |
 | `usedNonce(address account, uint256 nonce)` | `bool` — KYC nonce consumption state |
@@ -235,7 +236,7 @@ The whole fee attestation is verified on every fee-setting call regardless of `c
 
 ## 4. Event schema
 
-Event summary:
+Event summary — **`AsseteraECS` (the exchange / secondary market)**:
 
 | Event | Emitted by |
 |---|---|
@@ -265,6 +266,25 @@ below; their event detail sections further down are kept for reference
 `OfferSettled` is the exception — it fires again, just from `acceptOffer`
 instead of the now-retired `settleOffer`.
 
+Event summary — **`AsseteraPrimarySales` (the primary market)**, a **different contract at a different address**:
+
+| Event | Emitted by |
+|---|---|
+| `PrimarySettled` | `settlePrimary` — one per completed primary settlement |
+| `IntentConsumed` | `settlePrimary`, on settlement-intent consumption |
+| `SettlementCapSet` | `setSettlementCap` (admin) |
+| `CollectorAllowed` | `setAllowedCollector` (admin) — **same signature and same `topic0`** as the exchange's |
+| `ComplianceRequiredSet` | `setComplianceRequired` (admin) — **same `topic0`** as the exchange's, but a **different `Action` ordinal set** |
+| `KycConsumed` | `settlePrimary`, when `complianceRequired[action]` — **same `topic0`** as the exchange's, different ordinals |
+| `FeeConsumed` | `settlePrimary`, unconditionally — **same `topic0`** as the exchange's, different ordinals |
+
+⚠️ The last four share their `topic0` with the exchange's events of the same name, because both
+contracts inherit the same `KycGate`/`FeeGate` and the same admin surface. **They can only be
+attributed by emitting address, never by topic**, and `KycConsumed.action` /
+`ComplianceRequiredSet.action` mean different things depending on which address emitted them —
+see [Primary sales](#primary-sales--a-second-contract-at-a-second-address) at the end of this
+section for that contract's own ordinals.
+
 Each `topic0` below (`keccak256` of the canonical signature) was computed independently against the current source, not the checked-in ABI JSON.
 
 ---
@@ -281,7 +301,7 @@ event OrderPlaced(uint256 indexed id, address indexed maker, address sellToken, 
 | Field | Description |
 |---|---|
 | `id` | new order id |
-| `maker` | resolved actor (`_msgSender()`), not necessarily `tx.from` — see [§5](#actor-resolution-erc-2771-meta-tx) |
+| `maker` | resolved actor (`_msgSender()`), not necessarily `tx.from` — see [§6](#actor-resolution-erc-2771-meta-tx) |
 | `sellToken`, `sellAmount` | escrowed leg |
 | `buyToken`, `buyAmount` | desired leg at placement |
 | `expireTs` | `0` = no expiry |
@@ -542,6 +562,171 @@ event OfferSettled(uint256 indexed id, address indexed by, uint256 makerReceived
 
 ---
 
+### Primary sales — a second contract at a second address
+
+`AsseteraPrimarySales` is the **primary market**: a buyer's first acquisition of an asset, settled
+against a third-party venue (Dinari, Backed, …) or, later, against our own mint. It is a separate
+UUPS proxy from `AsseteraECS` — separate pause lever, separate audit scope, separate blast radius —
+so **its events arrive from a different address and must be subscribed separately**. Not yet
+deployed to any network at the time of writing; there is no row for it in the address table at the
+top of this document.
+
+Three things follow for an indexer:
+
+- **Its EIP-712 domain is `("AsseteraPrimarySales", "1")`**, deliberately different from the
+  exchange's `("AsseteraExchange", "1")`. An attestation minted for one contract recovers to a
+  different address on the other and is rejected, so nothing replays across the two.
+- **Its `Action` ordinals are its own**, unrelated to the exchange's (below). `KycConsumed` and
+  `ComplianceRequiredSet` carry the same `topic0` from both contracts, so the emitting address is
+  the only thing that says which ordinal set applies.
+- **It has a THIRD nonce namespace** — settlement intents — on top of the KYC and fee namespaces
+  it inherits. Three independent signers, three independent single-use counters. See
+  `IntentConsumed` below.
+
+#### `Action` (uint8) — `AsseteraPrimarySales`' own set, **not** the exchange's
+
+| Value | Name |
+|---|---|
+| 0 | `None` — never gated, never accepted; a zero action is an unset field |
+| 1 | `SettleVenue` — settlement against a third-party venue (family S2) |
+| 2 | `SettleMint` — settlement by minting, where we hold the minting right (family S1). KYC-gated from `initialize` already, but **no entry point exists yet** — no event carries this ordinal today |
+
+Ordinals are append-only (the signer service signs the ordinal). `Action.SettleVenue` here and
+`Action.Place` on the exchange are both ordinal 1 and have nothing to do with each other.
+
+#### Role constants (`AsseteraPrimarySales`)
+
+| Role | Value |
+|---|---|
+| `DEFAULT_ADMIN_ROLE` | `0x0000000000000000000000000000000000000000000000000000000000000000` |
+| `KYC_OPERATOR_ROLE` | `0xdf54a8fce50b9de7187b8b9daaa3b95e6ef1bf1df5fe0a03ddea8faa73de2a10` — same constant as the exchange's, granted independently on this proxy |
+| `FEE_OPERATOR_ROLE` | `0x8efbb70a6b43a0e337cb93750666361f6a0fe46a0aee356063f13c9b68520bb7` — likewise |
+| `SETTLEMENT_OPERATOR_ROLE` | `keccak256("SETTLEMENT_OPERATOR_ROLE")` — a **third** role, with its own key. The only one of the three whose holder can cause a transfer |
+
+---
+
+### `PrimarySettled`
+
+```solidity
+event PrimarySettled(address indexed buyer, address indexed assetToken, address indexed venue, uint256 assetDelivered, address settlementToken, uint256 venueIn, uint256 refund, uint256 fee, address feeCollector, bytes32 supplierReference, uint256 nonce);
+```
+- **topic0:** `0x30b9072b6411a3b6352a8664921029a444d29156e42a80d3a2076aa4ca87868e`
+- **Indexed:** `buyer`, `assetToken`, `venue`
+- **Data:** `assetDelivered`, `settlementToken`, `venueIn`, `refund`, `fee`, `feeCollector`, `supplierReference`, `nonce`
+- **Emitted by:** `AsseteraPrimarySales`, **not** `AsseteraECS`
+
+| Field | Description |
+|---|---|
+| `buyer` | the party debited and delivered to; resolved actor (`_msgSender()`), not necessarily `tx.from` — see [§6](#actor-resolution-erc-2771-meta-tx). Always equals the signed `intent.buyer`; nobody settles on somebody else's behalf |
+| `assetToken` | the asset the buyer ends up holding. ⚠️ **may be a claim token rather than the final instrument** — see below |
+| `venue` | the address that was called. In the mint family (S1, not yet implemented) this will be the minted token itself, so the field is never zero and no family discriminator is needed |
+| `assetDelivered` | **measured** `assetToken` balance delta on `buyer` across the venue call. Asserted `>= intent.minAssetOut` or the whole transaction reverts (`InsufficientAssetDelivered`) |
+| `settlementToken` | the currency debited. Enforced equal to the fee attestation's `feeToken` (`SettlementTokenMismatch`), so the fee never comes out of what the buyer receives |
+| `venueIn` | **measured** settlement token the venue actually consumed. **May be less than the quote** the buyer signed (`intent.venueQuoteIn`) — a venue that rounds a fill down is normal, not an error |
+| `refund` | `intent.venueQuoteIn - venueIn`, returned to `buyer` in the same transaction. The router keeps no standing balance (`RouterBalanceChanged` guards it) |
+| `fee` | settlement token paid to `feeCollector`. Charged **on top of** the quote, not carved out of it. Cross-checked on-chain against `FeeMath.feeAmount(venueQuoteIn, feeAtt.takerFeeBps)` — **floored**, the same rounding every other fee in the estate uses — so the settlement signer and the fee signer must agree on one number |
+| `feeCollector` | the allowlisted recipient of `fee`. ⚠️ This router keeps its **own** allowlist, which starts empty; the exchange's entries do not carry over |
+| `supplierReference` | the venue's own quote/order id, carried through from the signed intent so the activity ledger can be reconciled against the supplier's records |
+| `nonce` | the settlement-intent nonce. Joins to `IntentConsumed` on `(buyer, nonce)`, and to the signer service's audit row for the intent that authorised this settlement |
+
+Net buyer debit = `venueIn + fee`. Gross pull = `intent.venueQuoteIn + fee`, itself capped by the
+signed `intent.maxSettlementIn` and by the per-transaction settlement cap (`SettlementCapSet`).
+
+**Every amount here is MEASURED, not quoted.** `assetDelivered` is the observed `assetToken`
+balance delta on the buyer; `venueIn` is the observed settlement-token consumption. The event is
+generated by us from balance deltas this contract took before and after the call, **not relayed
+from whatever the venue chose to emit**. That is why the indexer needs **no per-supplier decoder**:
+one signature covers every venue we will ever settle against, and a lying venue's own logs are
+irrelevant to what this event reports.
+
+**No family discriminator.** Venue settlement (S2) and mint settlement (S1) emit the same event —
+the activity-ledger leg is identical either way. The family is recoverable from the same
+transaction: `IntentConsumed` is emitted from the same call, with the gated `action` ordinal and the
+**same `nonce`**, so the two join on `(buyer, nonce)` with no ambiguity. Today only S2 emits, since
+`MintSettler` is still a stub.
+
+⚠️ **`assetToken` may be a CLAIM TOKEN, not the final instrument — open modelling question,
+AO-550.** Every supplier we settle against today is atomic, and where a supplier's mint is genuinely
+asynchronous it is always **fronted by a claim token minted synchronously in the same transaction**
+— which is exactly what makes the balance delta measurable and keeps this contract correct either
+way. Nothing on-chain can tell a claim from the instrument, and the contract does not try to. What
+is **not** settled is what the layers above do with one:
+
+- a claim is **not a final position** and must not be counted as one in the activity ledger;
+- our `fee` has **already been charged** against a claim whose second leg (claim → instrument) could
+  still fail;
+- that second leg is a separate event that **nothing currently emits**.
+
+Deliberately deferred (2026-08-14) rather than designed, on the reasoning that the indexer already
+watches every token in the catalogue so the transfers are observed regardless. **The distinction is
+owned by the indexer work (AO-550), not by the contract** — do not wait for a contract change to
+resolve it.
+
+---
+
+### `IntentConsumed`
+
+```solidity
+event IntentConsumed(address indexed buyer, uint8 indexed action, uint256 nonce);
+```
+- **topic0:** `0xe055bda62338f5ab6dbe0f78d908fdf9b5316f60582944ade75297d40f7f79b9`
+- **Indexed:** `buyer`, `action`
+- **Data:** `nonce`
+- **Emitted by:** `AsseteraPrimarySales`, **not** `AsseteraECS`
+
+| Field | Description |
+|---|---|
+| `buyer` | the intent's buyer, which is also the actor (`_msgSender()`) |
+| `action` | the primary-sale `Action` ordinal the intent was consumed under — **this contract's ordinals** (`1 = SettleVenue`, `2 = SettleMint`), not the exchange's |
+| `nonce` | the intent's single-use nonce, now burned |
+
+A settlement intent was verified and its single-use nonce marked spent. Emitted **unconditionally**
+on every settlement — unlike `KycConsumed`, it does not follow the `complianceRequired` toggle,
+because a settlement always needs a valid intent whatever the KYC gate says. Its absence in a
+transaction means the call reverted.
+
+⚠️ **`nonce` is drawn from a THIRD namespace — `usedIntentNonce(address buyer, uint256 nonce)` —
+independent of the KYC namespace (`usedNonce`) and the fee namespace (`usedFeeNonce`). Do not
+conflate the three.** They are three independent single-use counters because three independent
+signers issue three independent payloads: the compliance backend decides who may trade, the fee
+service decides the terms, and the settlement operator (`SETTLEMENT_OPERATOR_ROLE`, its own key)
+decides that money moves and where. A shared counter would let one signer invalidate another's
+payload. A single `settlePrimary` call therefore burns **three** nonces and emits up to three
+consumption events (`IntentConsumed`, `FeeConsumed`, and `KycConsumed` when the KYC gate is on) —
+all three signatures are verified before **any** nonce is burned, so an invalid third cannot spend
+the first two.
+
+For joining: `IntentConsumed` and `PrimarySettled` from the same transaction share `(buyer, nonce)`.
+Both attestations riding along carry a `paramsHash` equal to the intent's EIP-712 struct hash
+(`INTENT_TYPEHASH = 0x86c9b91e614acc7421e39417dc43dd7b9bd2e0b2c8ce196c12f8b7391d281a03`), which is
+the join key to `AsseteraSignerService`'s audit row for the intent.
+
+---
+
+### `SettlementCapSet`
+
+```solidity
+event SettlementCapSet(address indexed token, uint256 wholeUnits, uint256 rawCap, uint8 decimals);
+```
+- **topic0:** `0x41c4d334f937d3fd4eabead8ae5a391ca83c26a05e66ab1bbd5f7377e101dd96`
+- **Indexed:** `token`
+- **Data:** `wholeUnits`, `rawCap`, `decimals`
+- **Emitted by:** `AsseteraPrimarySales`, **not** `AsseteraECS`
+
+| Field | Description |
+|---|---|
+| `token` | the settlement currency the cap applies to |
+| `wholeUnits` | the cap as it was **set**: whole tokens, the number a human typed into the Safe |
+| `rawCap` | the cap as it is **stored and enforced**: `wholeUnits * 10 ** decimals` |
+| `decimals` | the token's `decimals()` at the moment the cap was set, on the record so a token that later changes them can be spotted |
+
+Admin config event — the analogue of `CollectorAllowed`, useful for validating that a settlement
+seen in `PrimarySettled` was within the cap in force at the time. ⚠️ **A cap of zero means "this
+token cannot be settled in at all", not "unlimited"** — every token starts unconfigured and
+fails closed, and clearing a cap emits `SettlementCapSet(token, 0, 0, 0)`.
+
+---
+
 ## 5. Schema versioning — breaking change
 
 The checked-in `abi/AsseteraECS.json` (last built before fee support was added to offers, and before `OrderPlaced`/`OrderCancelled` were brought to parity with the offer-side events) has **stale topic0 hashes** for four events. If any indexer is currently subscribed to the old topics, it will silently stop matching once the enriched contract is deployed:
@@ -644,7 +829,9 @@ venue" lever is worth keeping active. `cancelOrderForUser`/`cancelOfferForUser`
 
 ## 6. Actor resolution (ERC-2771 meta-tx)
 
-The contract resolves identity via `_msgSender()` (ERC-2771), so a relayed call's EVM-level `tx.origin`/outer `msg.sender` will be the **trusted forwarder** (`0xc2D759d37bbfbE5a73b60d1cD4CFFd1B73CC4d7F` on Amoy), not the actual user. **Never key user identity off the transaction's `from` field** when the forwarder is in play — always use the address embedded in the event itself (`maker`, `taker`, `account`, `by`, `proposedBy`, etc.), which is already correctly resolved by the contract before emission.
+The contract resolves identity via `_msgSender()` (ERC-2771), so a relayed call's EVM-level `tx.origin`/outer `msg.sender` will be the **trusted forwarder** (`0xc2D759d37bbfbE5a73b60d1cD4CFFd1B73CC4d7F` on Amoy), not the actual user. **Never key user identity off the transaction's `from` field** when the forwarder is in play — always use the address embedded in the event itself (`maker`, `taker`, `account`, `by`, `proposedBy`, `buyer`, etc.), which is already correctly resolved by the contract before emission.
+
+`AsseteraPrimarySales` resolves identity the same way, through the **same** trusted forwarder, so a gasless primary sale works exactly like a gasless order and `PrimarySettled.buyer` / `IntentConsumed.buyer` are already resolved. The contract additionally requires `intent.buyer == _msgSender()` (`IntentBuyerMismatch`), so nobody settles on somebody else's behalf.
 
 `isTrustedForwarder(address)` / `trustedForwarder()` are available for indexers that want to detect and flag relayed transactions.
 
