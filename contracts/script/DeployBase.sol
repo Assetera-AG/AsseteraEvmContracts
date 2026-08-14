@@ -16,10 +16,12 @@ import {console2} from "forge-std/Script.sol";
 ///
 ///         {
 ///           "chainId": 31337, "caip2": "eip155:31337", "namespace": "eip155",
-///           "contracts":       { "AsseteraECS": "0x..(proxy)..", "Forwarder": "0x..", "MockUSDC": "0x..", "MockRWA": "0x.." },
-///           "implementations": { "AsseteraECS": "0x..(impl).." },
+///           "contracts":       { "AsseteraECS": "0x..(proxy)..", "AsseteraPrimarySales": "0x..(proxy)..",
+///                                "Forwarder": "0x..", "MockUSDC": "0x..", "MockRWA": "0x.." },
+///           "implementations": { "AsseteraECS": "0x..(impl)..", "AsseteraPrimarySales": "0x..(impl).." },
 ///           "metadata":        { "deployer": "0x..", "admin": "0x..", "operator": "0x..", "kycSigner": "0x..",
-///                                "feeSigner": "0x..", "relayer": "0x..", "deployBlock": 0, "deployTimestamp": 0 }
+///                                "feeSigner": "0x..", "settlementSigner": "0x..", "relayer": "0x..",
+///                                "deployBlock": 0, "deployTimestamp": 0 }
 ///         }
 ///
 ///         The numeric `chainId` key serves the viem/wagmi client; `caip2` + `namespace` let the CAIP-2-keyed
@@ -75,11 +77,14 @@ abstract contract DeployBase is CreateXScript {
     // Resolved during the run; written on save.
     address internal exchangeProxy;
     address internal exchangeImpl;
+    address internal primarySalesProxy;
+    address internal primarySalesImpl;
     address internal forwarder;
     address internal usdc;
     address internal rwa;
     address internal kycSigner;
     address internal feeSigner;
+    address internal settlementSigner;
     address internal operator;
     address internal relayer;
     address internal admin;
@@ -102,6 +107,10 @@ abstract contract DeployBase is CreateXScript {
     /// @dev The salt version that applies to `name`. Per-component so one address can be rotated alone;
     ///      see `EXCHANGE_SALT_VERSION`. Matching on the exact labels rather than a prefix keeps a typo in a
     ///      label from silently inheriting the default version and computing an unrelated address.
+    ///
+    ///      `AsseteraPrimarySales.*` deliberately has NO version of its own: it has never been deployed, so
+    ///      there is no address to rotate away from and nothing a bump could rescue. Give it one at the
+    ///      first storage-layout break AFTER it is live, not before.
     function _saltVersion(string memory name) internal pure returns (string memory) {
         bytes32 h = keccak256(bytes(name));
         if (h == keccak256("AsseteraExchange.proxy") || h == keccak256("AsseteraExchange.impl")) {
@@ -192,9 +201,11 @@ abstract contract DeployBase is CreateXScript {
         if (usdc != address(0)) vm.serializeAddress(c, "MockUSDC", usdc);
         if (rwa != address(0)) vm.serializeAddress(c, "MockRWA", rwa);
         vm.serializeAddress(c, "Forwarder", forwarder);
+        vm.serializeAddress(c, "AsseteraPrimarySales", primarySalesProxy);
         string memory cJson = vm.serializeAddress(c, "AsseteraECS", exchangeProxy);
 
         string memory im = "implementations";
+        vm.serializeAddress(im, "AsseteraPrimarySales", primarySalesImpl);
         string memory imJson = vm.serializeAddress(im, "AsseteraECS", exchangeImpl);
 
         (uint256 deployBlock, uint256 deployTimestamp) = _provenance(proxyCreated);
@@ -205,6 +216,10 @@ abstract contract DeployBase is CreateXScript {
         vm.serializeAddress(m, "operator", operator);
         vm.serializeAddress(m, "kycSigner", kycSigner);
         vm.serializeAddress(m, "feeSigner", feeSigner);
+        // ⚠️ TODO(AO-520) — today this is the same key as `feeSigner`/`kycSigner` unless the operator
+        //    overrides it; AO-520 provisions a distinct settlement key. Recorded here so an operator can
+        //    see WHICH key holds SETTLEMENT_OPERATOR_ROLE without reading the chain.
+        vm.serializeAddress(m, "settlementSigner", settlementSigner);
         vm.serializeAddress(m, "relayer", relayer);
         vm.serializeUint(m, "deployBlock", deployBlock);
         string memory mJson = vm.serializeUint(m, "deployTimestamp", deployTimestamp);
