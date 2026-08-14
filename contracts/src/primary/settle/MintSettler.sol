@@ -21,8 +21,9 @@ import {ISettler} from "../interfaces/ISettler.sol";
 ///         What the mint packet adds here, and nowhere else:
 ///           * An external entry point of its own — the frozen `settlePrimary` is family S2's
 ///             and takes `venueCalldata`, which this family does not have. It runs under
-///             `Action.SettleMint`, which `AsseteraPrimarySales.initialize` ALREADY enables in
-///             the KYC gate, so the fail-open `complianceRequired` trap is closed in advance.
+///             `Action.SettleMint`, which is KYC-gated already and would be gated even if it
+///             were not declared: `AsseteraPrimarySales.complianceRequired` overrides the shared
+///             fail-open getter so that every ordinal is required until an admin exempts it.
 ///           * The same four-step preamble the venue path uses, reachable because
 ///             `IntentGate` sits BELOW this module: `_verifyIntent(intent, intentSignature,
 ///             buyerSignature)` — the buyer's own signature over the intent is checked inside

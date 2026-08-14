@@ -68,6 +68,20 @@ abstract contract PrimaryStorage is PrimaryTypes, FeeGate, ReentrancyGuardUpgrad
         ///      alongside the raw one so an operator can confirm the number without knowing the
         ///      token's decimals, and so the conversion is auditable after the fact.
         mapping(address token => uint256 wholeUnits) settlementPerTxCapWholeUnits;
+        // ── the compliance gate, INVERTED, APPENDED (PR #58 review) ──────────────────────
+        /// @dev Whether an action is EXEMPT from the KYC gate. The polarity is the whole point:
+        ///      `GateStorage.complianceRequired` is a `mapping(uint8 => bool)`, so on the shared
+        ///      base an action nobody wrote reads "not required" and is UNGATED — one forgotten
+        ///      initializer line away from an ungated primary sale. Stored as an exemption in
+        ///      THIS router's own namespace, an ordinal nobody has heard of reads `false` here
+        ///      and is therefore GATED, which is the fail-closed answer and needs no enumeration
+        ///      to stay true.
+        ///
+        ///      ⚠️ Never read this directly. `AsseteraPrimarySales.complianceRequired` is the
+        ///      only reader, and it is the override every gate goes through — the shared
+        ///      `_gate().complianceRequired` mapping is DEAD for this contract and writing it
+        ///      would change nothing.
+        mapping(uint8 action => bool exempt) complianceExempt;
     }
 
     // keccak256(abi.encode(uint256(keccak256("assetera.storage.PrimarySales")) - 1)) & ~bytes32(uint256(0xff))

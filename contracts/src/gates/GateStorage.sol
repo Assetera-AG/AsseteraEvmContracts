@@ -93,13 +93,20 @@ abstract contract GateStorage is GateTypes, AccessControlUpgradeable, EIP712Upgr
     ///      is safe because its initializer enables each of its actions explicitly (pinned by
     ///      `test_Initialize_GatesEveryDeclaredAction`), NOT because the gate defaults to on.
     ///      Any new consumer of this base must do the same for every action it defines, and prove
-    ///      it in a test. The default is not inverted here because `complianceRequired` is a public
-    ///      getter whose meaning is already relied on off-chain; changing its polarity is a breaking
-    ///      change to the admin surface, and the forthcoming primary-settlement venue is expected to
-    ///      express the policy as a required override instead (see AO-516).
+    ///      it in a test. The default is not inverted HERE because the underlying mapping is live
+    ///      storage on the deployed exchange proxies: flipping what a stored `false` means would
+    ///      reinterpret that state, not migrate it.
+    ///
+    ///      ⚠️ **`virtual` is the seam that lets a consumer fix this for itself**, and it is the
+    ///      route `AsseteraPrimarySales` takes (AO-516): it overrides this getter to read an
+    ///      EXEMPTION flag out of its own ERC-7201 namespace, so an unset action reads "gated"
+    ///      there rather than "ungated". The exchange does not override it and its storage,
+    ///      semantics and ABI are untouched. Nothing in this base may assume the mapping and the
+    ///      getter agree — every consumer of the policy, here and in `KycGate`/`FeeGate`, must
+    ///      go through this function rather than reading `_gate().complianceRequired` directly.
     /// @param action The action ordinal.
     /// @return Whether a KYC attestation is required for it.
-    function complianceRequired(uint8 action) public view returns (bool) {
+    function complianceRequired(uint8 action) public view virtual returns (bool) {
         return _gate().complianceRequired[action];
     }
 

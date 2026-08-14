@@ -30,14 +30,19 @@ abstract contract PrimaryTypes is GateTypes {
     ///         and an attestation is bound to a verifying contract by the EIP-712 domain,
     ///         so ordinal 1 here and ordinal 1 on the exchange are unrelated.
     ///
-    /// @dev    ⚠️ **Every member declared here MUST be enabled by
-    ///         `AsseteraPrimarySales.initialize`.** `GateStorage.complianceRequired` is a
-    ///         `mapping(uint8 => bool)` and is therefore fail-OPEN: an action nobody wrote
-    ///         reads `false`, and `KycGate._verifyKyc` returns on its first line, so a
-    ///         forgotten action is an UNGATED action rather than a gated one. That is the
-    ///         single most likely way to ship an ungated primary sale, and it is pinned by
-    ///         `test_Initialize_GatesEveryDeclaredAction`. Appending a member without
-    ///         adding both an initializer line and a test line is the bug.
+    /// @dev    ✅ **Appending a member here is safe on its own, and it did not use to be.**
+    ///         `GateStorage.complianceRequired` is a `mapping(uint8 => bool)` and is therefore
+    ///         fail-OPEN — an action nobody wrote reads `false`, `KycGate._verifyKyc` returns on
+    ///         its first line, and the settlement runs unscreened. The router used to answer that
+    ///         with an initializer that enumerated this enum, which gated exactly the members
+    ///         somebody remembered. `AsseteraPrimarySales.complianceRequired` now overrides the
+    ///         getter to read an EXEMPTION out of the router's own namespace, so a member added
+    ///         here is gated the moment it exists, with no line to add anywhere.
+    ///
+    ///         ⚠️ What a new member DOES still need: an entry in
+    ///         `AsseteraPrimarySales._paramsHashAllowed` if it binds an intent (it will), and its
+    ///         own entry point. Neither can be forgotten silently — the first rejects every
+    ///         attestation the action produces, the second does not exist.
     ///
     ///         Ordinals are append-only: `AsseteraSignerService` signs the ordinal, so
     ///         renumbering silently re-points every attestation in flight.

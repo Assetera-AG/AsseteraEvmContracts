@@ -145,10 +145,10 @@ abstract contract IntentGate is PrimaryStorage, IIntentGate {
     /// @dev Pin both attestations to this exact settlement, and to this settlement's currency.
     ///
     ///      Both `paramsHash` checks are UNCONDITIONAL here, unlike `FeeGate._bindParamsHash`
-    ///      which makes the KYC half conditional on `complianceRequired[action]`. This router
-    ///      gates every action it declares in its initializer and asserts it in a test, so the
-    ///      conditional buys nothing and the unconditional form cannot be weakened by an admin
-    ///      toggle.
+    ///      which makes the KYC half conditional on `complianceRequired(action)`. This router
+    ///      gates every action by default — `AsseteraPrimarySales` overrides that getter so an
+    ///      unset ordinal reads "required" — so the conditional buys nothing, and the
+    ///      unconditional form here cannot be weakened by an admin toggle even so.
     ///
     ///      The fee TERMS go through the shared `FeeGate._validateFees`, with the settlement
     ///      token passed as BOTH legs. An earlier revision hand-rolled the same checks here and

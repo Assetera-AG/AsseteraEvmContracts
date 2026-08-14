@@ -18,30 +18,50 @@ import {PrimarySalesTestBase} from "./PrimarySalesTestBase.sol";
 /// @title PrimarySalesInitTest
 /// @notice What the initializer must have done before a single settlement is possible.
 contract PrimarySalesInitTest is PrimarySalesTestBase {
-    /// 🔴 **The one that matters most.** `GateStorage.complianceRequired` is a
-    /// `mapping(uint8 => bool)` and is therefore fail-OPEN: an action nobody enables reads
-    /// `false`, `KycGate._verifyKyc` returns on its first line, and the settlement runs with a
-    /// KYC attestation that was never checked. So the safety of this contract comes from the
-    /// initializer enumerating EVERY member of `PrimaryTypes.Action`, and from this test
-    /// asserting it action by action rather than trusting a comment.
-    ///
-    /// Mirrors `test_Initialize_GatesEveryDeclaredAction` in `AsseteraECS.t.sol`. Appending a
-    /// member to the enum without adding a line here AND a line in the initializer is the bug
-    /// this test exists to catch.
+    /// The two declared actions are gated, which is the minimum. The property that actually
+    /// protects this contract is the one below.
     function test_Initialize_GatesEveryDeclaredAction() public view {
         assertTrue(sales.complianceRequired(uint8(PrimaryTypes.Action.SettleVenue)), "SettleVenue");
         assertTrue(sales.complianceRequired(uint8(PrimaryTypes.Action.SettleMint)), "SettleMint");
     }
 
-    /// The enum's members and the initializer's lines must be the SAME set, not merely
-    /// overlapping: an ordinal beyond the declared set must stay ungated, or the enumeration
-    /// above proves nothing about completeness. Ordinal 0 is `Action.None`, an unset field
-    /// rather than a real action; 3 is the first unallocated ordinal.
-    function test_Initialize_GatesNothingBeyondTheDeclaredActions() public view {
-        assertFalse(sales.complianceRequired(uint8(PrimaryTypes.Action.None)), "None");
-        for (uint8 action = 3; action < 16; action++) {
-            assertFalse(sales.complianceRequired(action), "an undeclared ordinal must not be gated");
+    /// 🔴 **The one that matters most, and it is the inverse of what this suite used to
+    /// assert.** `GateStorage.complianceRequired` is a `mapping(uint8 => bool)` and is therefore
+    /// fail-OPEN: an action nobody enables reads `false`, `KycGate._verifyKyc` returns on its
+    /// first line, and the settlement runs with a KYC attestation that was never checked. The
+    /// router used to answer that with an initializer enumerating every member of
+    /// `PrimaryTypes.Action` — which gates exactly the actions somebody remembered, and the
+    /// previous version of this test asserted that an undeclared ordinal was NOT gated, pinning
+    /// the hole in place.
+    ///
+    /// `AsseteraPrimarySales.complianceRequired` now overrides the getter to read an EXEMPTION
+    /// from the router's own namespace, so the whole `uint8` domain is gated by default. The
+    /// acceptance property is exactly this: an `Action` nobody remembered to enable is gated,
+    /// not ungated. It fails under the previous arrangement for every ordinal but 1 and 2.
+    function test_ComplianceGate_IsClosedForEveryOrdinal() public view {
+        for (uint256 action = 0; action <= type(uint8).max; action++) {
+            assertTrue(sales.complianceRequired(uint8(action)), "an ordinal nobody enabled is not gated");
         }
+    }
+
+    /// The same property stated the way it will actually be met: a member appended to the enum
+    /// tomorrow, with no initializer line and no test line, is gated the moment it exists.
+    /// Ordinal 3 is the first unallocated one.
+    function test_ComplianceGate_IsClosedForAnActionNobodyHasDeclaredYet() public view {
+        assertTrue(sales.complianceRequired(3), "the next Action to be appended would be ungated");
+    }
+
+    /// An admin can still exempt an action deliberately — the surface is unchanged — but the
+    /// exemption has to be an act rather than an omission, and it is reversible.
+    function test_ComplianceGate_CanStillBeOpenedAndClosedDeliberately() public {
+        vm.prank(admin);
+        sales.setComplianceRequired(PrimaryTypes.Action.SettleMint, false);
+        assertFalse(sales.complianceRequired(uint8(PrimaryTypes.Action.SettleMint)), "the exemption did not take");
+        assertTrue(sales.complianceRequired(uint8(PrimaryTypes.Action.SettleVenue)), "it leaked onto another action");
+
+        vm.prank(admin);
+        sales.setComplianceRequired(PrimaryTypes.Action.SettleMint, true);
+        assertTrue(sales.complianceRequired(uint8(PrimaryTypes.Action.SettleMint)), "the gate did not close again");
     }
 
     function test_Initialize_GrantsAllFourRoles() public view {

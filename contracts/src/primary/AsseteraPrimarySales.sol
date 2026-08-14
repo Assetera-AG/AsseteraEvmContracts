@@ -135,19 +135,19 @@ contract AsseteraPrimarySales is
         _grantRole(FEE_OPERATOR_ROLE, feeSigner);
         _grantRole(SETTLEMENT_OPERATOR_ROLE, settlementSigner);
 
-        // ⚠️ EVERY action declared in `PrimaryTypes.Action` MUST appear below.
-        //    `complianceRequired` is a `mapping(uint8 => bool)` and is fail-OPEN: an action
-        //    nobody enables reads `false` and `KycGate._verifyKyc` returns on its first line,
-        //    so a forgotten action is an UNGATED primary sale rather than a gated one. A
-        //    comment is not enough to prevent that, which is why
-        //    `test_Initialize_GatesEveryDeclaredAction` asserts it action by action.
+        // ⚠️ **There is deliberately NO enumeration of `Action` here, and its absence is the
+        //    fix.** This initializer used to write `complianceRequired[action] = true` for every
+        //    declared action, guarded by a comment and a test. That arrangement gated exactly
+        //    the actions somebody remembered: the shared mapping is fail-OPEN, so the day an
+        //    ordinal is appended to `PrimaryTypes.Action` without a matching line here, it reads
+        //    `false`, `KycGate._verifyKyc` returns on its first line, and the new settlement path
+        //    is an UNGATED primary sale. A list that must be kept in step with an enum is the
+        //    defect, not the safeguard.
         //
-        //    `Action.SettleMint` is enabled here even though the mint family has no entry
-        //    point yet. Enabling the gate BEFORE the feature exists is the point: the mint
-        //    packet inherits a closed gate instead of having to remember to close one.
-        GateData storage $ = _gate();
-        $.complianceRequired[uint8(Action.SettleVenue)] = true;
-        $.complianceRequired[uint8(Action.SettleMint)] = true;
+        //    The `complianceRequired` override below inverts the default for this router, so
+        //    every ordinal — declared, undeclared, or added years from now — is gated until an
+        //    admin explicitly exempts it. Nothing needs to be written at initialization for that
+        //    to hold, which is why nothing is.
     }
 
     // --------------------------------------------------------------------- //
@@ -268,6 +268,42 @@ contract AsseteraPrimarySales is
         return action == uint8(Action.SettleVenue) || action == uint8(Action.SettleMint);
     }
 
+    /// @notice Whether an action requires a KYC attestation on THIS router.
+    ///
+    /// @dev    🔴 **The fail-open default of `GateStorage.complianceRequired`, closed — for this
+    ///         contract only, and structurally rather than by convention.**
+    ///
+    ///         The shared getter reads a `mapping(uint8 => bool)` in which an action nobody wrote
+    ///         reads `false`, and `KycGate._verifyKyc` returns on its first line when it does. On
+    ///         the exchange that is held safe by an initializer that enumerates every action and
+    ///         a test that re-enumerates them; on a primary-sales router, where a single ungated
+    ///         action is an unscreened first acquisition of a security, "somebody remembered" is
+    ///         not a control. Appending an `Action` and forgetting a line is the entire failure
+    ///         mode, and it produces no compile error and no failing test.
+    ///
+    ///         So this router stores the INVERSE — an exemption — in its own ERC-7201 namespace,
+    ///         where the zero value means "not exempt". Every `uint8`, declared or not, is
+    ///         therefore gated from the moment the proxy is initialised, with nothing written and
+    ///         nothing to keep in step. `test_ComplianceGate_IsClosedForEveryOrdinal` fuzzes the
+    ///         whole domain; it is the assertion the previous arrangement could not make.
+    ///
+    ///         ⚠️ **The shared `GateStorage` and `KycGate` are untouched in meaning and in
+    ///         storage.** The exchange does not override this getter, so its live
+    ///         `complianceRequired` mapping is read exactly as before. The `virtual` keyword on
+    ///         the base getter is the whole of the shared change; every gate reaches the policy
+    ///         through the function, so the override binds all of them (`_verifyKyc`,
+    ///         `_consumeKyc`, `_consumeKycAndFee`, `_bindParamsHash`).
+    ///
+    ///         ⚠️ Consequence worth knowing: `_gate().complianceRequired` is DEAD storage for
+    ///         this proxy. Nothing reads it. A future module that reads the mapping instead of
+    ///         calling this function would silently reopen the gate.
+    ///
+    /// @param  action The action ordinal.
+    /// @return Whether a KYC attestation is required for it.
+    function complianceRequired(uint8 action) public view override returns (bool) {
+        return !_primary().complianceExempt[action];
+    }
+
     // --------------------------------------------------------------------- //
     //                             Admin surface                             //
     // --------------------------------------------------------------------- //
@@ -288,10 +324,17 @@ contract AsseteraPrimarySales is
     ///      NOT disable intent verification either — a settlement always needs a valid intent
     ///      from the settlement operator. Keeps the `Action` enum in its external signature so
     ///      a Safe transaction is readable.
+    ///
+    ///      ⚠️ Writes the INVERSE flag in this router's own namespace, because that is what
+    ///      `complianceRequired` above reads. The signature, the event and the observable
+    ///      behaviour of this call are unchanged — `setComplianceRequired(a, false)` still makes
+    ///      `complianceRequired(a)` return `false`. What changed is only which way round an
+    ///      untouched action reads, and that is the whole point: an admin can still exempt an
+    ///      action deliberately, but nobody can exempt one by forgetting about it.
     /// @param action   The action to toggle.
     /// @param required Whether a KYC attestation is required for it.
     function setComplianceRequired(Action action, bool required) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _gate().complianceRequired[uint8(action)] = required;
+        _primary().complianceExempt[uint8(action)] = !required;
         emit ComplianceRequiredSet(action, required);
     }
 
