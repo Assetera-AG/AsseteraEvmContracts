@@ -25,8 +25,36 @@ import {console2} from "forge-std/Script.sol";
 ///         The numeric `chainId` key serves the viem/wagmi client; `caip2` + `namespace` let the CAIP-2-keyed
 ///         indexer/API (ADR-0006) consume the same file directly.
 abstract contract DeployBase is CreateXScript {
-    /// @dev Bump to intentionally rotate every deterministic address to a fresh deployment.
+    /// @dev Default salt version, used by every component that has no version of its own. Bumping it
+    ///      rotates ALL of those addresses at once — the forwarder and the faucet mocks included — so it is
+    ///      almost never the knob you want. To rotate one component, give it its own version below and bump
+    ///      that (AO-514 review finding: a global bump silently re-deploys the forwarder, which the exchange
+    ///      redeploy runbook does not account for).
     string internal constant SALT_VERSION = "v1";
+
+    /// @dev Salt version of the exchange proxy and implementation ONLY. Separate from `SALT_VERSION` so the
+    ///      planned fresh deploy rotates the exchange address without disturbing the forwarder or the mocks.
+    ///      Bumping this to "v2" is the intended way to land a storage-layout break: the new address has no
+    ///      code, so `Deploy.s.sol` takes the fresh-deploy branch and the old proxy is never touched.
+    string internal constant EXCHANGE_SALT_VERSION = "v1";
+
+    /// @dev Whether the implementation built from THIS commit may be installed onto an exchange proxy that
+    ///      already has code, via `upgradeToAndCall`.
+    ///
+    ///      ⚠️ Keep this `false` whenever the commit changes the linear storage layout. It is `false` today
+    ///      because AO-514 moved the gate mappings into ERC-7201 namespaced storage, shifting `_offers`
+    ///      5 → 2, `totalOffers` 6 → 3 and `__gap` 8 → 4. Installing that over the live Amoy/Sepolia proxies
+    ///      would reinterpret the existing order book as offers and corrupt every escrow balance.
+    ///
+    ///      This is a compile-time constant rather than an env flag on purpose: the answer is a property of
+    ///      the source tree, not of the operator running the script, so it belongs in the commit that makes
+    ///      the layout incompatible. `Deploy.s.sol` and `UpgradeCalldata.s.sol` both refuse to produce an
+    ///      in-place upgrade while it is `false`.
+    bool internal constant INPLACE_UPGRADE_ALLOWED = false;
+
+    /// @dev Human-readable refusal reason, shared by both scripts so the two never drift.
+    string internal constant INPLACE_UPGRADE_REFUSAL =
+        "refusing in-place upgrade: this commit's storage layout is not compatible with the deployed proxy. Land it by bumping EXCHANGE_SALT_VERSION for a fresh deploy, or set INPLACE_UPGRADE_ALLOWED once the layout is compatible again.";
 
     uint256 internal chainId;
     string internal deploymentPath;
@@ -54,8 +82,19 @@ abstract contract DeployBase is CreateXScript {
     ///      protected (same address on every chain for the same deployer). This layout matches what
     ///      `CreateXScript.computeCreate3Address(salt, deployer)` expects.
     function _salt(address deployer, string memory name) internal pure returns (bytes32) {
-        bytes11 entropy = bytes11(keccak256(abi.encodePacked("assetera.evm.", name, ".", SALT_VERSION)));
+        bytes11 entropy = bytes11(keccak256(abi.encodePacked("assetera.evm.", name, ".", _saltVersion(name))));
         return bytes32(abi.encodePacked(bytes20(deployer), bytes1(0x00), entropy));
+    }
+
+    /// @dev The salt version that applies to `name`. Per-component so one address can be rotated alone;
+    ///      see `EXCHANGE_SALT_VERSION`. Matching on the exact labels rather than a prefix keeps a typo in a
+    ///      label from silently inheriting the default version and computing an unrelated address.
+    function _saltVersion(string memory name) internal pure returns (string memory) {
+        bytes32 h = keccak256(bytes(name));
+        if (h == keccak256("AsseteraExchange.proxy") || h == keccak256("AsseteraExchange.impl")) {
+            return EXCHANGE_SALT_VERSION;
+        }
+        return SALT_VERSION;
     }
 
     /// @dev True if `a` is a deployed contract (has code).

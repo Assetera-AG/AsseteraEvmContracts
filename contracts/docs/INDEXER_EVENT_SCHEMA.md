@@ -90,7 +90,7 @@ since a "stop the venue" lever is worth keeping active.
 | `totalOrders()` / `totalOffers()` | `uint256` — highest assigned id (ids are `1..total`) |
 | `usedNonce(address account, uint256 nonce)` | `bool` — KYC nonce consumption state |
 | `usedFeeNonce(address account, uint256 nonce)` | `bool` — fee attestation nonce consumption state (separate namespace from `usedNonce`) |
-| `complianceRequired(Action action)` | `bool` — whether that action currently requires a **KYC** attestation. Fee attestations are always required on `Place`/`MakeOffer`, independently of this (AC-884) |
+| `complianceRequired(uint8 action)` | `bool` — whether that action currently requires a **KYC** attestation. The argument is the `Action` ordinal; the getter is declared `uint8` since AO-514 because the gate is shared with venues that define their own action set (same selector, same argument type). Fee attestations are always required on `Place`/`MakeOffer`, independently of this (AC-884) |
 | `allowedCollectors(address)` | `bool` |
 | `version()` | `string` |
 | `hasRole(bytes32 role, address account)`, `getRoleAdmin(bytes32 role)` | inherited `AccessControlUpgradeable` |
@@ -188,7 +188,7 @@ Not stored on-chain; passed as calldata to state-changing calls and reflected in
 | Field | Type |
 |---|---|
 | `account` | `address` |
-| `action` | `Action` (`uint8`) |
+| `action` | `uint8` (the `Action` ordinal; declared `uint8` since AO-514) |
 | `orderId` | `uint256` |
 | `nonce` | `uint256` |
 | `deadline` | `uint256` |
@@ -207,7 +207,7 @@ The contract binds `feeAtt` to the paired `kycAtt` by checking both against the 
 | Field | Type |
 |---|---|
 | `account` | `address` |
-| `action` | `Action` (`uint8`) — `Place` or `MakeOffer` |
+| `action` | `uint8` (the `Action` ordinal; declared `uint8` since AO-514) — `Place` or `MakeOffer` |
 | `nonce` | `uint256` |
 | `deadline` | `uint256` |
 | `paramsHash` | `bytes32` — always bound to the call's on-chain-computed params hash; equal to the paired `KycAttestation.paramsHash` whenever KYC gating is on for the action |

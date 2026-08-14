@@ -6,7 +6,10 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {ERC2771Forwarder} from "@openzeppelin/contracts/metatx/ERC2771Forwarder.sol";
 import {AsseteraECS} from "../src/AsseteraECS.sol";
 import {ExchangeTypes} from "../src/types/ExchangeTypes.sol";
-import {ExchangeStorage} from "../src/storage/ExchangeStorage.sol";
+import {GateTypes} from "../src/types/GateTypes.sol";
+import {GateStorage} from "../src/gates/GateStorage.sol";
+import {IKycGate} from "../src/interfaces/IKycGate.sol";
+import {IFeeGate} from "../src/interfaces/IFeeGate.sol";
 import {FaucetToken} from "./mocks/FaucetToken.sol";
 
 // =========================================================================================== //
@@ -77,6 +80,17 @@ import {FaucetToken} from "./mocks/FaucetToken.sol";
 //      OfferBook.sol:184 (`replaceOffer`), :244 (`cancelOffer`), :294 (`acceptOffer`). Three
 //      uint256s are already word-sized, so packed and padded coincide here byte for byte; what
 //      these vectors pin is the field set, its order and its widths.
+//
+// THE FOURTH VECTOR SET: FULL EIP-712 DIGESTS (AO-514)
+// -----------------------------------------------------
+// `paramsHash` is only one field of the message that actually gets signed. `EIP712DigestVectorsTest`
+// below pins the whole chain — typehash → structHash → domain separator → digest — for one fixed
+// `KycAttestation` and one fixed `FeeAttestation`, as hardcoded literals. AO-514 retyped the
+// `action` field of both structs from the `Action` enum to `uint8`; that is a no-op for the digest
+// (the typehash strings always said `uint8 action`, and both call sites always encoded
+// `uint8(att.action)`), and these vectors are the proof rather than the claim. They also pin the
+// EIP-712 domain `name`, which is deliberately still the pre-rename literal "AsseteraExchange"
+// (ADR-0041) — moving it would silently invalidate every attestation the signer service produces.
 //
 // =========================================================================================== //
 
@@ -365,7 +379,7 @@ contract ParamsHashVectorsOnChainTest is Test {
 
         vm.startPrank(maker);
         FaucetToken(TOKEN_A).approve(address(exchange), AMOUNT_A);
-        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
         exchange.placeOrder(TOKEN_A, AMOUNT_A, TOKEN_B, AMOUNT_B, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -383,7 +397,7 @@ contract ParamsHashVectorsOnChainTest is Test {
 
         vm.startPrank(maker);
         FaucetToken(TOKEN_A).approve(address(exchange), AMOUNT_A);
-        vm.expectRevert(ExchangeStorage.ParamsHashMismatch.selector);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
         exchange.makeOffer(TAKER, TOKEN_A, AMOUNT_A, TOKEN_B, AMOUNT_B, 0, att, feeAtt);
         vm.stopPrank();
     }
@@ -425,9 +439,9 @@ contract ParamsHashVectorsOnChainTest is Test {
         bytes32 structHash =
             keccak256(abi.encode(KYC_TYPEHASH, account, uint8(action), orderId, nonce, deadline, paramsHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(kycSignerPk, _digest(structHash));
-        att = ExchangeTypes.KycAttestation({
+        att = GateTypes.KycAttestation({
             account: account,
-            action: action,
+            action: uint8(action),
             orderId: orderId,
             nonce: nonce,
             deadline: deadline,
@@ -458,9 +472,9 @@ contract ParamsHashVectorsOnChainTest is Test {
             )
         );
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(feeSignerPk, _digest(structHash));
-        att = ExchangeTypes.FeeAttestation({
+        att = GateTypes.FeeAttestation({
             account: account,
-            action: action,
+            action: uint8(action),
             nonce: nonce,
             deadline: deadline,
             paramsHash: paramsHash,
@@ -484,5 +498,288 @@ contract ParamsHashVectorsOnChainTest is Test {
             )
         );
         return keccak256(abi.encodePacked("\x19\x01", domain, structHash));
+    }
+}
+
+/// @title EIP712DigestVectorsTest
+/// @notice The full EIP-712 digest vectors (AO-514). Everything above pins `paramsHash`, which is
+///         one field of the signed message; this pins the message itself — typehash, structHash,
+///         domain separator and final digest — for a fixed `KycAttestation` and a fixed
+///         `FeeAttestation`, as hardcoded literals produced by `cast` outside solc.
+///
+///         The on-chain half is the part that cannot be faked: it deploys the venue AT the pinned
+///         `VENUE` address on the pinned chain id, signs the hardcoded digest literals directly
+///         (never a digest the test recomputed from the contract), and places an order with them.
+///         If the venue's own `_hashTypedDataV4` disagreed by one bit, `ECDSA.recover` would return
+///         a different address and the call would revert with `KycBadSigner` / `FeeBadSigner`.
+contract EIP712DigestVectorsTest is Test {
+    // ── The fixed message. Every one of these values is part of a pinned preimage. ────────────
+    address internal constant TOKEN_A = 0x1111111111111111111111111111111111111111;
+    address internal constant TOKEN_B = 0x2222222222222222222222222222222222222222;
+    uint256 internal constant AMOUNT_A = 1_000_000;
+    uint256 internal constant AMOUNT_B = 5_000_000_000_000_000_000;
+
+    /// The attested account, and the address the venue is deployed at. Both are inside the
+    /// preimages (the account in the structHash, the venue in the domain separator), so they are
+    /// vectors too, not fixture noise.
+    address internal constant MAKER = 0x4444444444444444444444444444444444444444;
+    address internal constant VENUE = 0x5555555555555555555555555555555555555555;
+
+    /// Foundry's default test chain id. It is in the domain separator, so it is pinned here and
+    /// re-asserted in `setUp` rather than assumed.
+    uint256 internal constant CHAIN_ID = 31337;
+
+    uint8 internal constant ACTION_PLACE = 1; // ExchangeTypes.Action.Place
+    uint256 internal constant ORDER_ID = 0;
+    uint256 internal constant KYC_NONCE = 7;
+    uint256 internal constant FEE_NONCE = 8;
+    uint256 internal constant DEADLINE = 1_800_000_000;
+    /// 3 minutes before the deadline — the backend's real TTL, and well inside `MAX_KYC_TTL`.
+    uint256 internal constant SIGNED_AT = DEADLINE - 3 minutes;
+
+    /// The Place `paramsHash`, identical to `ParamsHashVectorsTest.PLACE_VECTOR`. Duplicated on
+    /// purpose: see "WHY DUPLICATE A CONSTANT INSTEAD OF SHARING ONE" in the header.
+    bytes32 internal constant PLACE_VECTOR = 0xa2ef1df146cbf2a4faec90f3b1fe87edce9fdeb2b7db8da457f98759361f7067;
+
+    // ── The pinned vectors ────────────────────────────────────────────────────────────────────
+
+    /// cast keccak "KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint256 deadline,bytes32 paramsHash)"
+    bytes32 internal constant KYC_TYPEHASH = 0x9d47d5391d5fdceebb227638b24f6b391e7e39fd6671f3b7478c9767dd1ba835;
+
+    /// cast keccak "FeeAttestation(address account,uint8 action,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector,address feeToken)"
+    bytes32 internal constant FEE_TYPEHASH = 0x3531aff0e1bd1af792c545fad8cd142e11c96b67decff1940a98277c8c4f530a;
+
+    /// cast keccak "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+    bytes32 internal constant DOMAIN_TYPEHASH = 0x8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f;
+
+    /// cast keccak $(cast abi-encode "f(bytes32,bytes32,bytes32,uint256,address)" \
+    ///   0x8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f \
+    ///   $(cast keccak "AsseteraExchange") $(cast keccak "1") 31337 \
+    ///   0x5555555555555555555555555555555555555555)
+    bytes32 internal constant DOMAIN_SEPARATOR = 0x966094c80173f31c4a7a5610265612b319488dd983c126ca4013e12e4c22e254;
+
+    /// cast keccak $(cast abi-encode "f(bytes32,address,uint8,uint256,uint256,uint256,bytes32)" \
+    ///   0x9d47d5391d5fdceebb227638b24f6b391e7e39fd6671f3b7478c9767dd1ba835 \
+    ///   0x4444444444444444444444444444444444444444 1 0 7 1800000000 \
+    ///   0xa2ef1df146cbf2a4faec90f3b1fe87edce9fdeb2b7db8da457f98759361f7067)
+    bytes32 internal constant KYC_STRUCT_HASH = 0x502139904441b4a6235b2134bae77e2ab122e33df26776f082d1157c99d58e3f;
+
+    /// cast keccak $(cast abi-encode "f(bytes32,address,uint8,uint256,uint256,bytes32,uint16,uint16,address,address)" \
+    ///   0x3531aff0e1bd1af792c545fad8cd142e11c96b67decff1940a98277c8c4f530a \
+    ///   0x4444444444444444444444444444444444444444 1 8 1800000000 \
+    ///   0xa2ef1df146cbf2a4faec90f3b1fe87edce9fdeb2b7db8da457f98759361f7067 0 0 \
+    ///   0x0000000000000000000000000000000000000000 0x1111111111111111111111111111111111111111)
+    bytes32 internal constant FEE_STRUCT_HASH = 0xaeab35fcf7ad5266c8b4b6ec07ca8b3d4a150b523045ea20b565c3b7a33c0550;
+
+    /// cast keccak 0x1901<DOMAIN_SEPARATOR><KYC_STRUCT_HASH>
+    bytes32 internal constant KYC_DIGEST = 0xb915d6df7498d00f798db61c33fd8300010ed7750a000fec6016e95b34d3ea4c;
+
+    /// cast keccak 0x1901<DOMAIN_SEPARATOR><FEE_STRUCT_HASH>
+    bytes32 internal constant FEE_DIGEST = 0x00fe01925ae7f966c15db8215cf18002d2c5e1805b0c641df3ddde1484d0ada3;
+
+    AsseteraECS internal exchange;
+    address internal admin = makeAddr("admin");
+
+    uint256 internal kycSignerPk = 0xACE1;
+    uint256 internal feeSignerPk = 0xFEE1;
+
+    function setUp() public {
+        // The domain separator pins the chain id, so a foundry default change must fail loudly
+        // here rather than silently move every digest below.
+        assertEq(block.chainid, CHAIN_ID, "chain id is part of the pinned domain separator");
+        vm.warp(SIGNED_AT);
+
+        deployCodeTo("FaucetToken.sol:FaucetToken", abi.encode("Vector Token A", "VTA", uint8(6)), TOKEN_A);
+        deployCodeTo("FaucetToken.sol:FaucetToken", abi.encode("Vector Token B", "VTB", uint8(18)), TOKEN_B);
+
+        // The venue's ADDRESS is in the domain separator, so it has to live at the pinned one.
+        // No trusted forwarder: the digests do not depend on it, and leaving it zero keeps the
+        // fixture to exactly the values that are pinned.
+        AsseteraECS impl = new AsseteraECS(address(0));
+        bytes memory initData =
+            abi.encodeCall(AsseteraECS.initialize, (admin, vm.addr(kycSignerPk), vm.addr(feeSignerPk)));
+        deployCodeTo("ERC1967Proxy.sol:ERC1967Proxy", abi.encode(address(impl), initData), VENUE);
+        exchange = AsseteraECS(VENUE);
+
+        FaucetToken(TOKEN_A).mint(MAKER, 1_000_000_000);
+    }
+
+    // ── 1. The literals are internally consistent with the EIP-712 construction ───────────────
+
+    /// The typehash strings are the contract's own constants. If either string changes, the
+    /// pinned typehash — and therefore every digest below — moves, and this fails first.
+    function test_Typehashes_MatchTheSignedTypeStrings() public pure {
+        assertEq(
+            keccak256(
+                "KycAttestation(address account,uint8 action,uint256 orderId,uint256 nonce,uint256 deadline,bytes32 paramsHash)"
+            ),
+            KYC_TYPEHASH
+        );
+        assertEq(
+            keccak256(
+                "FeeAttestation(address account,uint8 action,uint256 nonce,uint256 deadline,bytes32 paramsHash,uint16 makerFeeBps,uint16 takerFeeBps,address feeCollector,address feeToken)"
+            ),
+            FEE_TYPEHASH
+        );
+    }
+
+    /// The typehashes the CONTRACT exposes must be the pinned ones. This is the assertion that
+    /// notices a field being added, removed, reordered or retyped in either struct.
+    function test_Typehashes_MatchTheDeployedContract() public view {
+        assertEq(exchange.KYC_TYPEHASH(), KYC_TYPEHASH);
+        assertEq(exchange.FEE_TYPEHASH(), FEE_TYPEHASH);
+    }
+
+    /// `action` is encoded as a `uint8` word. That is true whether the struct field is declared as
+    /// the `Action` enum or as a plain `uint8` — which is exactly why AO-514's retype cannot move
+    /// the digest, and why the two encodings are asserted to be byte-identical here.
+    function test_KycStructHash_MatchesThePinnedPreimage() public pure {
+        bytes memory preimage =
+            abi.encode(KYC_TYPEHASH, MAKER, ACTION_PLACE, ORDER_ID, KYC_NONCE, DEADLINE, PLACE_VECTOR);
+
+        assertEq(preimage.length, 7 * 32);
+        assertEq(keccak256(preimage), KYC_STRUCT_HASH);
+        assertEq(
+            keccak256(
+                abi.encode(
+                    KYC_TYPEHASH, MAKER, uint8(ExchangeTypes.Action.Place), ORDER_ID, KYC_NONCE, DEADLINE, PLACE_VECTOR
+                )
+            ),
+            KYC_STRUCT_HASH
+        );
+    }
+
+    function test_FeeStructHash_MatchesThePinnedPreimage() public pure {
+        bytes memory preimage = abi.encode(
+            FEE_TYPEHASH,
+            MAKER,
+            ACTION_PLACE,
+            FEE_NONCE,
+            DEADLINE,
+            PLACE_VECTOR,
+            uint16(0),
+            uint16(0),
+            address(0),
+            TOKEN_A
+        );
+
+        assertEq(preimage.length, 10 * 32);
+        assertEq(keccak256(preimage), FEE_STRUCT_HASH);
+    }
+
+    /// The domain separator pins the four domain fields, `name` included. It is still
+    /// "AsseteraExchange" on purpose (ADR-0041) — see `AsseteraECS.initialize`.
+    function test_DomainSeparator_MatchesThePinnedDomain() public pure {
+        assertEq(
+            keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256("AsseteraExchange"), keccak256("1"), CHAIN_ID, VENUE)),
+            DOMAIN_SEPARATOR
+        );
+    }
+
+    /// NEGATIVE — renaming the domain to "AsseteraECS" produces a different separator, and hence a
+    /// different digest for every attestation ever issued.
+    function test_DomainSeparator_MovesIfTheDomainNameIsRenamed() public pure {
+        bytes32 renamed =
+            keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256("AsseteraECS"), keccak256("1"), CHAIN_ID, VENUE));
+
+        assertTrue(renamed != DOMAIN_SEPARATOR);
+    }
+
+    /// The ERC-5267 view is the venue's own statement of its domain. Asserting it against the
+    /// pinned fields catches a domain change that a pure test could not see.
+    function test_DomainSeparator_MatchesTheDeployedVenue() public view {
+        (, string memory name, string memory version, uint256 chainId, address verifyingContract,,) =
+            exchange.eip712Domain();
+
+        assertEq(name, "AsseteraExchange");
+        assertEq(version, "1");
+        assertEq(chainId, CHAIN_ID);
+        assertEq(verifyingContract, VENUE);
+        assertEq(
+            keccak256(
+                abi.encode(
+                    DOMAIN_TYPEHASH, keccak256(bytes(name)), keccak256(bytes(version)), chainId, verifyingContract
+                )
+            ),
+            DOMAIN_SEPARATOR
+        );
+    }
+
+    function test_Digests_MatchThePinnedDomainAndStructHashes() public pure {
+        assertEq(keccak256(abi.encodePacked(hex"1901", DOMAIN_SEPARATOR, KYC_STRUCT_HASH)), KYC_DIGEST);
+        assertEq(keccak256(abi.encodePacked(hex"1901", DOMAIN_SEPARATOR, FEE_STRUCT_HASH)), FEE_DIGEST);
+        assertTrue(KYC_DIGEST != FEE_DIGEST);
+    }
+
+    // ── 2. The venue accepts signatures over the hardcoded digests ────────────────────────────
+
+    /// THE assertion. Both signatures are made over the DIGEST LITERALS above, never over anything
+    /// derived from the contract. A successful `placeOrder` therefore proves the venue computed
+    /// exactly `KYC_DIGEST` and `FEE_DIGEST` for this message.
+    function test_PlaceOrder_AcceptsSignaturesOverTheHardcodedDigests() public {
+        vm.startPrank(MAKER);
+        FaucetToken(TOKEN_A).approve(VENUE, AMOUNT_A);
+        uint256 id = exchange.placeOrder(TOKEN_A, AMOUNT_A, TOKEN_B, AMOUNT_B, 0, _kyc(KYC_DIGEST), _fee(FEE_DIGEST));
+        vm.stopPrank();
+
+        assertEq(id, 1);
+        assertTrue(exchange.usedNonce(MAKER, KYC_NONCE));
+        assertTrue(exchange.usedFeeNonce(MAKER, FEE_NONCE));
+    }
+
+    /// The control for the KYC half: one flipped bit in the signed digest and the recovered signer
+    /// is a stranger. Without this, the test above would also pass if the gate were off.
+    function test_PlaceOrder_RevertsOnAOneBitPerturbationOfTheKycDigest() public {
+        vm.startPrank(MAKER);
+        FaucetToken(TOKEN_A).approve(VENUE, AMOUNT_A);
+        vm.expectRevert(IKycGate.KycBadSigner.selector);
+        exchange.placeOrder(
+            TOKEN_A, AMOUNT_A, TOKEN_B, AMOUNT_B, 0, _kyc(KYC_DIGEST ^ bytes32(uint256(1))), _fee(FEE_DIGEST)
+        );
+        vm.stopPrank();
+    }
+
+    /// The control for the fee half.
+    function test_PlaceOrder_RevertsOnAOneBitPerturbationOfTheFeeDigest() public {
+        vm.startPrank(MAKER);
+        FaucetToken(TOKEN_A).approve(VENUE, AMOUNT_A);
+        vm.expectRevert(IFeeGate.FeeBadSigner.selector);
+        exchange.placeOrder(
+            TOKEN_A, AMOUNT_A, TOKEN_B, AMOUNT_B, 0, _kyc(KYC_DIGEST), _fee(FEE_DIGEST ^ bytes32(uint256(1)))
+        );
+        vm.stopPrank();
+    }
+
+    // ── helpers ───────────────────────────────────────────────────────────────────────────────
+
+    /// Every field is a pinned constant; only the digest that gets SIGNED is a parameter, so the
+    /// negative tests perturb the signature and nothing else.
+    function _kyc(bytes32 digest) internal view returns (ExchangeTypes.KycAttestation memory att) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(kycSignerPk, digest);
+        att = GateTypes.KycAttestation({
+            account: MAKER,
+            action: uint8(ExchangeTypes.Action.Place),
+            orderId: ORDER_ID,
+            nonce: KYC_NONCE,
+            deadline: DEADLINE,
+            paramsHash: PLACE_VECTOR,
+            signature: abi.encodePacked(r, s, v)
+        });
+    }
+
+    function _fee(bytes32 digest) internal view returns (ExchangeTypes.FeeAttestation memory att) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(feeSignerPk, digest);
+        att = GateTypes.FeeAttestation({
+            account: MAKER,
+            action: uint8(ExchangeTypes.Action.Place),
+            nonce: FEE_NONCE,
+            deadline: DEADLINE,
+            paramsHash: PLACE_VECTOR,
+            makerFeeBps: 0,
+            takerFeeBps: 0,
+            feeCollector: address(0),
+            feeToken: TOKEN_A,
+            signature: abi.encodePacked(r, s, v)
+        });
     }
 }

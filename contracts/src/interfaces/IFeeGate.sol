@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {ExchangeTypes} from "../types/ExchangeTypes.sol";
-
 /// @title IFeeGate
 /// @notice Fee-attestation errors/event, single-sourced here and inherited by
 ///         `FeeGate` (not redeclared) so there is exactly one declaration site.
-///         References `ExchangeTypes.Action` via qualified import rather than
-///         inheriting `ExchangeTypes` — see IKycGate.sol for why.
 interface IFeeGate {
-    event FeeConsumed(address indexed account, ExchangeTypes.Action indexed action, uint256 nonce);
+    /// @dev `action` is the gate's opaque `uint8` — see `IKycGate.KycConsumed` (AO-514).
+    event FeeConsumed(address indexed account, uint8 indexed action, uint256 nonce);
 
     error FeeAccountMismatch();
     error FeeActionMismatch();

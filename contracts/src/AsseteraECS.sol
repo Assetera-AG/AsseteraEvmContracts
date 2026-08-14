@@ -99,15 +99,35 @@ contract AsseteraECS is ExchangeTypes, Initializable, UUPSUpgradeable, OrderBook
         _grantRole(FEE_OPERATOR_ROLE, feeSigner);
 
         // Default: every trade action is KYC-gated.
-        complianceRequired[Action.Place] = true;
-        complianceRequired[Action.Fill] = true;
-        complianceRequired[Action.Settle] = true;
-        complianceRequired[Action.MakeOffer] = true;
-        complianceRequired[Action.ReplaceOffer] = true;
-        complianceRequired[Action.AcceptOffer] = true;
-        complianceRequired[Action.CancelOffer] = true;
+        GateData storage $ = _gate();
+        $.complianceRequired[uint8(Action.Place)] = true;
+        $.complianceRequired[uint8(Action.Fill)] = true;
+        $.complianceRequired[uint8(Action.Settle)] = true;
+        $.complianceRequired[uint8(Action.MakeOffer)] = true;
+        $.complianceRequired[uint8(Action.ReplaceOffer)] = true;
+        $.complianceRequired[uint8(Action.AcceptOffer)] = true;
+        $.complianceRequired[uint8(Action.CancelOffer)] = true;
         // Action.SettleOffer is unused (AC-246) — acceptOffer settles atomically
         // under Action.AcceptOffer's gate; there's no separate settle step to gate.
+    }
+
+    // --------------------------------------------------------------------- //
+    //                          Gate action policy                            //
+    // --------------------------------------------------------------------- //
+
+    /// @dev The exchange's answer to `KycGate._paramsHashAllowed`: which of ITS actions bind
+    ///      extra parameters and may therefore carry a non-zero `paramsHash`. This used to be
+    ///      an inline enumeration inside `_verifyKyc`; AO-514 moved it here so the gate itself
+    ///      carries no exchange-specific action semantics. The list is unchanged.
+    ///
+    ///      CancelOffer and SettleOffer are intentionally separate from Cancel and Settle to
+    ///      prevent cross-function attestation replay between order-level and offer-level
+    ///      operations. Fill is absent because a fill binds nothing beyond the order id, which
+    ///      the attestation already carries in `orderId`.
+    function _paramsHashAllowed(uint8 action) internal view virtual override returns (bool) {
+        return action == uint8(Action.Place) || action == uint8(Action.MakeOffer)
+            || action == uint8(Action.ReplaceOffer) || action == uint8(Action.AcceptOffer)
+            || action == uint8(Action.CancelOffer) || action == uint8(Action.SettleOffer);
     }
 
     // --------------------------------------------------------------------- //
@@ -116,11 +136,13 @@ contract AsseteraECS is ExchangeTypes, Initializable, UUPSUpgradeable, OrderBook
 
     function _authorizeUpgrade(address) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
-    /// @dev Bumped to 3.2.0 by AO-298, which added `permitAndCall`. This is how ops confirms which
-    ///      implementation a proxy is running; an impl that carries a new function but still reports
-    ///      the old version is worse than a changed string. Nothing on chain reads it.
+    /// @dev Bumped to 4.0.0 by AO-514, which moved the gate mappings into ERC-7201 namespaced storage
+    ///      and shifted `_offers` 5 → 2, `totalOffers` 6 → 3, `__gap` 8 → 4. The MAJOR digit is the
+    ///      signal: this implementation is NOT installable over a proxy running 3.x, and reporting 3.2.0
+    ///      from it would make the one string ops uses to identify an implementation say the opposite of
+    ///      the truth. Previous: 3.2.0 (AO-298, `permitAndCall`). Nothing on chain reads it.
     function version() external pure virtual returns (string memory) {
-        return "3.2.0";
+        return "4.0.0";
     }
 
     function _msgSender() internal view override(ContextUpgradeable, ERC2771ContextUpgradeable) returns (address) {

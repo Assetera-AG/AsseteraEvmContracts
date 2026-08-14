@@ -35,24 +35,26 @@ handed a different commit.
 
 ## In scope
 
-The production contract surface under `contracts/src/` — **13 files, 1,922 LoC**
+The production contract surface under `contracts/src/` — **15 files, 2,105 LoC**
 (`find src -name '*.sol' | xargs wc -l`):
 
 | File | LoC | Role |
 |---|---:|---|
-| `src/AsseteraECS.sol` | 139 | UUPS proxy entrypoint; assembles the modules; `initialize`; `version()` |
-| `src/core/OrderBook.sol` | 387 | Order lifecycle: place / cancel / fill / sweep; pooled escrow + escrowed maker fee |
+| `src/AsseteraECS.sol` | 162 | UUPS proxy entrypoint; assembles the modules; `initialize`; `version()`; the exchange's `_paramsHashAllowed` action policy |
+| `src/core/OrderBook.sol` | 391 | Order lifecycle: place / cancel / fill / sweep; pooled escrow + escrowed maker fee |
 | `src/core/OfferBook.sol` | 403 | Offer lifecycle: make / replace / accept (atomic settle) / cancel / sweep |
-| `src/core/PermitRelay.sol` | 109 | `permitAndCall`: ERC-2612 permit + one self-`delegatecall`, so approve-then-trade is one transaction (AO-298) |
-| `src/gates/KycGate.sol` | 62 | EIP-712 KYC attestation verification + nonce burn |
-| `src/gates/FeeGate.sol` | 136 | EIP-712 fee attestation verification + fee bounds / denomination / collector allowlist |
-| `src/admin/ExchangeAdmin.sol` | 114 | Admin surface: pause, compliance toggles, collector allowlist, force-cancel |
-| `src/storage/ExchangeStorage.sol` | 79 | Single storage base behind `__gap` (UUPS layout) |
-| `src/types/ExchangeTypes.sol` | 148 | Structs, enums (`Action`), attestation types |
+| `src/core/PermitRelay.sol` | 116 | `permitAndCall`: ERC-2612 permit + one self-`delegatecall`, so approve-then-trade is one transaction (AO-298) |
+| `src/gates/KycGate.sol` | 75 | EIP-712 KYC attestation verification + nonce burn |
+| `src/gates/FeeGate.sol` | 141 | EIP-712 fee attestation verification + fee bounds / denomination / collector allowlist |
+| `src/gates/GateStorage.sol` | 113 | Gate state in ERC-7201 namespaced storage (`assetera.storage.Gate`) + the OZ bases the gates need (AO-514) |
+| `src/admin/ExchangeAdmin.sol` | 118 | Admin surface: pause, compliance toggles, collector allowlist, force-cancel |
+| `src/storage/ExchangeStorage.sol` | 61 | Order-book storage base behind `__gap` |
+| `src/types/ExchangeTypes.sol` | 119 | Order/Offer structs, enums (`Action`, statuses) |
+| `src/types/GateTypes.sol` | 63 | The two EIP-712 attestation structs, gate-side so a non-order-book venue can use them (AO-514) |
 | `src/libs/FeeMath.sol` | 23 | Fee arithmetic (floor division) + ceiling division |
-| `src/interfaces/IAsseteraECS.sol` | 263 | External interface |
-| `src/interfaces/IKycGate.sol` | 29 | Interface |
-| `src/interfaces/IFeeGate.sol` | 30 | Interface |
+| `src/interfaces/IAsseteraECS.sol` | 268 | External interface |
+| `src/interfaces/IKycGate.sol` | 25 | Interface |
+| `src/interfaces/IFeeGate.sol` | 27 | Interface |
 
 LoC is raw `wc -l` (including licence header, NatSpec and blank lines) on the frozen commit. The AC-836
 rename is comment- and identifier-level only; it does not change bytecode (see the note above).
@@ -72,17 +74,19 @@ rename is comment- and identifier-level only; it does not change bytecode (see t
 ```bash
 cd contracts
 forge build                 # Solidity 0.8.28, via-IR, optimizer 200 runs — clean
-forge test                  # 212 tests across 4 suites, all passing
+forge test                  # 254 tests across 9 suites, all passing
 forge coverage --ir-minimum --no-match-coverage '(script|test)'
 bash script/storage-layout.sh   # upgrade-safety guard; must print "storage layout unchanged"
 slither .
 ```
 
-**Test suite — 212 tests, 0 failures** (`forge test`):
+**Test suite — 254 tests, 0 failures** (`forge test`):
 
 | Suite | Tests |
 |---|---:|
 | `test/AsseteraECS.t.sol` | 200 |
+| `test/ParamsHashVectors.t.sol` | 33 (17 `paramsHash` vectors, 5 on-chain acceptance, 11 full EIP-712 digest vectors) |
+| `test/GateStorageNamespace.t.sol` | 9 (6 ERC-7201 namespace, 3 gate-reuse) |
 | `test/FaucetToken.t.sol` | 6 |
 | `test/DeployProvenance.t.sol` | 3 |
 | `test/invariants/EscrowConservation.t.sol` | 3 (2 invariants at 64 runs × depth 50, plus a non-vacuity unit test) |
@@ -97,14 +101,18 @@ slither .
 | `src/core/OfferBook.sol` | 100.00 (141/141) | 95.12 (39/41) | 100.00 (9/9) |
 | `src/core/PermitRelay.sol` | 100.00 (8/8) | 100.00 (1/1) | 100.00 (2/2) |
 | `src/gates/FeeGate.sol` | 100.00 (27/27) | 100.00 (14/14) | 100.00 (4/4) |
-| `src/gates/KycGate.sol` | 100.00 (19/19) | 100.00 (10/10) | 100.00 (2/2) |
+| `src/gates/KycGate.sol` | 100.00 (19/19) | 100.00 (10/10) | 100.00 (3/3) |
+| `src/gates/GateStorage.sol` | 90.00 (9/10) | n/a (0/0) | 100.00 (5/5) |
 | `src/libs/FeeMath.sol` | 100.00 (4/4) | n/a (0/0) | 100.00 (2/2) |
 | `src/admin/ExchangeAdmin.sol` | 94.59 (35/37) | 100.00 (7/7) | 100.00 (6/6) |
-| `src/AsseteraECS.sol` | 75.86 (22/29) | 100.00 (1/1) | 85.71 (6/7) |
-| **Total** | **97.51 (352/361)** | **98.06 (101/103)** | **97.62 (41/42)** |
+| `src/AsseteraECS.sol` | 79.41 (27/34) | 100.00 (1/1) | 87.50 (7/8) |
+| **Total** | **97.34 (366/376)** | **98.06 (101/103)** | **97.96 (48/49)** |
 
 The residue on `AsseteraECS.sol` is the ERC-2771 / UUPS plumbing (`_msgData`, `_contextSuffixLength`) —
-overrides OZ requires but which the venue's own paths never take.
+overrides OZ requires but which the venue's own paths never take. The one line on `GateStorage.sol` is
+`$.slot := GATE_STORAGE_LOCATION` inside the ERC-7201 accessor: solc's coverage instrumentation does not
+reach into inline assembly, so that line can never be marked hit. What it does is pinned directly by
+`test/GateStorageNamespace.t.sol`, which re-derives the namespace and reads the resulting slots.
 
 - `forge build` is clean; the only lint output is `block-timestamp` warnings on expiry comparisons (benign —
   the expiry windows dwarf validator drift; see the Slither triage).
@@ -119,6 +127,23 @@ overrides OZ requires but which the venue's own paths never take.
   broken signing helper would create zero orders and both invariants would pass vacuously.
 
 ### Upgrade-safety guard (`script/storage-layout.sh`)
+
+⚠️ **The layout on this commit is deliberately NOT upgrade-compatible with the proxies currently live on
+Amoy and Sepolia.** AO-514 moved the four gate mappings out of the linear layout and into `GateStorage`'s
+ERC-7201 namespace, which shifts `_offers` 5 → 2, `totalOffers` 6 → 3 and `__gap` 8 → 4. That break was
+weighed against preserving the old order with reserved gaps and taken on purpose; it is to be landed by a
+coordinated redeploy, never by `upgradeToAndCall` on an existing proxy. The snapshot below is re-baselined
+to the new layout.
+
+**That is enforced in code, not only stated here.** Re-baselining the snapshot means CI now considers the
+new layout "unchanged", so it no longer protects the deployed one, and `Deploy.s.sol` upgrades a proxy in
+place the moment the implementation bytecode differs. Both it and `UpgradeCalldata.s.sol` therefore refuse
+outright while `DeployBase.INPLACE_UPGRADE_ALLOWED` is `false`. It is a compile-time constant rather than
+an environment flag because whether an implementation is installable is a property of the source tree, not
+of whoever runs the script. The intended way to land this is `EXCHANGE_SALT_VERSION = "v2"`, which computes
+a fresh address, takes the deploy branch instead of the upgrade branch, and leaves the old proxy untouched.
+`version()` reports `4.0.0` for the same reason: the major digit is what tells ops the two are not
+interchangeable.
 
 A committed snapshot of the proxy's storage layout (`storage/AsseteraECS.txt`), diffed in CI on every PR.
 Because the OZ v5 upgradeable bases use ERC-7201 namespaced storage, a clean minor dependency bump produces a

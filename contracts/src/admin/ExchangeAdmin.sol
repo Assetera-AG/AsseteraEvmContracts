@@ -24,7 +24,7 @@ abstract contract ExchangeAdmin is ExchangeStorage {
     ///         Only DEFAULT_ADMIN_ROLE (the Safe multisig in prod) can manage this,
     ///         preventing a compromised KYC signer from redirecting fees arbitrarily.
     function setAllowedCollector(address collector, bool allowed) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        allowedCollectors[collector] = allowed;
+        _gate().allowedCollectors[collector] = allowed;
         emit CollectorAllowed(collector, allowed);
     }
 
@@ -45,8 +45,12 @@ abstract contract ExchangeAdmin is ExchangeStorage {
     ///      verification (AC-884) — the fee attestation is still signature-, deadline-
     ///      and nonce-checked, so the fee service must stay live. To run a market
     ///      fee-free, have the fee service sign `makerFeeBps == takerFeeBps == 0`.
+    ///
+    ///      Keeps the `Action` enum in its external signature (AO-514): the gate stores the
+    ///      flag under an opaque `uint8`, but this is the exchange's own admin surface and the
+    ///      enum is what makes a Safe transaction readable.
     function setComplianceRequired(Action action, bool required) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        complianceRequired[action] = required;
+        _gate().complianceRequired[uint8(action)] = required;
         emit ComplianceRequiredSet(action, required);
     }
 

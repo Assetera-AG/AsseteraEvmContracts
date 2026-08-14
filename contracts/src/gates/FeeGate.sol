@@ -13,6 +13,11 @@ import {IFeeGate} from "../interfaces/IFeeGate.sol";
 ///         so `FeeGate` inherits `KycGate` directly (not just via a sibling —
 ///         see AC-242 plan notes on why identifiers must resolve within a
 ///         contract's own `is` list).
+///
+///         Action-agnostic (AO-514), like `KycGate`: `action` is an opaque `uint8`
+///         and nothing here knows what an order or an offer is. `_validateFees`
+///         takes the two legs as plain addresses, so any venue that can name its
+///         two tokens can use it.
 abstract contract FeeGate is KycGate, IFeeGate {
     /// @notice Whitelisted fee signers (the fee service — separate from KYC).
     ///         Any fee attestation whose recovered signer holds this role is
@@ -48,18 +53,18 @@ abstract contract FeeGate is KycGate, IFeeGate {
     ///      zero-fee attestation and place a permanently fee-free order. Fee-free trading
     ///      remains reachable the honest way: the fee service signs `makerFeeBps ==
     ///      takerFeeBps == 0` (`_validateFees` explicitly permits that, collector included).
-    function _verifyFee(address account, Action action, FeeAttestation calldata att) internal view {
+    function _verifyFee(address account, uint8 action, FeeAttestation calldata att) internal view {
         if (att.account != account) revert FeeAccountMismatch();
         if (att.action != action) revert FeeActionMismatch();
         if (block.timestamp > att.deadline) revert FeeExpired();
         if (att.deadline > block.timestamp + MAX_FEE_TTL) revert FeeTtlTooLong();
-        if (usedFeeNonce[account][att.nonce]) revert FeeNonceUsed();
+        if (usedFeeNonce(account, att.nonce)) revert FeeNonceUsed();
 
         bytes32 structHash = keccak256(
             abi.encode(
                 FEE_TYPEHASH,
                 att.account,
-                uint8(att.action),
+                att.action,
                 att.nonce,
                 att.deadline,
                 att.paramsHash,
@@ -80,12 +85,12 @@ abstract contract FeeGate is KycGate, IFeeGate {
     ///      order/offer could be replayed onto this one. The KYC binding stays behind
     ///      `complianceRequired[action]`, the gate it actually belongs to.
     function _bindParamsHash(
-        Action action,
+        uint8 action,
         KycAttestation calldata kycAtt,
         FeeAttestation calldata feeAtt,
         bytes32 paramsHash
     ) internal view {
-        if (complianceRequired[action] && kycAtt.paramsHash != paramsHash) {
+        if (complianceRequired(action) && kycAtt.paramsHash != paramsHash) {
             revert ParamsHashMismatch();
         }
         if (feeAtt.paramsHash != paramsHash) revert ParamsHashMismatch();
@@ -99,21 +104,21 @@ abstract contract FeeGate is KycGate, IFeeGate {
     ///      `fee.action == kyc.action == action`.
     function _consumeKycAndFee(
         address account,
-        Action action,
+        uint8 action,
         uint256 orderId,
         KycAttestation calldata kycAtt,
         FeeAttestation calldata feeAtt
     ) internal {
         _verifyKyc(account, action, orderId, kycAtt);
         _verifyFee(account, action, feeAtt);
-        if (complianceRequired[action]) {
-            usedNonce[account][kycAtt.nonce] = true;
+        if (complianceRequired(action)) {
+            _gate().usedNonce[account][kycAtt.nonce] = true;
             emit KycConsumed(account, action, orderId, kycAtt.nonce);
         }
         // The fee nonce burns unconditionally, mirroring the now-unconditional
         // `_verifyFee` (AC-884) — a single-use attestation whose nonce is only burned
         // when KYC gating happens to be on would be replayable while it is off.
-        usedFeeNonce[account][feeAtt.nonce] = true;
+        _gate().usedFeeNonce[account][feeAtt.nonce] = true;
         emit FeeConsumed(account, action, feeAtt.nonce);
     }
 
@@ -130,7 +135,7 @@ abstract contract FeeGate is KycGate, IFeeGate {
         if (att.feeToken != legA && att.feeToken != legB) revert FeeTokenNotALeg(att.feeToken);
         if (att.makerFeeBps > 0 || att.takerFeeBps > 0) {
             if (att.feeCollector == address(0)) revert ZeroAddress();
-            if (!allowedCollectors[att.feeCollector]) revert FeeCollectorNotAllowed(att.feeCollector);
+            if (!allowedCollectors(att.feeCollector)) revert FeeCollectorNotAllowed(att.feeCollector);
         }
     }
 }

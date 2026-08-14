@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {ExchangeTypes} from "../types/ExchangeTypes.sol";
+import {GateTypes} from "../types/GateTypes.sol";
 import {IKycGate} from "./IKycGate.sol";
 import {IFeeGate} from "./IFeeGate.sol";
 
@@ -140,8 +141,8 @@ interface IAsseteraECS is IKycGate, IFeeGate {
         address buyToken,
         uint256 buyAmount,
         uint64 expireTs,
-        ExchangeTypes.KycAttestation calldata att,
-        ExchangeTypes.FeeAttestation calldata feeAtt
+        GateTypes.KycAttestation calldata att,
+        GateTypes.FeeAttestation calldata feeAtt
     ) external returns (uint256 id);
 
     function placeOrderWithPermit(
@@ -154,8 +155,8 @@ interface IAsseteraECS is IKycGate, IFeeGate {
         uint8 v,
         bytes32 r,
         bytes32 s,
-        ExchangeTypes.KycAttestation calldata att,
-        ExchangeTypes.FeeAttestation calldata feeAtt
+        GateTypes.KycAttestation calldata att,
+        GateTypes.FeeAttestation calldata feeAtt
     ) external returns (uint256 id);
 
     function cancelOrder(uint256 id) external;
@@ -185,7 +186,7 @@ interface IAsseteraECS is IKycGate, IFeeGate {
     //                          Permissioned taker                            //
     // --------------------------------------------------------------------- //
 
-    function fillOrder(uint256 id, uint256 fillSellAmount, ExchangeTypes.KycAttestation calldata att) external;
+    function fillOrder(uint256 id, uint256 fillSellAmount, GateTypes.KycAttestation calldata att) external;
 
     // --------------------------------------------------------------------- //
     //                           Admin escape hatch                           //
@@ -209,8 +210,8 @@ interface IAsseteraECS is IKycGate, IFeeGate {
         address takerToken,
         uint256 takerAmount,
         uint64 expireTs,
-        ExchangeTypes.KycAttestation calldata att,
-        ExchangeTypes.FeeAttestation calldata feeAtt
+        GateTypes.KycAttestation calldata att,
+        GateTypes.FeeAttestation calldata feeAtt
     ) external returns (uint256 id);
 
     function replaceOffer(
@@ -218,12 +219,12 @@ interface IAsseteraECS is IKycGate, IFeeGate {
         uint256 newMakerAmount,
         uint256 newTakerAmount,
         uint64 expireTs,
-        ExchangeTypes.KycAttestation calldata att
+        GateTypes.KycAttestation calldata att
     ) external;
 
-    function cancelOffer(uint256 offerId, ExchangeTypes.KycAttestation calldata att) external;
+    function cancelOffer(uint256 offerId, GateTypes.KycAttestation calldata att) external;
 
-    function acceptOffer(uint256 offerId, ExchangeTypes.KycAttestation calldata att) external;
+    function acceptOffer(uint256 offerId, GateTypes.KycAttestation calldata att) external;
 
     function cancelOfferForUser(uint256 offerId, address makerRecipient, address takerRecipient) external;
 
@@ -257,7 +258,11 @@ interface IAsseteraECS is IKycGate, IFeeGate {
 
     function usedFeeNonce(address account, uint256 nonce) external view returns (bool);
 
-    function complianceRequired(ExchangeTypes.Action action) external view returns (bool);
+    /// @dev Takes the raw `uint8` the gate stores under, not `ExchangeTypes.Action` (AO-514).
+    ///      Same selector and same argument type as before — an enum is `uint8` in the ABI —
+    ///      so this is a documentation change, not a breaking one. The exchange's values are
+    ///      still the `Action` ordinals.
+    function complianceRequired(uint8 action) external view returns (bool);
 
     function allowedCollectors(address collector) external view returns (bool);
 }
