@@ -2,16 +2,21 @@
 pragma solidity 0.8.28;
 
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {PrimaryStorage} from "./storage/PrimaryStorage.sol";
 import {IIntentGate} from "./interfaces/IIntentGate.sol";
 
 /// @title IntentGate
 /// @notice The third gate on a primary settlement: a fresh, single-use EIP-712
-///         `SettlementIntent` signed by a `SETTLEMENT_OPERATOR_ROLE` holder, verified
-///         alongside the KYC attestation (compliance backend) and the fee attestation (fee
-///         service). Same shape as `KycGate`/`FeeGate` — verify without writing, then consume
-///         — so that **all three signatures are checked before any nonce is burned** and an
-///         invalid third attestation cannot spend the first two.
+///         `SettlementIntent` signed by a `SETTLEMENT_OPERATOR_ROLE` holder AND, over the very
+///         same digest, by the buyer. Verified alongside the KYC attestation (compliance
+///         backend) and the fee attestation (fee service). Same shape as `KycGate`/`FeeGate` —
+///         verify without writing, then consume — so that **every signature is checked before
+///         any nonce is burned** and an invalid one cannot spend the others.
+///
+///         The buyer's signature is what makes the terms the buyer's own. See `_verifyIntent`
+///         for why it is the same payload rather than a separate consent struct, why it is
+///         checked with ERC-1271 support, and why `INTENT_TYPEHASH` did not move when it landed.
 ///
 ///         It sits below the settler families rather than inside the assembled contract on
 ///         purpose: both families need exactly this verification, and a family module cannot
@@ -38,10 +43,10 @@ abstract contract IntentGate is PrimaryStorage, IIntentGate {
     uint256 public constant MAX_INTENT_TTL = 15 minutes;
 
     /// @dev The EIP-712 struct hash of an intent, which is ALSO the `paramsHash` both
-    ///      attestations must carry (§4.4). One hash, three signatures: the settlement
-    ///      operator signs it as a digest, and the compliance and fee signers each pin their
-    ///      attestation to it, so an attestation minted for one settlement cannot be replayed
-    ///      onto another with a different asset, venue or amount.
+    ///      attestations must carry (§4.4). One hash, four signatures: the settlement operator
+    ///      and the buyer each sign it as a digest, and the compliance and fee signers each pin
+    ///      their attestation to it, so an attestation minted for one settlement cannot be
+    ///      replayed onto another with a different asset, venue or amount.
     ///
     ///      ⚠️ This is `keccak256(abi.encode(INTENT_TYPEHASH, intent))` — identical to the
     ///      EIP-712 struct hash ONLY because every member of `SettlementIntent` is a static
@@ -51,10 +56,40 @@ abstract contract IntentGate is PrimaryStorage, IIntentGate {
     }
 
     /// @dev Verify an intent without consuming its nonce. Pure validation, no state writes.
-    /// @param intent    The settlement intent.
-    /// @param signature The settlement operator's EIP-712 signature over it.
+    ///
+    ///      **TWO signatures over ONE digest, and they are not interchangeable.** The settlement
+    ///      operator's is accepted only if it recovers to a `SETTLEMENT_OPERATOR_ROLE` holder;
+    ///      the buyer's only if it validates for `intent.buyer`. Presenting either in the
+    ///      other's slot fails, and the errors say which.
+    ///
+    ///      ⚠️ **The buyer signs the same `SettlementIntent` digest rather than a smaller
+    ///      "consent" struct of its own, and that is a decision.** A parallel struct would need
+    ///      a field-by-field cross-check against this one, and the day somebody appends a member
+    ///      to `SettlementIntent` and forgets the mirror, the buyer's protection silently
+    ///      narrows while every test still passes. One payload cannot drift from itself. It also
+    ///      means `AsseteraMarketplaceAPI` hands the buyer's wallet exactly the typed data it
+    ///      hands `AsseteraSignerService` — one EIP-712 shape, two signers.
+    ///
+    ///      ⚠️ **`INTENT_TYPEHASH` did NOT change when this was added**, and neither did any
+    ///      signed payload: the struct is untouched, so every digest, every `paramsHash` binding
+    ///      and every attestation in flight is unaffected. What changed is the `settlePrimary`
+    ///      SELECTOR, which gained one parameter. Read the frozen-payload warnings in
+    ///      `PrimaryTypes` with that in mind before concluding the typehash moved.
+    ///
+    ///      ⚠️ `SignatureChecker.isValidSignatureNow`, deliberately, **not** `ECDSA.recover`.
+    ///      This is the one signature on the path produced by a CUSTOMER rather than by one of
+    ///      our own services, and an EOA-only check would exclude Safe and embedded
+    ///      smart-account wallets — which is exactly what a regulated brokerage's larger clients
+    ///      use. ERC-1271 signatures are revocable, so validity is asserted at settlement time
+    ///      and nowhere else; the intent's own TTL keeps that window short.
+    ///
+    /// @param intent         The settlement intent.
+    /// @param signature      The settlement operator's EIP-712 signature over it.
+    /// @param buyerSignature The BUYER's EIP-712 signature over the same digest, EOA or
+    ///                       ERC-1271. It is what makes `minAssetOut` a floor the buyer chose
+    ///                       rather than a number the settlement operator chose for them.
     /// @return structHash The intent's EIP-712 struct hash, reused as the `paramsHash` binding.
-    function _verifyIntent(SettlementIntent calldata intent, bytes calldata signature)
+    function _verifyIntent(SettlementIntent calldata intent, bytes calldata signature, bytes calldata buyerSignature)
         internal
         view
         returns (bytes32 structHash)
@@ -79,8 +114,17 @@ abstract contract IntentGate is PrimaryStorage, IIntentGate {
         if (usedIntentNonce(intent.buyer, intent.nonce)) revert IntentNonceUsed();
 
         structHash = _intentStructHash(intent);
-        address signer = ECDSA.recover(_hashTypedDataV4(structHash), signature);
+        bytes32 digest = _hashTypedDataV4(structHash);
+
+        address signer = ECDSA.recover(digest, signature);
         if (!hasRole(SETTLEMENT_OPERATOR_ROLE, signer)) revert IntentBadSigner();
+
+        // The buyer's own consent to these exact terms, checked HERE rather than in the entry
+        // point because both settler families need it and the mint family has no entry point
+        // yet. A guarantee the caller has to remember to make is not a guarantee.
+        if (!SignatureChecker.isValidSignatureNow(intent.buyer, digest, buyerSignature)) {
+            revert BuyerConsentBadSignature();
+        }
     }
 
     /// @dev Bind the opaque venue calldata to the signed intent. The calldata itself is never

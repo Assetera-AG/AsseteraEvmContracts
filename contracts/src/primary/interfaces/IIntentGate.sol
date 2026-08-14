@@ -26,6 +26,24 @@ interface IIntentGate {
     error IntentNonceUsed();
     /// @dev The intent signature does not recover to a `SETTLEMENT_OPERATOR_ROLE` holder.
     error IntentBadSigner();
+    /// @dev The buyer's own signature over the SAME intent digest is missing, malformed, or not
+    ///      valid for `intent.buyer` — checked with ERC-1271 support, so a contract wallet is
+    ///      accepted on the same terms as an EOA.
+    ///
+    ///      ⚠️ **Not redundant with `IntentBuyerMismatch`, and the difference is the whole
+    ///      point.** That error proves the buyer is the ACTOR — the account the transaction
+    ///      resolves to through ERC-2771. This one proves the buyer agreed to the TERMS: the
+    ///      asset, the floor, the cap, the fee, the venue, the deadline. Without it the
+    ///      settlement operator alone chooses every field of the intent, `minAssetOut` included,
+    ///      and the executor's central guarantee ("the buyer received at least `minAssetOut`")
+    ///      means nothing the moment that key is compromised, because the attacker sets the
+    ///      floor to one wei and the buyer's own transaction pays for it.
+    ///
+    ///      A wallet cannot restore that protection on its own here: ERC-2771 means the buyer
+    ///      signs a `ForwardRequest` whose `data` is opaque bytes no wallet can render as
+    ///      balance changes. An EIP-712 payload with named fields is what gives the buyer back
+    ///      something to read before signing.
+    error BuyerConsentBadSignature();
 
     /// @dev `keccak256(venueCalldata)` does not equal the signed `calldataHash`.
     error CalldataHashMismatch();

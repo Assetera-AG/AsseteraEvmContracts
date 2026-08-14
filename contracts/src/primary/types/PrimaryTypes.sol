@@ -54,12 +54,22 @@ abstract contract PrimaryTypes is GateTypes {
     //                          The settlement intent                         //
     // --------------------------------------------------------------------- //
 
-    /// @notice What the settlement operator signs to authorise ONE primary settlement.
+    /// @notice What the settlement operator signs to authorise ONE primary settlement — and
+    ///         what the BUYER signs to agree to it.
     ///
-    ///         It is the third signature on the path, alongside the KYC attestation (signed
-    ///         by the compliance backend) and the fee attestation (signed by the fee service).
-    ///         It is the only one of the three whose signer can cause a transfer, which is why
-    ///         it has its own role and its own key.
+    ///         It carries two of the four signatures on the path, alongside the KYC attestation
+    ///         (compliance backend) and the fee attestation (fee service). The operator's is the
+    ///         only one of ours whose signer can cause a transfer, which is why it has its own
+    ///         role and its own key.
+    ///
+    ///         ⚠️ **ONE digest, TWO signers, and the struct did not change to make that so.**
+    ///         `IntentGate._verifyIntent` takes both signatures and validates each against a
+    ///         different party — the operator against `SETTLEMENT_OPERATOR_ROLE`, the buyer
+    ///         against `intent.buyer` with ERC-1271 support. `INTENT_TYPEHASH` is what it always
+    ///         was; the only thing that moved is the `settlePrimary` selector, which gained a
+    ///         parameter. A reader reaching the frozen-payload warning below should not conclude
+    ///         from it that the typehash moved. The reason there is no separate "BuyerConsent"
+    ///         struct is in `_verifyIntent`: a mirror struct drifts, one payload cannot.
     ///
     ///         The amount model, stated once so the four numbers cannot drift apart:
     ///

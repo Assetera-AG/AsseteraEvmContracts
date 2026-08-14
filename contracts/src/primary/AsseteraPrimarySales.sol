@@ -31,12 +31,21 @@ import {PrimaryTypes} from "./types/PrimaryTypes.sol";
 ///         primary-sale bug must not be able to reach it. It also simply does not fit;
 ///         `AsseteraECS` has under 2 kB of EIP-170 margin left.
 ///
-///         **Three signatures, three signers, three nonce namespaces.** A settlement needs a
-///         KYC attestation (compliance backend), a fee attestation (fee service) and a
-///         settlement intent (settlement operator). All three are verified before any nonce is
-///         burned, so an invalid third cannot spend the first two. `SETTLEMENT_OPERATOR_ROLE`
-///         is distinct from the other two because it is the only one whose holder can cause a
-///         transfer.
+///         **Four signatures, four signers, three nonce namespaces.** A settlement needs a KYC
+///         attestation (compliance backend), a fee attestation (fee service), a settlement
+///         intent (settlement operator) and the BUYER's own signature over that same intent.
+///         All four are verified before any nonce is burned, so an invalid one cannot spend the
+///         others. `SETTLEMENT_OPERATOR_ROLE` is distinct from the other two service roles
+///         because it is the only one whose holder can cause a transfer.
+///
+///         The buyer's signature is the one that is not ours, and it is what keeps
+///         `minAssetOut` meaningful: without it a compromised settlement operator sets the
+///         delivery floor to one wei and the buyer's own transaction pays for it. Wallet
+///         simulation would normally catch that, but ERC-2771 destroys it — the buyer signs a
+///         `ForwardRequest` whose `data` is opaque bytes no wallet can render as balance
+///         changes — so an EIP-712 payload with named fields is what gives the protection back.
+///         Three nonce namespaces rather than four: the buyer signs the intent, so the intent's
+///         own single-use nonce is the buyer's replay protection too.
 ///
 ///         **A different EIP-712 domain from the exchange's**, so cross-contract attestation
 ///         replay is impossible by construction rather than by check: an attestation minted
@@ -146,12 +155,20 @@ contract AsseteraPrimarySales is
     ///
     /// @dev    ⚠️ **This signature is FROZEN.** The signer service builds `intent`, the
     ///         marketplace API assembles the call and the indexer decodes the resulting
-    ///         `PrimarySettled`. `intentSignature` is its own argument rather than a field of
-    ///         the struct, because a struct cannot contain the signature over itself.
+    ///         `PrimarySettled`. Neither signature is a field of the struct, because a struct
+    ///         cannot contain the signature over itself.
+    ///
+    ///         ⚠️ **`buyerSignature` changed this SELECTOR and changed no signed payload.**
+    ///         `SettlementIntent` is untouched, so `INTENT_TYPEHASH`, every digest, every
+    ///         `paramsHash` binding and every attestation in flight are exactly what they were;
+    ///         the buyer signs the SAME digest the settlement operator does. The frozen-payload
+    ///         warnings on the struct in `PrimaryTypes` are about the struct, not about this
+    ///         parameter list. What DOES have to be rebuilt is the caller: the marketplace API
+    ///         now collects a second signature and passes one more argument.
     ///
     ///         Order of operations, and why:
-    ///           1. every signature is verified BEFORE any nonce is burned, so an invalid
-    ///              third attestation cannot spend the first two;
+    ///           1. all four signatures are verified BEFORE any nonce is burned, so an invalid
+    ///              one cannot spend the others;
     ///           2. `orderId` is passed as a literal zero, which is how a non-zero one on the
     ///              KYC attestation is rejected (`KycOrderMismatch`). There is no order book on
     ///              this path, and leaving the field free would create a second, unchecked
@@ -162,20 +179,26 @@ contract AsseteraPrimarySales is
     /// @param venueCalldata   The opaque bytes to hand the venue. Bound by
     ///                        `intent.calldataHash` and `intent.selector`; never what the
     ///                        policy is expressed in.
-    /// @param intent          The settlement intent, signed by the settlement operator.
-    /// @param intentSignature That operator's EIP-712 signature over `intent`.
+    /// @param intent          The settlement intent, signed by the settlement operator and by
+    ///                        the buyer.
+    /// @param intentSignature That operator's EIP-712 signature over `intent`. Accepted only if
+    ///                        it recovers to a `SETTLEMENT_OPERATOR_ROLE` holder.
+    /// @param buyerSignature  The BUYER's EIP-712 signature over the SAME digest, EOA or
+    ///                        ERC-1271. Accepted only if it validates for `intent.buyer`. The
+    ///                        two are over one payload and are not interchangeable.
     /// @param kyc             The compliance attestation, `paramsHash`-bound to `intent`.
     /// @param fee             The fee attestation, `paramsHash`-bound to `intent`.
     function settlePrimary(
         bytes calldata venueCalldata,
         SettlementIntent calldata intent,
         bytes calldata intentSignature,
+        bytes calldata buyerSignature,
         KycAttestation calldata kyc,
         FeeAttestation calldata fee
     ) external whenNotPaused nonReentrant {
         uint8 action = uint8(Action.SettleVenue);
 
-        bytes32 paramsHash = _verifyIntent(intent, intentSignature);
+        bytes32 paramsHash = _verifyIntent(intent, intentSignature, buyerSignature);
         _bindCalldata(venueCalldata, intent);
         _bindAttestations(intent, paramsHash, kyc, fee);
         // Family S2 only: on a third-party venue we do not control the proceeds side, so an

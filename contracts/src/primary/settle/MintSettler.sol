@@ -24,7 +24,10 @@ import {ISettler} from "../interfaces/ISettler.sol";
 ///             `Action.SettleMint`, which `AsseteraPrimarySales.initialize` ALREADY enables in
 ///             the KYC gate, so the fail-open `complianceRequired` trap is closed in advance.
 ///           * The same four-step preamble the venue path uses, reachable because
-///             `IntentGate` sits BELOW this module: `_verifyIntent`, `_bindAttestations`,
+///             `IntentGate` sits BELOW this module: `_verifyIntent(intent, intentSignature,
+///             buyerSignature)` — the buyer's own signature over the intent is checked inside
+///             the gate, so this family gets it for free and cannot forget it —
+///             `_bindAttestations`,
 ///             `_consumeKycAndFee(buyer, uint8(Action.SettleMint), 0, kyc, fee)`,
 ///             `_consumeIntent`. `orderId` is zero here too; there is no order book on this
 ///             path either.
