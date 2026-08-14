@@ -50,11 +50,13 @@ interface IIntentGate {
     /// @dev `bytes4(venueCalldata)` does not equal the signed `selector`.
     error SelectorMismatch();
 
-    /// @dev `fee.feeToken` is not `intent.settlementToken`. The shared `_validateFees` only
-    ///      proves the fee token is one of the two legs, which is the right check for the
-    ///      exchange and too weak here: a fee attested in the ASSET token would be taken out
-    ///      of what the buyer receives.
-    error SettlementTokenMismatch();
+    // ⚠️ `SettlementTokenMismatch` USED TO BE DECLARED HERE and was removed (PR #58 review).
+    //    A fee attested in a token other than `intent.settlementToken` now reverts with the
+    //    shared `IFeeGate.FeeTokenNotALeg(feeToken)`, because `IntentGate._bindAttestations`
+    //    calls `FeeGate._validateFees` with the settlement token in both leg positions rather
+    //    than restating the rule. Removing the error is an ABI change: a consumer decoding this
+    //    router's reverts by selector must map the new one. Do not reintroduce it — the whole
+    //    point is that there is one fee-policy implementation, not two.
     /// @dev The intent and the fee attestation name different collectors.
     error FeeCollectorMismatch();
     /// @dev A non-zero `makerFeeBps` was attested on a family where we do not control the

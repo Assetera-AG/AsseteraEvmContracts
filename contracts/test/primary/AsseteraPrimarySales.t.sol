@@ -360,15 +360,20 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
         );
     }
 
-    /// The shared `_validateFees` only proves the fee token is one of the two legs, which is
-    /// too weak here: a fee attested in the ASSET token would come out of what the buyer
-    /// receives rather than out of the settlement leg.
+    /// A fee attested in the ASSET token would come out of what the buyer receives rather than
+    /// out of the settlement leg, and is refused.
+    ///
+    /// ⚠️ The error is the SHARED `IFeeGate.FeeTokenNotALeg`, not a primary-specific one.
+    /// `IntentGate._bindAttestations` calls `FeeGate._validateFees` with the settlement token
+    /// in both leg positions, which collapses `feeToken != legA && feeToken != legB` into
+    /// exactly this check — so there is one fee-policy implementation for both venues and a
+    /// later tightening of it reaches primary sales without anyone remembering to copy it.
     function test_SettlePrimary_RejectsAFeeDenominatedInTheAssetToken() public {
         PrimaryTypes.SettlementIntent memory intent = _intent();
         bytes32 paramsHash = _paramsHash(intent);
 
         vm.prank(buyer);
-        vm.expectRevert(IIntentGate.SettlementTokenMismatch.selector);
+        vm.expectRevert(abi.encodeWithSelector(IFeeGate.FeeTokenNotALeg.selector, ASSET));
         sales.settlePrimary(
             VENUE_CALLDATA,
             intent,

@@ -150,6 +150,29 @@ abstract contract IntentGate is PrimaryStorage, IIntentGate {
     ///      conditional buys nothing and the unconditional form cannot be weakened by an admin
     ///      toggle.
     ///
+    ///      The fee TERMS go through the shared `FeeGate._validateFees`, with the settlement
+    ///      token passed as BOTH legs. An earlier revision hand-rolled the same checks here and
+    ///      justified it by calling the shared one "too weak"; that was simply wrong. Its leg
+    ///      test is `feeToken != legA && feeToken != legB`, so one token in both positions
+    ///      collapses it to exactly the strict "the fee must be denominated in the settlement
+    ///      currency" rule this path wants, and the bounds and collector-allowlist checks were
+    ///      being restated verbatim.
+    ///
+    ///      ⚠️ Calling it rather than restating it is STRUCTURAL, not tidiness: `_validateFees`
+    ///      is the one place the estate tightens fee policy, and a copy here means the next
+    ///      tightening silently applies to the exchange only while primary sales — the path
+    ///      where a single signer can cause a transfer — keeps the older, weaker rule.
+    ///
+    ///      ⚠️ The revert for a fee attested in the ASSET token is therefore
+    ///      `FeeTokenNotALeg(feeToken)`. The `SettlementTokenMismatch` error this used to raise
+    ///      is gone from the ABI.
+    ///
+    ///      What stays here is only what the shared function cannot know: the two `paramsHash`
+    ///      bindings, and that the fee attestation and the intent must name the SAME collector.
+    ///      `_validateFees` proves the collector is allowlisted; it has no intent to compare it
+    ///      against, so without the cross-check the fee could be routed to any other listed
+    ///      collector than the one the buyer signed for.
+    ///
     /// @param intent     The signed intent.
     /// @param paramsHash The intent's struct hash, which both attestations must carry.
     /// @param kycAtt     The compliance attestation.
@@ -163,19 +186,14 @@ abstract contract IntentGate is PrimaryStorage, IIntentGate {
         if (kycAtt.paramsHash != paramsHash) revert ParamsHashMismatch();
         if (feeAtt.paramsHash != paramsHash) revert ParamsHashMismatch();
 
-        // Deliberately stricter than the shared `_validateFees`, which only proves the fee
-        // token is one of the two legs of a trade. That is the right check for the exchange
-        // and too weak here: the primary path takes the fee from the SETTLEMENT leg by
-        // construction, and a fee attested in the asset token would come out of what the
-        // buyer receives.
-        if (feeAtt.feeToken != intent.settlementToken) revert SettlementTokenMismatch();
-        if (feeAtt.feeCollector != intent.feeCollector) revert FeeCollectorMismatch();
+        // The settlement token in BOTH leg positions. A primary sale has one currency leg, so
+        // the shared leg test becomes the strict denomination check: a fee attested in the
+        // asset token would come out of what the buyer receives, and is refused as
+        // `FeeTokenNotALeg`.
+        _validateFees(feeAtt, intent.settlementToken, intent.settlementToken);
 
-        if (feeAtt.makerFeeBps > MAX_FEE_BPS || feeAtt.takerFeeBps > MAX_FEE_BPS) revert InvalidFee();
-        if (feeAtt.takerFeeBps > 0 || feeAtt.makerFeeBps > 0) {
-            if (feeAtt.feeCollector == address(0)) revert ZeroAddress();
-            if (!allowedCollectors(feeAtt.feeCollector)) revert FeeCollectorNotAllowed(feeAtt.feeCollector);
-        }
+        // Not in `_validateFees`, and not derivable there: it has no intent to compare against.
+        if (feeAtt.feeCollector != intent.feeCollector) revert FeeCollectorMismatch();
     }
 
     /// @dev Burn the intent's single-use nonce. Called only once every signature on the path
