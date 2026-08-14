@@ -857,11 +857,24 @@ contract PrimarySalesSettledTest is PrimarySalesTestBase {
     }
 }
 
+/// @notice A handshake destination that refuses native currency. Stands in for a Safe with no
+///         `receive`, a contract wallet mid-upgrade, or a nominated address that was simply
+///         wrong — all of which must take the whole handshake down rather than leave this
+///         router holding a balance it has no function to move again.
+contract RejectsNativeCurrency {
+    error NotAcceptingNativeCurrency();
+
+    receive() external payable {
+        revert NotAcceptingNativeCurrency();
+    }
+}
+
 /// @title PrimarySalesAdminTest
 /// @notice The admin surface, and that it is admin-only.
 contract PrimarySalesAdminTest is PrimarySalesTestBase {
     event CollectorAllowed(address indexed collector, bool allowed);
     event ComplianceRequiredSet(PrimaryTypes.Action indexed action, bool required);
+    event WhitelistHandshake(address indexed destination, uint256 amount);
 
     function test_SetAllowedCollector_OnlyAdmin() public {
         // Read the role BEFORE the prank: it is a call too, and would otherwise consume it.
@@ -946,6 +959,90 @@ contract PrimarySalesAdminTest is PrimarySalesTestBase {
         // unpaused one always stops, instead of on `EnforcedPause`.
         _expectReachesTheMoneyPath();
         _settle(sales);
+    }
+
+    // ── the whitelist handshake ───────────────────────────────────────────────────────────
+
+    /// The venue's nominated address gets the whole `msg.value`, in the same call.
+    function test_WhitelistHandshake_ForwardsTheFullValueToTheDestination() public {
+        address destination = makeAddr("venueNominatedWallet");
+        vm.deal(admin, 1 ether);
+
+        vm.expectEmit(true, false, false, true, address(sales));
+        emit WhitelistHandshake(destination, 0.01 ether);
+        vm.prank(admin);
+        sales.whitelistHandshake{value: 0.01 ether}(destination);
+
+        assertEq(destination.balance, 0.01 ether, "the destination did not receive the handshake");
+        assertEq(admin.balance, 0.99 ether, "the admin was debited something other than the handshake");
+    }
+
+    /// 🔴 The invariant the whole design exists to keep flat: this contract never HOLDS native
+    /// currency, so there is no dust to strand and no sweep function to get the access control
+    /// on. Asserted after a handshake rather than before, because "zero before" is trivial.
+    function test_WhitelistHandshake_LeavesTheRouterWithNoNativeBalance() public {
+        address destination = makeAddr("venueNominatedWallet");
+        vm.deal(admin, 1 ether);
+
+        vm.prank(admin);
+        sales.whitelistHandshake{value: 0.5 ether}(destination);
+
+        assertEq(address(sales).balance, 0, "the router kept native currency");
+    }
+
+    /// 🔴 The other half of that invariant, and the reason there is no `receive()`: a bare value
+    /// transfer to the router still fails, so nothing can accumulate by accident. If this test
+    /// ever starts failing, somebody added a `receive()` and the flat statement above became a
+    /// statement with an exception in it.
+    function test_ABareValueTransferToTheRouterStillReverts() public {
+        vm.deal(stranger, 1 ether);
+
+        vm.prank(stranger);
+        (bool ok,) = address(sales).call{value: 1 wei}("");
+
+        assertFalse(ok, "the router accepted a bare value transfer");
+        assertEq(address(sales).balance, 0, "the router holds native currency");
+    }
+
+    /// A handshake moves money out of a contract that is otherwise incapable of moving native
+    /// currency at all, so it is admin-only for the same reason the upgrade is.
+    function test_WhitelistHandshake_OnlyAdmin() public {
+        // Read the role BEFORE the prank: it is a call too, and would otherwise consume it.
+        bytes32 adminRole = sales.DEFAULT_ADMIN_ROLE();
+        vm.deal(stranger, 1 ether);
+
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, adminRole)
+        );
+        sales.whitelistHandshake{value: 1 wei}(makeAddr("venueNominatedWallet"));
+    }
+
+    /// A zero destination burns the value with no way to recover it, since the router holds
+    /// nothing and has no sweep.
+    function test_WhitelistHandshake_RejectsTheZeroDestination() public {
+        vm.deal(admin, 1 ether);
+
+        vm.prank(admin);
+        vm.expectRevert(GateStorage.ZeroAddress.selector);
+        sales.whitelistHandshake{value: 1 wei}(address(0));
+    }
+
+    /// 🔴 A destination that refuses the transfer takes the whole call down rather than leaving
+    /// the router holding native currency it cannot move again. `RejectsNativeCurrency` is a
+    /// contract, which is also what makes this the case a `transfer` and its 2 300-gas stipend
+    /// would have handled badly.
+    function test_WhitelistHandshake_RevertsWhenTheDestinationRejectsTheTransfer() public {
+        address destination = address(new RejectsNativeCurrency());
+        vm.deal(admin, 1 ether);
+
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(AsseteraPrimarySales.HandshakeTransferFailed.selector, destination, 1 wei)
+        );
+        sales.whitelistHandshake{value: 1 wei}(destination);
+
+        assertEq(address(sales).balance, 0, "the router kept the rejected handshake");
     }
 
     function test_Upgrade_OnlyAdmin() public {

@@ -79,6 +79,15 @@ contract AsseteraPrimarySales is
     event CollectorAllowed(address indexed collector, bool allowed);
     /// @notice The KYC gate for one primary-sale action was toggled.
     event ComplianceRequiredSet(Action indexed action, bool required);
+    /// @notice Native currency was passed through to a venue as part of a whitelist handshake.
+    /// @param destination The address the venue nominated.
+    /// @param amount      The `msg.value` forwarded, in full, in the same call.
+    event WhitelistHandshake(address indexed destination, uint256 amount);
+
+    /// @dev The handshake destination rejected the transfer, or reverted. The whole call goes
+    ///      with it: a handshake that half-happened would leave this contract holding native
+    ///      currency it has no way to move again.
+    error HandshakeTransferFailed(address destination, uint256 amount);
 
     /// @param trustedForwarder ERC-2771 forwarder (relayer) — the SAME address the exchange
     ///        uses, so the relayer story is unchanged. Immutable in implementation bytecode,
@@ -276,6 +285,46 @@ contract AsseteraPrimarySales is
     function setComplianceRequired(Action action, bool required) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _gate().complianceRequired[uint8(action)] = required;
         emit ComplianceRequiredSet(action, required);
+    }
+
+    /// @notice Pass native currency straight through to `destination`, in one call, as part of a
+    ///         third-party venue's funding-wallet whitelist handshake. Admin only.
+    ///
+    ///         Venues such as Backed onboard a funding wallet by having it nominate an address
+    ///         and move a token amount of native currency to it. Nothing else in `src/` is
+    ///         `payable` and there is no `receive()`, so without this the router simply cannot
+    ///         take part — and the funding wallet has to be the router, because the router is
+    ///         what holds the allowances and makes the calls.
+    ///
+    /// @dev    ⚠️ **Pass-through only. There is deliberately NO `receive()` and NO sweep, and
+    ///         that is the whole design rather than an omission.** Holding a balance and
+    ///         sweeping it later is the obvious shape and the worse one:
+    ///
+    ///           * with pass-through only, a stray value transfer to this router still REVERTS,
+    ///             so nothing accumulates by accident and there is never dust to strand;
+    ///           * nothing is ever held, so there is no sweep function to get the access control
+    ///             on, and no window in which a balance exists for anyone to argue about;
+    ///           * the zero-standing-balance invariant `VenueSettler` asserts on the settlement
+    ///             token stays a FLAT statement about this contract, instead of acquiring a
+    ///             native-currency exception every future reader has to hold in their head.
+    ///
+    ///         If a venue ever needs the router to receive rather than send, that is a new
+    ///         decision with a new threat model, not an incremental relaxation of this one.
+    ///
+    ///         A low-level `call`, not `transfer`: the 2 300-gas stipend fails against a
+    ///         contract destination, and a venue's nominated address is as likely to be a Safe
+    ///         as an EOA. There is no reentrancy surface to protect — no state is read or
+    ///         written here, and the caller is already `DEFAULT_ADMIN_ROLE`.
+    ///
+    /// @param destination The address the venue nominated. Never `address(0)`.
+    function whitelistHandshake(address destination) external payable onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (destination == address(0)) revert ZeroAddress();
+
+        // solhint-disable-next-line avoid-low-level-calls
+        (bool ok,) = destination.call{value: msg.value}("");
+        if (!ok) revert HandshakeTransferFailed(destination, msg.value);
+
+        emit WhitelistHandshake(destination, msg.value);
     }
 
     /// @notice "Stop primary sales" lever, independent of the exchange's. Admin only.
