@@ -55,25 +55,19 @@ abstract contract PrimaryStorage is PrimaryTypes, FeeGate, ReentrancyGuardUpgrad
         ///      operator) and issued independently of the KYC and fee attestations, so it
         ///      must not share their counters.
         mapping(address buyer => mapping(uint256 nonce => bool used)) usedIntentNonce;
-        // ── settlement value caps (AO-517), APPENDED ──────────────────────────────────────
-        // Everything below is keyed by SETTLEMENT TOKEN and by nothing else. There is
-        // deliberately no buyer dimension: the per-day cap bounds what the router as a whole
-        // can move in a day, so splitting it per buyer would let a compromised settlement
-        // signer mint fresh buyers and spend the cap once each.
-        /// @dev Per-transaction cap on the amount debited, per settlement token. ZERO means
-        ///      "no settlement in this token at all" rather than "unlimited" — the fail-closed
-        ///      default for a token nobody has configured. See `SettlementLimits`.
-        mapping(address token => uint256 cap) settlementPerTxCap;
-        /// @dev Per-day cap on the amount debited, per settlement token, across every buyer.
-        mapping(address token => uint256 cap) settlementPerDayCap;
-        /// @dev The cap window the accumulator below belongs to (`block.timestamp / 1 days`).
-        ///      Stored rather than inferred, because a stale accumulator has to read as an
-        ///      EMPTY one and there is no other way to tell the two apart.
-        mapping(address token => uint256 windowIndex) settlementCapWindow;
-        /// @dev How much has been debited in `settlementCapWindow[token]`. Meaningless on its
-        ///      own — always read it through `SettlementLimits.settledToday`, which returns
-        ///      zero when the stored window is not the current one.
-        mapping(address token => uint256 amount) settledInCapWindow;
+        // ── per-transaction settlement cap (AO-517), APPENDED ─────────────────────────────
+        // Keyed by SETTLEMENT TOKEN and by nothing else. No buyer dimension: the settlement
+        // operator names the buyer in the intent it signs, so anything keyed by buyer bounds
+        // nothing that matters.
+        /// @dev Per-transaction cap on the amount debited, per settlement token, in the token's
+        ///      RAW units. ZERO means "no settlement in this token at all" rather than
+        ///      "unlimited" — the fail-closed default for a token nobody configured. Converted
+        ///      once from whole tokens when it is set; see `SettlementLimits`.
+        mapping(address token => uint256 rawCap) settlementPerTxCap;
+        /// @dev The same cap in WHOLE tokens, exactly as a human typed it into the Safe. Held
+        ///      alongside the raw one so an operator can confirm the number without knowing the
+        ///      token's decimals, and so the conversion is auditable after the fact.
+        mapping(address token => uint256 wholeUnits) settlementPerTxCapWholeUnits;
     }
 
     // keccak256(abi.encode(uint256(keccak256("assetera.storage.PrimarySales")) - 1)) & ~bytes32(uint256(0xff))

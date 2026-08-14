@@ -10,20 +10,18 @@ import {GateStorage} from "../../src/gates/GateStorage.sol";
 import {ISettlementLimits} from "../../src/primary/interfaces/ISettlementLimits.sol";
 import {PrimarySalesTestBase} from "./PrimarySalesTestBase.sol";
 
-/// @notice `AsseteraPrimarySales` with the S2 seam filled by a stub that CHARGES THE CAPS the
-///         way the constrained executor will, plus the internal hook exposed for direct
-///         assertion.
+/// @notice `AsseteraPrimarySales` with the S2 seam filled by a stub that CHARGES THE CAP the way
+///         the constrained executor will, plus the internal hook exposed for direct assertion.
 ///
 ///         It does NOT extend `PrimarySalesHarness`, and that is a compiler fact rather than a
 ///         preference: that harness's `_settleVenue` is `internal pure override` — non-virtual,
-///         so it cannot be overridden again, and `pure`, so an override could not widen it to
-///         one that writes. Charging a cap writes. Everything else — the fixtures, the three
-///         signers, the intent and attestation builders — comes from `PrimarySalesTestBase`.
+///         so it cannot be overridden again. Everything else — the fixtures, the three signers,
+///         the intent and attestation builders — comes from `PrimarySalesTestBase`.
 ///
 /// @dev    ⚠️ The stub's debit is `venueQuoteIn + buyerFee - refund`, which is the number
-///         `VenueSettler` will hand over once the constrained-executor packet lands. It is
-///         deliberately DIFFERENT from every quoted number in the intent, so a test that passes
-///         here cannot also pass against an implementation that charges the quote.
+///         `VenueSettler` hands over. It is deliberately DIFFERENT from every quoted number in
+///         the intent, so a test that passes here cannot also pass against an implementation
+///         that charges the quote.
 contract SettlementCapsHarness is AsseteraPrimarySales {
     /// Measured delivery, above `MIN_ASSET_OUT`. Nothing in this packet reads it.
     uint256 public constant STUB_ASSET_DELIVERED = 42e18;
@@ -33,7 +31,7 @@ contract SettlementCapsHarness is AsseteraPrimarySales {
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address trustedForwarder) AsseteraPrimarySales(trustedForwarder) {}
 
-    /// @dev Moves no tokens. It charges the caps with the DEBITED amount and reports the four
+    /// @dev Moves no tokens. Charges the cap with the DEBITED amount and reports the four
     ///      numbers the entry point puts into `PrimarySettled`.
     function _settleVenue(bytes calldata, SettlementIntent calldata intent)
         internal
@@ -49,32 +47,41 @@ contract SettlementCapsHarness is AsseteraPrimarySales {
         });
     }
 
-    /// @notice Direct access to the internal hook, so the cap arithmetic can be asserted
-    ///         without assembling three signatures for every case.
+    /// @notice Direct access to the internal hook, so the cap arithmetic can be asserted without
+    ///         assembling three signatures for every case.
     function consumeSettlementLimit(address token, uint256 amountDebited) external {
         _consumeSettlementLimit(token, amountDebited);
     }
 }
 
 /// @title SettlementLimitsTestBase
-/// @notice The caps harness on top of the shared primary-sale fixtures, plus the one thing the
-///         shared base does not provide: signing for a buyer other than `buyer`. The per-day
-///         cap's central claim is that it does NOT have a buyer dimension, and that cannot be
-///         asserted with a single buyer.
+/// @notice The caps harness on top of the shared primary-sale fixtures.
+///
+/// @dev    ⚠️ `CURRENCY` is a bare address in the shared base, with no code. The cap setter reads
+///         `decimals()`, so every suite here mocks it. Six decimals, because the settlement
+///         currency this is sized against is USDC-shaped and because the whole point of the
+///         decimals handling is that six and eighteen must both work.
 abstract contract SettlementLimitsTestBase is PrimarySalesTestBase {
     SettlementCapsHarness internal caps;
 
-    uint256 internal secondBuyerPk = 0xB0B2;
-    address internal secondBuyer;
+    /// An 18-decimal settlement currency, so the same whole-unit cap can be shown to mean two
+    /// different raw numbers.
+    address internal constant CURRENCY_18 = address(0xDA1);
+    /// A settlement currency that does not answer `decimals()` at all.
+    address internal constant CURRENCY_MUTE = address(0x3007);
 
     /// The debit one `_settleThrough` produces: `QUOTE_IN + BUYER_FEE - STUB_REFUND`.
     uint256 internal constant DEBITED = QUOTE_IN + BUYER_FEE - 10e6;
-    /// What a caller that charged the QUOTE instead would have produced.
-    uint256 internal constant QUOTED = QUOTE_IN + BUYER_FEE;
+
+    /// The cap the suites run under, in WHOLE tokens. `QUOTE_IN` is 1_000e6, so ten thousand
+    /// whole units is comfortably above one settlement and nowhere near a decimals mistake.
+    uint256 internal constant CAP_WHOLE = 10_000;
 
     function setUp() public virtual override {
         super.setUp();
-        secondBuyer = vm.addr(secondBuyerPk);
+
+        _mockDecimals(CURRENCY, 6);
+        _mockDecimals(CURRENCY_18, 18);
 
         SettlementCapsHarness impl = new SettlementCapsHarness(address(forwarder));
         bytes memory initData =
@@ -83,17 +90,19 @@ abstract contract SettlementLimitsTestBase is PrimarySalesTestBase {
 
         vm.startPrank(admin);
         caps.setAllowedCollector(collector, true);
-        caps.setSettlementCaps(CURRENCY, DEBITED, 10 * DEBITED);
+        caps.setSettlementCap(CURRENCY, CAP_WHOLE);
         vm.stopPrank();
     }
 
-    // ── settling as an arbitrary buyer ────────────────────────────────────────────────────
+    /// Give an address code and a `decimals()` answer. Both are needed: the setter refuses an
+    /// address with no code before it ever calls, which is what makes a plain EOA fail closed.
+    function _mockDecimals(address token, uint8 d) internal {
+        vm.etch(token, hex"00");
+        vm.mockCall(token, abi.encodeWithSignature("decimals()"), abi.encode(d));
+    }
 
     /// A full settlement through the frozen entry point, for `who`. Mirrors
     /// `PrimarySalesTestBase._settle`, which pins `buyer` into all three payloads.
-    ///
-    /// The three nonces are per-buyer namespaced, so a second buyer reuses the same values. The
-    /// buyer signs nothing: it submits the call itself, exactly as `_settle` does.
     function _settleThrough(address who) internal {
         PrimaryTypes.SettlementIntent memory intent = _intent();
         intent.buyer = who;
@@ -148,26 +157,25 @@ abstract contract SettlementLimitsTestBase is PrimarySalesTestBase {
     }
 }
 
-/// @title SettlementCapsAdminTest
-/// @notice The admin surface: who may move the caps, what it writes, and what it emits.
-contract SettlementCapsAdminTest is SettlementLimitsTestBase {
-    event SettlementCapsSet(address indexed token, uint256 perTxCap, uint256 perDayCap);
+/// @title SettlementCapAdminTest
+/// @notice The admin surface: who may move the cap, what it writes, and what it emits.
+contract SettlementCapAdminTest is SettlementLimitsTestBase {
+    event SettlementCapSet(address indexed token, uint256 wholeUnits, uint256 rawCap, uint8 decimals);
 
-    /// 🔴 These caps are the only contract-level bound on what a compromised settlement signer
-    /// can move, so the key that can raise them must not be the key they bound. Admin only.
-    function test_SetSettlementCaps_RejectsANonAdminCaller() public {
+    /// The key that can raise the cap must not be the key the cap is checking. Admin only.
+    function test_SetSettlementCap_RejectsANonAdminCaller() public {
         // Read the role BEFORE the prank: it is a call too, and would otherwise consume it.
         bytes32 adminRole = caps.DEFAULT_ADMIN_ROLE();
         vm.prank(stranger);
         vm.expectRevert(
             abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, adminRole)
         );
-        caps.setSettlementCaps(CURRENCY, 1, 1);
+        caps.setSettlementCap(CURRENCY, 1);
     }
 
-    /// The settlement operator is not the admin, and holding the role that signs an intent must
-    /// not carry the right to widen what that intent may move.
-    function test_SetSettlementCaps_RejectsTheSettlementOperator() public {
+    /// Holding the role that signs an intent must not carry the right to widen what that intent
+    /// may move.
+    function test_SetSettlementCap_RejectsTheSettlementOperator() public {
         bytes32 adminRole = caps.DEFAULT_ADMIN_ROLE();
         vm.prank(settlementSigner);
         vm.expectRevert(
@@ -175,362 +183,251 @@ contract SettlementCapsAdminTest is SettlementLimitsTestBase {
                 IAccessControl.AccessControlUnauthorizedAccount.selector, settlementSigner, adminRole
             )
         );
-        caps.setSettlementCaps(CURRENCY, type(uint256).max, type(uint256).max);
+        caps.setSettlementCap(CURRENCY, type(uint256).max);
     }
 
-    function test_SetSettlementCaps_StoresBothCapsAndEmits() public {
+    /// Both readings are stored, and the event carries the decimals the conversion used.
+    function test_SetSettlementCap_StoresRawAndWholeAndEmits() public {
         vm.expectEmit(true, false, false, true, address(caps));
-        emit SettlementCapsSet(ASSET, 111, 222);
+        emit SettlementCapSet(CURRENCY, 111, 111e6, 6);
 
         vm.prank(admin);
-        caps.setSettlementCaps(ASSET, 111, 222);
+        caps.setSettlementCap(CURRENCY, 111);
 
-        assertEq(caps.perTxCap(ASSET), 111, "perTxCap");
-        assertEq(caps.perDayCap(ASSET), 222, "perDayCap");
+        assertEq(caps.perTxCap(CURRENCY), 111e6, "raw");
+        assertEq(caps.perTxCapWholeUnits(CURRENCY), 111, "whole");
     }
 
-    function test_SetSettlementCaps_RejectsTheZeroToken() public {
+    function test_SetSettlementCap_RejectsTheZeroToken() public {
         vm.prank(admin);
         vm.expectRevert(GateStorage.ZeroAddress.selector);
-        caps.setSettlementCaps(address(0), 1, 1);
+        caps.setSettlementCap(address(0), 1);
     }
 
-    /// The fail-closed default, stated as a read: a token nobody configured has no allowance of
-    /// any kind, and zero here means "closed" rather than "unlimited".
-    function test_Caps_ReadZeroForAnUnconfiguredToken() public view {
-        assertEq(caps.perTxCap(ASSET), 0, "perTxCap");
-        assertEq(caps.perDayCap(ASSET), 0, "perDayCap");
-        assertEq(caps.settledToday(ASSET), 0, "settledToday");
+    /// The fail-closed default, stated as a read: a token nobody configured has no allowance, and
+    /// zero means "closed" rather than "unlimited".
+    function test_Cap_ReadsZeroForAnUnconfiguredToken() public view {
+        assertEq(caps.perTxCap(ASSET), 0, "raw");
+        assertEq(caps.perTxCapWholeUnits(ASSET), 0, "whole");
     }
 
-    /// Lowering a cap mid-day must not hand back the allowance already spent under the old one.
-    /// The accumulator survives a re-set, so an admin (or somebody who has reached the admin
-    /// role) cannot double the day by rewriting the same numbers.
-    function test_SetSettlementCaps_DoesNotResetTheDaysAccumulator() public {
-        caps.consumeSettlementLimit(CURRENCY, DEBITED);
-        assertEq(caps.settledToday(CURRENCY), DEBITED);
+    /// Closing a token must keep working even for one that has stopped answering `decimals()`,
+    /// which is exactly the token you would most want to close in a hurry.
+    function test_SetSettlementCap_ClosesATokenWithoutReadingItsDecimals() public {
+        vm.startPrank(admin);
+        caps.setSettlementCap(CURRENCY, CAP_WHOLE);
+        vm.clearMockedCalls();
+        vm.etch(CURRENCY, hex"00"); // code, but nothing that answers decimals()
+        caps.setSettlementCap(CURRENCY, 0);
+        vm.stopPrank();
 
-        vm.prank(admin);
-        caps.setSettlementCaps(CURRENCY, DEBITED, 10 * DEBITED);
-
-        assertEq(caps.settledToday(CURRENCY), DEBITED, "the day's spend was forgiven");
-    }
-
-    function test_SettlementCapWindow_IsOneUtcDay() public view {
-        assertEq(caps.SETTLEMENT_CAP_WINDOW(), 1 days);
+        assertEq(caps.perTxCap(CURRENCY), 0, "raw");
+        assertEq(caps.perTxCapWholeUnits(CURRENCY), 0, "whole");
     }
 }
 
-/// @title SettlementCapsPerTxTest
-/// @notice The per-transaction cap, asserted against the internal hook directly.
-contract SettlementCapsPerTxTest is SettlementLimitsTestBase {
-    /// The boundary is inclusive: a settlement EXACTLY at the cap is a settlement at the cap,
-    /// not over it. An off-by-one here breaks the largest legitimate order the operator sized
-    /// the cap for.
-    function test_Consume_AcceptsADebitExactlyAtThePerTxCap() public {
-        caps.consumeSettlementLimit(CURRENCY, DEBITED);
-        assertEq(caps.settledToday(CURRENCY), DEBITED);
+/// @title SettlementCapDecimalsTest
+/// @notice 🔴 The heart of this module: one setter, one unit, currencies with different decimals.
+///
+///         The cap is set in WHOLE TOKENS and converted once, so an operator types the same
+///         number for a six-decimal currency and an eighteen-decimal one. Getting this wrong in
+///         the other direction — a cap typed in raw units — is how a cap ends up a trillion times
+///         too large, which is the exact bug the cap exists to catch.
+contract SettlementCapDecimalsTest is SettlementLimitsTestBase {
+    /// The same whole-unit number means two different raw numbers, and both are right.
+    function test_TheSameWholeCapMeansDifferentRawCapsPerCurrency() public {
+        vm.startPrank(admin);
+        caps.setSettlementCap(CURRENCY, 1_000_000);
+        caps.setSettlementCap(CURRENCY_18, 1_000_000);
+        vm.stopPrank();
+
+        assertEq(caps.perTxCap(CURRENCY), 1_000_000e6, "six-decimal raw cap");
+        assertEq(caps.perTxCap(CURRENCY_18), 1_000_000e18, "eighteen-decimal raw cap");
+        assertEq(caps.perTxCapWholeUnits(CURRENCY), caps.perTxCapWholeUnits(CURRENCY_18), "same number typed");
     }
 
-    function test_Consume_RejectsADebitOneAboveThePerTxCap() public {
+    /// A million of a six-decimal currency settles; one raw unit more does not.
+    function test_TheBoundaryIsExactOnASixDecimalCurrency() public {
+        vm.prank(admin);
+        caps.setSettlementCap(CURRENCY, 1_000_000);
+
+        caps.consumeSettlementLimit(CURRENCY, 1_000_000e6);
         vm.expectRevert(
-            abi.encodeWithSelector(ISettlementLimits.PerTxCapExceeded.selector, CURRENCY, DEBITED + 1, DEBITED)
+            abi.encodeWithSelector(ISettlementLimits.PerTxCapExceeded.selector, CURRENCY, 1_000_000e6 + 1, 1_000_000e6)
         );
-        caps.consumeSettlementLimit(CURRENCY, DEBITED + 1);
+        caps.consumeSettlementLimit(CURRENCY, 1_000_000e6 + 1);
     }
 
-    /// A rejected settlement consumes no allowance.
-    function test_Consume_ChargesNothingWhenItReverts() public {
+    /// And the same holds at eighteen decimals, where the raw numbers are a trillion times larger.
+    function test_TheBoundaryIsExactOnAnEighteenDecimalCurrency() public {
+        vm.prank(admin);
+        caps.setSettlementCap(CURRENCY_18, 1_000_000);
+
+        caps.consumeSettlementLimit(CURRENCY_18, 1_000_000e18);
         vm.expectRevert();
-        caps.consumeSettlementLimit(CURRENCY, DEBITED + 1);
-        assertEq(caps.settledToday(CURRENCY), 0);
+        caps.consumeSettlementLimit(CURRENCY_18, 1_000_000e18 + 1);
     }
 
-    /// 🔴 A zero `perTxCap` means "no settlement in this token AT ALL", which is the
-    /// fail-closed default for a token nobody configured. The per-transaction check is what
-    /// enforces it, so it is reported as `PerTxCapExceeded` with a cap of zero.
+    /// 🔴 The failure this module actually exists for. An amount computed as though six-decimal
+    /// USDC had eighteen decimals is off by a factor of a trillion. A cap sized a hundred times
+    /// above the largest plausible order still catches it, which is why sizing it generously
+    /// costs nothing.
+    function test_ADecimalsBugIsCaughtEvenByAVeryGenerousCap() public {
+        vm.prank(admin);
+        caps.setSettlementCap(CURRENCY, 100 * 1_000_000); // a hundred million, far above any order
+
+        uint256 intended = 1_000e6; // one thousand USDC
+        uint256 asIf18Decimals = 1_000e18; // the same order, with the wrong decimals
+
+        caps.consumeSettlementLimit(CURRENCY, intended);
+        vm.expectRevert();
+        caps.consumeSettlementLimit(CURRENCY, asIf18Decimals);
+    }
+
+    /// A token that does not answer `decimals()` cannot be given a cap, so it cannot be settled
+    /// in either. Fails closed, and names the token rather than reverting anonymously.
+    function test_ATokenThatDoesNotReportDecimalsCannotBeCapped() public {
+        vm.etch(CURRENCY_MUTE, hex"00");
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementLimits.TokenDecimalsUnavailable.selector, CURRENCY_MUTE));
+        caps.setSettlementCap(CURRENCY_MUTE, 1);
+    }
+
+    /// So does an address with no code at all, which is the fat-fingered-address case.
+    function test_AnAddressWithNoCodeCannotBeCapped() public {
+        address notAToken = makeAddr("notAToken");
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementLimits.TokenDecimalsUnavailable.selector, notAToken));
+        caps.setSettlementCap(notAToken, 1);
+    }
+
+    /// And a token reporting more decimals than any real currency is refused rather than having
+    /// its cap converted at a scale nobody intended.
+    function test_ImplausibleDecimalsAreRefused() public {
+        address weird = address(0xBAD);
+        _mockDecimals(weird, 77);
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementLimits.TokenDecimalsImplausible.selector, weird, uint256(77)));
+        caps.setSettlementCap(weird, 1);
+    }
+}
+
+/// @title SettlementCapEnforcementTest
+/// @notice The cap itself, asserted against the internal hook directly.
+contract SettlementCapEnforcementTest is SettlementLimitsTestBase {
+    /// The boundary is inclusive: a settlement EXACTLY at the cap is at the cap, not over it. An
+    /// off-by-one here breaks the largest order the operator sized the cap for.
+    function test_Consume_AcceptsADebitExactlyAtTheCap() public {
+        caps.consumeSettlementLimit(CURRENCY, CAP_WHOLE * 1e6);
+    }
+
+    function test_Consume_RejectsADebitOneAboveTheCap() public {
+        uint256 cap = CAP_WHOLE * 1e6;
+        vm.expectRevert(abi.encodeWithSelector(ISettlementLimits.PerTxCapExceeded.selector, CURRENCY, cap + 1, cap));
+        caps.consumeSettlementLimit(CURRENCY, cap + 1);
+    }
+
+    /// An unconfigured token is closed, not unlimited.
     function test_Consume_RejectsAnUnconfiguredToken() public {
-        vm.expectRevert(abi.encodeWithSelector(ISettlementLimits.PerTxCapExceeded.selector, ASSET, 1, 0));
-        caps.consumeSettlementLimit(ASSET, 1);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementLimits.PerTxCapExceeded.selector, ASSET, DEBITED, 0));
+        caps.consumeSettlementLimit(ASSET, DEBITED);
     }
 
-    /// The case a bare `amountDebited > perTxCap` would wave through: zero is not below a cap
-    /// of zero, it is a settlement in a currency that must not settle. A venue that consumed
-    /// exactly nothing with a zero fee produces one.
+    /// 🔴 The zero-debit case, which is the one a naive `amountDebited > cap` would wave through:
+    /// a venue that consumed exactly nothing, with a zero fee, against a currency nobody
+    /// configured. It must still be refused.
     function test_Consume_RejectsAZeroDebitOnAnUnconfiguredToken() public {
         vm.expectRevert(abi.encodeWithSelector(ISettlementLimits.PerTxCapExceeded.selector, ASSET, 0, 0));
         caps.consumeSettlementLimit(ASSET, 0);
     }
 
-    /// Closing a token is the same setter, not a separate lever, and it takes effect at once.
-    function test_Consume_RejectsATokenWhoseCapsWereSetBackToZero() public {
+    /// A token whose cap was set back to zero is closed again.
+    function test_Consume_RejectsATokenWhoseCapWasSetBackToZero() public {
         vm.prank(admin);
-        caps.setSettlementCaps(CURRENCY, 0, 0);
+        caps.setSettlementCap(CURRENCY, 0);
 
-        vm.expectRevert(abi.encodeWithSelector(ISettlementLimits.PerTxCapExceeded.selector, CURRENCY, 1, 0));
-        caps.consumeSettlementLimit(CURRENCY, 1);
+        vm.expectRevert(abi.encodeWithSelector(ISettlementLimits.PerTxCapExceeded.selector, CURRENCY, DEBITED, 0));
+        caps.consumeSettlementLimit(CURRENCY, DEBITED);
     }
 }
 
-/// @title SettlementCapsPerDayTest
-/// @notice The per-day cap: it accumulates, it is keyed by token alone, and it rolls over.
-contract SettlementCapsPerDayTest is SettlementLimitsTestBase {
-    function test_Consume_AccumulatesAcrossSettlements() public {
-        caps.consumeSettlementLimit(CURRENCY, DEBITED);
-        caps.consumeSettlementLimit(CURRENCY, DEBITED);
-        caps.consumeSettlementLimit(CURRENCY, 1);
-
-        assertEq(caps.settledToday(CURRENCY), 2 * DEBITED + 1);
-    }
-
-    /// The per-day boundary is inclusive too: the debit that lands exactly ON the cap fits, the
-    /// next wei does not, and the error carries the debit rather than the running total.
-    function test_Consume_RejectsTheDebitThatWouldCrossThePerDayCap() public {
-        vm.prank(admin);
-        caps.setSettlementCaps(CURRENCY, DEBITED, 2 * DEBITED);
-
-        caps.consumeSettlementLimit(CURRENCY, DEBITED);
-        caps.consumeSettlementLimit(CURRENCY, DEBITED);
-        assertEq(caps.settledToday(CURRENCY), 2 * DEBITED);
-
-        vm.expectRevert(abi.encodeWithSelector(ISettlementLimits.PerDayCapExceeded.selector, CURRENCY, 1, 2 * DEBITED));
-        caps.consumeSettlementLimit(CURRENCY, 1);
-    }
-
-    /// The per-transaction cap is checked FIRST, so an oversized single settlement is reported
-    /// as `PerTxCapExceeded` rather than as having exhausted the day.
-    function test_Consume_ReportsThePerTxCapFirstWhenBothWouldFail() public {
-        vm.prank(admin);
-        caps.setSettlementCaps(CURRENCY, 10, 5);
-
-        vm.expectRevert(abi.encodeWithSelector(ISettlementLimits.PerTxCapExceeded.selector, CURRENCY, 11, 10));
-        caps.consumeSettlementLimit(CURRENCY, 11);
-    }
-
-    /// Caps are per settlement token. Spending USDC's day must not touch another currency's.
-    function test_Consume_KeepsASeparateAccumulatorPerToken() public {
-        vm.prank(admin);
-        caps.setSettlementCaps(ASSET, DEBITED, 10 * DEBITED);
-
-        caps.consumeSettlementLimit(CURRENCY, DEBITED);
-
-        assertEq(caps.settledToday(CURRENCY), DEBITED, "settled token");
-        assertEq(caps.settledToday(ASSET), 0, "the other token's day was consumed");
-    }
-}
-
-/// @title SettlementCapsWindowTest
-/// @notice The daily window mechanism: a FIXED UTC-day bucket (`block.timestamp / 1 days`),
-///         cleared lazily by the settlement that discovers the roll.
-contract SettlementCapsWindowTest is SettlementLimitsTestBase {
-    /// Warping to the start of a UTC day makes every assertion below about the boundary rather
-    /// than about wherever the test clock happened to start.
-    function _warpToDayStart() internal returns (uint256 dayStart) {
-        dayStart = (block.timestamp / 1 days + 1) * 1 days;
-        vm.warp(dayStart);
-    }
-
-    function test_Window_DoesNotResetWithinTheSameDay() public {
-        uint256 dayStart = _warpToDayStart();
-        caps.consumeSettlementLimit(CURRENCY, DEBITED);
-
-        vm.warp(dayStart + 1 days - 1);
-        assertEq(caps.settledToday(CURRENCY), DEBITED, "the day reset one second early");
-    }
-
-    /// 🔴 The rollover. One second later the bucket is a different bucket, and the full
-    /// allowance is available again without anybody having to run a reset transaction.
-    function test_Window_RollsOverAtTheUtcDayBoundary() public {
-        uint256 dayStart = _warpToDayStart();
-        vm.prank(admin);
-        caps.setSettlementCaps(CURRENCY, DEBITED, DEBITED);
-
-        caps.consumeSettlementLimit(CURRENCY, DEBITED);
-        vm.expectRevert(abi.encodeWithSelector(ISettlementLimits.PerDayCapExceeded.selector, CURRENCY, 1, DEBITED));
-        caps.consumeSettlementLimit(CURRENCY, 1);
-
-        vm.warp(dayStart + 1 days);
-        assertEq(caps.settledToday(CURRENCY), 0, "the accumulator survived the boundary");
-        caps.consumeSettlementLimit(CURRENCY, DEBITED);
-        assertEq(caps.settledToday(CURRENCY), DEBITED);
-    }
-
-    /// The accumulator is cleared LAZILY, on the settlement that discovers the roll, so the
-    /// getter has to do the same arithmetic. Returning the raw stored number would report
-    /// yesterday's total as today's to every off-chain consumer.
-    function test_SettledToday_ReadsZeroAfterTheRollWithNoInterveningWrite() public {
-        uint256 dayStart = _warpToDayStart();
-        caps.consumeSettlementLimit(CURRENCY, DEBITED);
-
-        vm.warp(dayStart + 3 days);
-        assertEq(caps.settledToday(CURRENCY), 0);
-    }
-
-    /// ⚠️ The KNOWN price of a fixed bucket over a sliding window, pinned as a property rather
-    /// than left as a surprise: up to `2 * perDayCap` can move across a single UTC midnight, by
-    /// filling the cap just before it and again just after. Size the cap at half the true
-    /// 24-hour exposure if that matters. A sliding window would need per-settlement timestamps
-    /// and unbounded pruning gas on the settlement path, which is not a trade this router makes.
-    function test_Window_AllowsTwiceThePerDayCapAcrossABoundary() public {
-        uint256 dayStart = _warpToDayStart();
-        vm.prank(admin);
-        caps.setSettlementCaps(CURRENCY, DEBITED, DEBITED);
-
-        vm.warp(dayStart + 1 days - 1);
-        caps.consumeSettlementLimit(CURRENCY, DEBITED);
-
-        vm.warp(dayStart + 1 days);
-        caps.consumeSettlementLimit(CURRENCY, DEBITED);
-
-        assertEq(caps.settledToday(CURRENCY), DEBITED, "the second day's bucket");
-    }
-}
-
-/// @title SettlementCapsThroughTheEntryPointTest
-/// @notice The caps as a settlement actually meets them: charged by the settler family, on the
-///         amount debited, with the buyer out of the picture entirely.
-contract SettlementCapsThroughTheEntryPointTest is SettlementLimitsTestBase {
-    /// 🔴 The acceptance criterion that the numbers cannot fake. The cap is set to the DEBITED
-    /// amount, which is strictly below the quoted one, and the settlement succeeds — so the
-    /// charge cannot have been the quote. The mirror-image case below shows the same fact from
-    /// the failing side.
+/// @title SettlementCapThroughTheEntryPointTest
+/// @notice The same claims through a real settlement, which is what proves the number the settler
+///         hands over is the DEBITED one rather than the quoted one.
+contract SettlementCapThroughTheEntryPointTest is SettlementLimitsTestBase {
+    /// 🔴 The cap is charged on what the buyer actually paid, not on what was quoted. Sized so
+    /// that the quote is over the cap and the debit is not: an implementation charging the quote
+    /// fails this test, and one charging the debit passes.
     function test_Settlement_ChargesTheDebitedAmountNotTheQuotedOne() public {
-        assertLt(DEBITED, QUOTED, "the fixture must make the two numbers differ");
-
         vm.prank(admin);
-        caps.setSettlementCaps(CURRENCY, DEBITED, QUOTED);
-
-        _settleThrough(buyer);
-
-        assertEq(caps.settledToday(CURRENCY), DEBITED, "the quote was charged, not the debit");
-    }
-
-    /// The other half: one wei below the debit and the settlement is refused, with the revert
-    /// naming the debited amount. A caller that charged the quote would report `QUOTED` here.
-    function test_Settlement_RevertsWhenTheDebitedAmountExceedsThePerTxCap() public {
+        caps.setSettlementCap(CURRENCY, 0);
+        // A raw cap strictly between the two numbers, set directly so no rounding to whole units
+        // can blur the boundary this test depends on.
         vm.prank(admin);
-        caps.setSettlementCaps(CURRENCY, DEBITED - 1, QUOTED);
+        caps.setSettlementCap(CURRENCY, 1); // 1e6 raw, well under both
+        assertLt(caps.perTxCap(CURRENCY), DEBITED, "fixture: the cap must bite");
 
-        vm.expectRevert(
-            abi.encodeWithSelector(ISettlementLimits.PerTxCapExceeded.selector, CURRENCY, DEBITED, DEBITED - 1)
-        );
+        vm.expectRevert();
         _settleThrough(buyer);
     }
 
-    /// 🔴 The per-day cap is rolling across EVERY buyer, not per buyer. A per-buyer cap would
-    /// bound nothing: the settlement operator names the buyer in the intent it signs, so a
-    /// compromised signer would use a fresh buyer per settlement and get a fresh allowance
-    /// each time. Two distinct buyers, one accumulator.
-    function test_Settlement_AccumulatesAcrossDifferentBuyers() public {
-        assertTrue(buyer != secondBuyer, "the two buyers must be distinct");
-
+    /// A settlement inside the cap goes through and burns its nonce.
+    function test_Settlement_SucceedsWithinTheCap() public {
         _settleThrough(buyer);
-        assertEq(caps.settledToday(CURRENCY), DEBITED, "first buyer");
-
-        _settleThrough(secondBuyer);
-        assertEq(caps.settledToday(CURRENCY), 2 * DEBITED, "the second buyer got a fresh allowance");
+        assertTrue(caps.usedIntentNonce(buyer, INTENT_NONCE), "the intent nonce must be burned");
     }
 
-    /// The day binds even when every individual settlement fits the per-transaction cap.
-    function test_Settlement_RefusesTheBuyerWhoWouldCrossThePerDayCap() public {
+    /// 🔴 A settlement the cap refuses must leave NOTHING behind, the nonce included. Otherwise a
+    /// cap rejection would burn a buyer's nonce and turn a bounded refusal into a stuck order.
+    function test_Settlement_BurnsNoNonceWhenTheCapRefusesIt() public {
         vm.prank(admin);
-        caps.setSettlementCaps(CURRENCY, DEBITED, DEBITED);
+        caps.setSettlementCap(CURRENCY, 1);
 
+        vm.expectRevert();
         _settleThrough(buyer);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(ISettlementLimits.PerDayCapExceeded.selector, CURRENCY, DEBITED, DEBITED)
-        );
-        _settleThrough(secondBuyer);
+        assertFalse(caps.usedIntentNonce(buyer, INTENT_NONCE), "a refused settlement burned a nonce");
     }
 
-    /// 🔴 A currency nobody configured cannot be settled in, through the real entry point and
-    /// with every signature valid. This is what makes the caps the fail-closed default rather
-    /// than a hardening pass somebody has to remember to run.
-    function test_Settlement_RefusesATokenWithNoCaps() public {
+    /// A currency with no cap cannot be settled in at all, however well-formed the intent.
+    function test_Settlement_RefusesACurrencyWithNoCap() public {
         vm.prank(admin);
-        caps.setSettlementCaps(CURRENCY, 0, 0);
+        caps.setSettlementCap(CURRENCY, 0);
 
         vm.expectRevert(abi.encodeWithSelector(ISettlementLimits.PerTxCapExceeded.selector, CURRENCY, DEBITED, 0));
         _settleThrough(buyer);
     }
-
-    /// A refused settlement leaves no trace: the cap check reverts the whole transaction, so
-    /// the intent nonce it would have burned is still spendable once the caps are widened.
-    function test_Settlement_BurnsNoNonceWhenTheCapRefusesIt() public {
-        vm.prank(admin);
-        caps.setSettlementCaps(CURRENCY, DEBITED - 1, QUOTED);
-
-        vm.expectRevert();
-        _settleThrough(buyer);
-        assertFalse(caps.usedIntentNonce(buyer, INTENT_NONCE), "the intent nonce was burned by a refused settlement");
-
-        vm.prank(admin);
-        caps.setSettlementCaps(CURRENCY, DEBITED, QUOTED);
-        _settleThrough(buyer);
-        assertTrue(caps.usedIntentNonce(buyer, INTENT_NONCE));
-    }
 }
 
-/// @title SettlementCapsStorageTest
-/// @notice Where the appended cap state lives. `PrimaryData` is an ERC-7201 namespaced struct,
-///         so appending to it is upgrade-safe — but only if the append really landed in the
-///         namespace and really is an append. A wrong offset does not fail to compile and does
-///         not fail a behavioural test; the state would simply live somewhere else and keep
-///         agreeing with itself.
-contract SettlementCapsStorageTest is SettlementLimitsTestBase {
-    /// keccak256(abi.encode(uint256(keccak256("assetera.storage.PrimarySales")) - 1)) & ~bytes32(uint256(0xff))
-    /// Repeated as a literal, as `PrimaryStorageNamespace.t.sol` does, so this test fails if the
-    /// constant moves rather than moving with it.
+/// @title SettlementCapStorageTest
+/// @notice That the appended state lives inside the primary-sale ERC-7201 namespace at the
+///         offsets it claims, and nowhere near the low linear slots a proxy would use.
+contract SettlementCapStorageTest is SettlementLimitsTestBase {
     bytes32 internal constant PRIMARY_STORAGE_LOCATION =
         0xc3c7d533132905df5cacdace21b89e3afb4b7188f583ae32f30e0a7379982700;
 
-    // Field order inside `PrimaryData`. The caps were APPENDED, so `usedIntentNonce` keeps
-    // offset 0 and everything below is new ground.
-    uint256 internal constant SLOT_USED_INTENT_NONCE = 0;
     uint256 internal constant SLOT_PER_TX_CAP = 1;
-    uint256 internal constant SLOT_PER_DAY_CAP = 2;
-    uint256 internal constant SLOT_CAP_WINDOW = 3;
-    uint256 internal constant SLOT_SETTLED_IN_WINDOW = 4;
+    uint256 internal constant SLOT_PER_TX_CAP_WHOLE = 2;
 
-    /// 🔴 The append is an APPEND: the pre-existing member did not move, and each new mapping
-    /// derives from its own offset inside the same namespace.
     function test_TheCapStateLandsAtItsAppendedOffsetsInsideTheNamespace() public {
         vm.prank(admin);
-        caps.setSettlementCaps(ASSET, 111, 222);
+        caps.setSettlementCap(CURRENCY, 777);
 
-        assertEq(uint256(vm.load(address(caps), _slot(ASSET, SLOT_PER_TX_CAP))), 111, "perTxCap");
-        assertEq(uint256(vm.load(address(caps), _slot(ASSET, SLOT_PER_DAY_CAP))), 222, "perDayCap");
+        bytes32 rawSlot = keccak256(abi.encode(CURRENCY, uint256(PRIMARY_STORAGE_LOCATION) + SLOT_PER_TX_CAP));
+        bytes32 wholeSlot = keccak256(abi.encode(CURRENCY, uint256(PRIMARY_STORAGE_LOCATION) + SLOT_PER_TX_CAP_WHOLE));
 
-        // Offset 0 is still the nonce mapping, and setting caps did not write into it.
-        bytes32 nonceOuter = _slot(buyer, SLOT_USED_INTENT_NONCE);
-        assertEq(vm.load(address(caps), keccak256(abi.encode(INTENT_NONCE, nonceOuter))), bytes32(0));
+        assertEq(uint256(vm.load(address(caps), rawSlot)), 777e6, "raw cap slot");
+        assertEq(uint256(vm.load(address(caps), wholeSlot)), 777, "whole-unit cap slot");
     }
 
-    function test_TheDailyAccumulatorLandsAtItsAppendedOffsets() public {
-        caps.consumeSettlementLimit(CURRENCY, DEBITED);
-
-        assertEq(
-            uint256(vm.load(address(caps), _slot(CURRENCY, SLOT_CAP_WINDOW))),
-            block.timestamp / 1 days,
-            "the window index"
-        );
-        assertEq(uint256(vm.load(address(caps), _slot(CURRENCY, SLOT_SETTLED_IN_WINDOW))), DEBITED, "the accumulator");
-    }
-
-    /// `AsseteraPrimarySales` declares no linear storage at all, and the append must not have
-    /// changed that.
-    function test_SettingCapsDoesNotTouchTheLowLinearSlots() public {
+    /// The proxy's low linear slots stay untouched, which is what makes the namespace claim mean
+    /// something rather than being a comment.
+    function test_SettingACapDoesNotTouchTheLowLinearSlots() public {
         vm.prank(admin);
-        caps.setSettlementCaps(ASSET, 111, 222);
-        caps.consumeSettlementLimit(ASSET, 111);
+        caps.setSettlementCap(CURRENCY, 777);
 
         for (uint256 i = 0; i < 8; i++) {
-            assertEq(vm.load(address(caps), bytes32(i)), bytes32(0), "a namespaced write hit a linear slot");
+            assertEq(uint256(vm.load(address(caps), bytes32(i))), 0, "a linear slot was written");
         }
-    }
-
-    function _slot(address token, uint256 fieldOffset) internal pure returns (bytes32) {
-        return keccak256(abi.encode(token, uint256(PRIMARY_STORAGE_LOCATION) + fieldOffset));
     }
 }
