@@ -33,7 +33,12 @@ contract SettlementCapsHarness is AsseteraPrimarySales {
 
     /// @dev Moves no tokens. Charges the cap with the DEBITED amount and reports the four
     ///      numbers the entry point puts into `PrimarySettled`.
-    function _settleVenue(bytes calldata, SettlementIntent calldata intent)
+    ///
+    ///      The third parameter is the attested `takerFeeBps`, which the real `VenueSettler`
+    ///      cross-checks `intent.buyerFee` against. This stub REPLACES that settler wholesale,
+    ///      so it deliberately ignores the parameter: these suites are about the cap arithmetic,
+    ///      and the fee cross-check is pinned where it lives, in `VenueSettler.t.sol`.
+    function _settleVenue(bytes calldata, SettlementIntent calldata intent, uint16)
         internal
         override
         returns (SettlementResult memory)
