@@ -34,9 +34,14 @@ abstract contract DeployBase is CreateXScript {
 
     /// @dev Salt version of the exchange proxy and implementation ONLY. Separate from `SALT_VERSION` so the
     ///      planned fresh deploy rotates the exchange address without disturbing the forwarder or the mocks.
-    ///      Bumping this to "v2" is the intended way to land a storage-layout break: the new address has no
-    ///      code, so `Deploy.s.sol` takes the fresh-deploy branch and the old proxy is never touched.
-    string internal constant EXCHANGE_SALT_VERSION = "v1";
+    ///      Bumping this is the intended way to land a storage-layout break: the new address has no code,
+    ///      so `Deploy.s.sol` takes the fresh-deploy branch and the old proxy is never touched.
+    ///
+    ///      ⚠️ **"v2" since AO-514's gate extraction.** The exchange address on every chain therefore
+    ///      CHANGES on the next deploy, and nothing at the old address is migrated — the live testnet
+    ///      orders, offers and escrow stay where they are, on a proxy this source no longer describes.
+    ///      Every consumer (SDK, indexer, signer service, fronts) must re-point.
+    string internal constant EXCHANGE_SALT_VERSION = "v2";
 
     /// @dev Whether the implementation built from THIS commit may be installed onto an exchange proxy that
     ///      already has code, via `upgradeToAndCall`.
@@ -50,6 +55,14 @@ abstract contract DeployBase is CreateXScript {
     ///      the source tree, not of the operator running the script, so it belongs in the commit that makes
     ///      the layout incompatible. `Deploy.s.sol` and `UpgradeCalldata.s.sol` both refuse to produce an
     ///      in-place upgrade while it is `false`.
+    ///
+    ///      ⚠️ **Bumping `EXCHANGE_SALT_VERSION` to "v2" is NOT the moment to flip this back to `true`, and
+    ///      that bump is already made above.** After the bump the new exchange address has no code, so
+    ///      `Deploy.s.sol` takes the fresh-deploy branch and never reaches this guard — leaving it `false`
+    ///      costs the fresh deploy nothing. Flipping it belongs in a FOLLOW-UP commit made after that fresh
+    ///      deploy exists, because only then is the layout of the proxy sitting at the v2 address the one
+    ///      this source tree describes. Flip it earlier and the guard is open for a proxy nobody has
+    ///      deployed yet, against a layout nobody has checked.
     bool internal constant INPLACE_UPGRADE_ALLOWED = false;
 
     /// @dev Human-readable refusal reason, shared by both scripts so the two never drift.
