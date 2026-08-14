@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
@@ -14,6 +15,7 @@ import {
     FeeOnTransferCurrency,
     MutableDecimalsToken,
     RebasingAsset,
+    SenderSurchargeCurrency,
     SilentTransferToken
 } from "./mocks/PrimaryWeirdTokens.sol";
 import {VenueSettlerTestBase} from "./VenueSettlerTestBase.sol";
@@ -136,20 +138,29 @@ abstract contract HostileSettlementBase is VenueSettlerTestBase {
 /// @notice 🔴 A DEFLATIONARY settlement currency: the router is debited in full and credited
 ///         less, on every leg — the buyer's pull, the venue's pull, the refund and the fee.
 ///
-///         This is the single most likely way a constrained executor strands value or refuses a
-///         legitimate settlement, because every number `VenueSettler` reasons about after the
-///         venue call is a difference of the ROUTER's own balances, and on a token like this
-///         those differences are not the amounts anybody received.
+///         This is the single most likely way a constrained executor strands value or misreports
+///         one, because every number `VenueSettler` reasons about after the venue call is a
+///         difference of the ROUTER's own balances, and on a token like this those differences
+///         are not the amounts anybody received.
 ///
-/// @dev    The headline result, asserted below rather than argued: the router's own invariants
-///         all hold — nothing is stranded, the zero-standing-balance assertion passes, the buyer
-///         is never debited more than `maxSettlementIn` — and the MEASURED numbers in
-///         `PrimarySettled` are nonetheless not what the counterparties received. `venueIn`
-///         counts the burn as venue consumption and `fee` reports what left the router rather
-///         than what reached the collector. That is a reporting consequence for
-///         `AsseteraEvmIndexerService`, not a solvency one, and it is pinned here so that
-///         listing a fee-on-transfer settlement currency is a decision somebody takes with the
-///         numbers in front of them.
+///         **The headline result, and it changed on review of PR #58: such a currency cannot
+///         settle at all, and it is refused at the PULL.** Step 3 measures what the router
+///         actually received and compares it against `venueQuoteIn + buyerFee`; a burn on the
+///         way in makes the two differ, so `SettlementPullMismatch` fires before the venue is
+///         approved, before it is called, and before anything else can be measured wrongly.
+///
+/// @dev    What these tests used to pin, and why it was not good enough: the router's own
+///         solvency invariants held — nothing stranded, no standing approval, the buyer never
+///         debited beyond their allowance — but the settlement went THROUGH and the numbers it
+///         reported were not the amounts anybody received. `venueIn` counted the token's burn as
+///         venue consumption and the collector was credited below the fee both signers had
+///         attested. Neither was visible to anyone reading `PrimarySettled`. Failing closed at
+///         the pull replaces a silent misreport with a named revert, and the tests below assert
+///         the absence of every effect rather than the shape of a wrong one.
+///
+///         Listing a deflationary settlement currency is therefore a decision that now shows up
+///         as "no primary sale in this token succeeds", which is a thing an operator finds out
+///         immediately, instead of as a slow divergence in the activity ledger.
 contract VenueSettlerFeeOnTransferTest is HostileSettlementBase {
     /// One per cent burned on every transfer. Large enough that the arithmetic is legible in
     /// the assertions and small enough to be a plausible real token.
@@ -175,115 +186,175 @@ contract VenueSettlerFeeOnTransferTest is HostileSettlementBase {
         return script;
     }
 
-    /// 🔴 The case that matters most in practice: the venue asks for the whole quote it was
-    /// approved, and the router cannot pay it, because the burn happened on the way in. A
-    /// fee-on-transfer settlement currency therefore cannot settle at the full quote at all.
+    /// 🔴 The acceptance criterion for the measured pull. The router asked the currency for
+    /// 1 005.000000 and was credited 994.950000, so the settlement is refused right there —
+    /// with the two numbers in the error, which is what tells an operator it is the token and
+    /// not the venue.
     ///
-    /// It fails CLOSED, which is the right end of the trade — nothing is half-done and nothing
-    /// is stranded — but it means such a currency is unusable rather than merely lossy, and
-    /// that is a listing decision rather than a contract bug.
-    function test_FeeOnTransfer_RefusesTheSettlementWhenTheVenueAsksForTheWholeQuote() public {
+    /// The venue is never approved and never called, so what it would have done is irrelevant.
+    function test_FeeOnTransfer_RefusesTheSettlementAtThePull() public {
         bytes memory data = _encode(_fotScript(QUOTE, ASSET_OUT));
         PrimaryTypes.SettlementIntent memory intent = _fotIntent(data);
 
         _approveDebit(address(router), intent);
-        vm.expectRevert(ISettler.VenueCallFailed.selector);
+        vm.expectRevert(abi.encodeWithSelector(ISettler.SettlementPullMismatch.selector, QUOTE + FEE, HELD_AFTER_PULL));
         _submitFull(data, intent, TAKER_BPS);
 
         assertEq(fot.balanceOf(buyer), BUYER_START, "the buyer was debited by a settlement that failed");
         assertEq(fot.balanceOf(address(router)), 0, "the router kept something");
+        assertEq(fot.allowance(address(router), address(hostile)), 0, "the venue was approved before the pull");
     }
 
-    /// A venue that takes less than the router was left holding settles, and every one of the
-    /// router's own invariants holds: the buyer's debit is capped at what they authorised, the
-    /// refund reaches them, the approval is revoked and the router keeps nothing.
+    /// 🔴 The mutation that shows the fix is not merely the old failure under a new name. This
+    /// is the case that USED to settle — a venue taking 900.000000, less than the 994.950000 the
+    /// burn left the router holding — and it was the dangerous one, because it went through and
+    /// reported numbers nobody had sent or received.
     ///
-    /// ⚠️ Note what the buyer actually loses. They are debited 1 005.000000 and the venue
-    /// receives 891.000000 for a 900.000000 consumption — the difference is the token's own
-    /// burn, charged to whoever moves it. Nothing in this contract can prevent that, and
-    /// nothing in this contract is confused by it.
-    function test_FeeOnTransfer_SettlesWhenTheVenueTakesLessThanTheRouterHolds() public {
-        uint256 pulled = 900e6;
-        bytes memory data = _encode(_fotScript(pulled, ASSET_OUT));
+    /// It is now refused at the pull like every other settlement in this currency, and the
+    /// assertions are about the ABSENCE of effects: no delivery, no venue credit, no fee.
+    function test_FeeOnTransfer_RefusesEvenWhenTheVenueWouldTakeLessThanTheRouterHolds() public {
+        bytes memory data = _encode(_fotScript(900e6, ASSET_OUT));
         PrimaryTypes.SettlementIntent memory intent = _fotIntent(data);
 
         _approveDebit(address(router), intent);
+        vm.expectRevert(abi.encodeWithSelector(ISettler.SettlementPullMismatch.selector, QUOTE + FEE, HELD_AFTER_PULL));
         _submitFull(data, intent, TAKER_BPS);
 
-        // The venue is debited the burn too, so it receives 99 % of what it took.
-        assertEq(fot.balanceOf(address(hostile)), 891_000_000, "venue credit is net of the burn");
-        // held = 994.95 - 900 = 94.95; venueIn = 1005 - 94.95 = 910.05; refund = 1000 - 910.05.
-        assertEq(fot.balanceOf(buyer), BUYER_START - 1_005_000_000 + 89_050_500, "buyer net position");
+        assertEq(fot.balanceOf(buyer), BUYER_START, "the buyer was debited by a settlement that failed");
+        assertEq(fot.balanceOf(address(hostile)), 0, "the venue was paid by a settlement that failed");
         assertEq(fot.balanceOf(address(router)), 0, "the router stranded value");
         assertEq(fot.allowance(address(router), address(hostile)), 0, "a standing approval survived");
-        assertEq(asset.balanceOf(buyer), ASSET_OUT, "the asset was not delivered");
+        assertEq(asset.balanceOf(buyer), 0, "the asset was delivered by a settlement that failed");
+        assertFalse(router.usedIntentNonce(buyer, INTENT_NONCE), "a failed settlement burned the intent nonce");
     }
 
-    /// 🔴 What the settlement event says, on a currency where it cannot say the truth. The venue
-    /// consumed NOTHING, and `venueIn` reports 10.050000 — the burn on the buyer's pull, which
-    /// the router can only measure as "settlement token that left".
+    /// 🔴 The first of the two silent misreports this fix removes. The venue consumed NOTHING,
+    /// and `PrimarySettled` used to say it consumed 10.050000 — the burn on the buyer's pull,
+    /// which the router could only measure as "settlement token that left".
     ///
-    /// Pinned rather than fixed: the alternative is to measure the venue's own balance delta,
-    /// which is worse in every other respect (a venue that routes through an intermediary
-    /// receives nothing at its own address, and the router would then refuse an honest fill).
-    /// Measuring our own side is right; on a deflationary token it is simply not a measurement
-    /// of the counterparty.
-    function test_FeeOnTransfer_ReportsTheBurnAsVenueConsumption() public {
+    /// The assertion is that NO settlement event is emitted at all. Measuring the venue's own
+    /// balance delta instead was and remains the wrong alternative — a venue that routes through
+    /// an intermediary receives nothing at its own address, and the router would refuse honest
+    /// fills — so the answer is to refuse the currency, not to change what is measured.
+    function test_FeeOnTransfer_CannotReportTheBurnAsVenueConsumption() public {
         bytes memory data = _encode(_fotScript(0, ASSET_OUT));
         PrimaryTypes.SettlementIntent memory intent = _fotIntent(data);
 
         _approveDebit(address(router), intent);
-        vm.expectEmit(true, true, true, true, address(router));
-        emit ISettler.PrimarySettled(
-            buyer,
-            address(asset),
-            address(hostile),
-            ASSET_OUT,
-            address(fot),
-            10_050_000, // reported consumption — the burn, not the venue
-            989_950_000, // the rest of the quote, refunded
-            FEE,
-            collector,
-            SUPPLIER_REF,
-            INTENT_NONCE
-        );
+        vm.recordLogs();
+        vm.expectRevert(abi.encodeWithSelector(ISettler.SettlementPullMismatch.selector, QUOTE + FEE, HELD_AFTER_PULL));
         _submitFull(data, intent, TAKER_BPS);
 
-        assertEq(fot.balanceOf(address(hostile)), 0, "the venue took nothing, whatever the event says");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(logs[i].topics[0] != ISettler.PrimarySettled.selector, "a refused settlement was reported");
+        }
+        assertEq(fot.balanceOf(address(hostile)), 0, "the venue took nothing and was told nothing");
         assertEq(fot.balanceOf(address(router)), 0, "the router stranded value");
     }
 
-    /// The collector is credited less than the fee both signers agreed on, for the same reason.
-    /// The router's accounting is unaffected — `buyerFee` is what LEFT the router — so this is
-    /// a revenue fact about the currency rather than a settlement failure.
-    function test_FeeOnTransfer_CreditsTheCollectorLessThanTheAttestedFee() public {
+    /// 🔴 The second silent misreport. The collector used to be credited 4.950000 against an
+    /// attested fee of 5.000000 — a revenue shortfall that appeared nowhere, because `fee` in
+    /// the event is what LEFT the router rather than what reached the collector.
+    ///
+    /// The fee is now the attested fee or there is no settlement. Nothing in between.
+    function test_FeeOnTransfer_CannotCreditTheCollectorLessThanTheAttestedFee() public {
         bytes memory data = _encode(_fotScript(0, ASSET_OUT));
         PrimaryTypes.SettlementIntent memory intent = _fotIntent(data);
 
         _approveDebit(address(router), intent);
+        vm.expectRevert(abi.encodeWithSelector(ISettler.SettlementPullMismatch.selector, QUOTE + FEE, HELD_AFTER_PULL));
         _submitFull(data, intent, TAKER_BPS);
 
-        assertEq(fot.balanceOf(collector), 4_950_000, "the collector is credited net of the burn");
-        assertLt(fot.balanceOf(collector), FEE, "the credited fee must be below the attested one");
+        assertEq(fot.balanceOf(collector), 0, "the collector was credited by a settlement that failed");
     }
 
-    /// 🔴 The LOWER half of `VenueSettler`'s post-call bounds check, which nothing else in the
-    /// suite can reach: a venue that consumes the router's ENTIRE balance — legitimately, since
-    /// the burn left that balance below the approval — would take our fee with it. `held <
-    /// routerBefore + buyerFee` catches it and the whole settlement goes down.
-    ///
-    /// Without that lower bound the subtraction on the next line would still be safe, and the
-    /// fee transfer would then fail on an empty router with a bare ERC-20 error instead of the
-    /// named one.
-    function test_FeeOnTransfer_TheLowerBoundCatchesAVenueThatWouldTakeTheFeeToo() public {
-        bytes memory data = _encode(_fotScript(HELD_AFTER_PULL, ASSET_OUT));
+    /// The buyer's allowance is not consumed either, so a failed settlement leaves no standing
+    /// grant behind for the next one to spend.
+    function test_FeeOnTransfer_LeavesTheBuyerAllowanceIntact() public {
+        bytes memory data = _encode(_fotScript(0, ASSET_OUT));
         PrimaryTypes.SettlementIntent memory intent = _fotIntent(data);
+
+        _approveDebit(address(router), intent);
+        vm.expectRevert(abi.encodeWithSelector(ISettler.SettlementPullMismatch.selector, QUOTE + FEE, HELD_AFTER_PULL));
+        _submitFull(data, intent, TAKER_BPS);
+
+        assertEq(fot.allowance(buyer, address(router)), QUOTE + FEE, "the failed pull spent part of the allowance");
+        assertEq(fot.totalSupply(), BUYER_START, "the token burned something on a settlement that failed");
+    }
+}
+
+/// @title VenueSettlerSenderSurchargeTest
+/// @notice A settlement currency that charges the SENDER on top of every transfer: the recipient
+///         is credited in full, so the router's measured pull is EXACT and the settlement gets
+///         past step 3 — and then the venue's own pull debits the router more than it hands
+///         over.
+///
+/// @dev    This suite exists to keep the LOWER half of `VenueSettler`'s post-call bounds check
+///         (`held < routerBefore + buyerFee`) evidenced. It used to be reached by the
+///         deflationary currency, which can no longer get that far now that the pull is
+///         measured. Deleting the coverage instead of relocating it would have left a guard on
+///         the money path with no test behind it.
+contract VenueSettlerSenderSurchargeTest is HostileSettlementBase {
+    /// One per cent charged to the sender, on top.
+    SenderSurchargeCurrency internal surcharge;
+
+    uint256 internal constant BUYER_START = 10_000e6;
+    /// What the venue pulls. Chosen so the router's debit for it (995 + 1 % = 1 004.950000)
+    /// leaves the router holding 0.050000 — below the 5.000000 fee it still owes the collector,
+    /// which is exactly the lower bound. Anything much larger reverts inside the token instead,
+    /// on a balance the router does not have.
+    uint256 internal constant VENUE_PULL = 995e6;
+
+    function setUp() public virtual override {
+        super.setUp();
+        surcharge = new SenderSurchargeCurrency("Surcharge USD", "sUSD", 100);
+        surcharge.mint(buyer, BUYER_START);
+    }
+
+    /// 🔴 The lower bound. The pull is exact — the router is credited all 1 005.000000 — so the
+    /// settlement proceeds, and the venue then legitimately takes less than it costs the router
+    /// to send. Without the bound, `held` would be below the fee still owed and the collector
+    /// transfer would fail on an empty router with a bare ERC-20 error instead of the named one.
+    function test_SenderSurcharge_TheLowerBoundCatchesARouterLeftBelowItsOwnFee() public {
+        HostileVenue.Script memory script = _script(VENUE_PULL, ASSET_OUT);
+        script.paymentToken = address(surcharge);
+        bytes memory data = _encode(script);
+        PrimaryTypes.SettlementIntent memory intent =
+            _intentOver(address(surcharge), address(asset), address(hostile), data, QUOTE, FEE);
 
         _approveDebit(address(router), intent);
         vm.expectRevert(ISettler.RouterBalanceChanged.selector);
         _submitFull(data, intent, TAKER_BPS);
 
-        assertEq(fot.balanceOf(buyer), BUYER_START, "the buyer was debited by a settlement that failed");
+        assertEq(surcharge.balanceOf(address(router)), 0, "the router stranded value");
+        assertEq(surcharge.balanceOf(address(hostile)), 0, "the venue kept a pull from a failed settlement");
+        assertEq(asset.balanceOf(buyer), 0, "the asset was delivered by a settlement that failed");
+    }
+
+    /// ⚠️ Said plainly rather than left implied: this currency cannot settle EITHER, whatever
+    /// the venue takes. The router's outflows — the refund and the fee — each cost more than
+    /// their face value, so the zero-standing-balance invariant can never be met and the call
+    /// fails somewhere on the way out. A smaller venue pull simply moves the failure past the
+    /// lower bound to the fee transfer, where the token itself reverts on a balance the router
+    /// no longer has.
+    ///
+    /// The point of the suite above is therefore that the NAMED bound fires in the case that
+    /// would otherwise have taken our fee, not that this token is usable.
+    function test_SenderSurcharge_CannotSettleAtAllBecauseEveryOutflowCostsMoreThanItMoves() public {
+        HostileVenue.Script memory script = _script(500e6, ASSET_OUT);
+        script.paymentToken = address(surcharge);
+        bytes memory data = _encode(script);
+        PrimaryTypes.SettlementIntent memory intent =
+            _intentOver(address(surcharge), address(asset), address(hostile), data, QUOTE, FEE);
+
+        _approveDebit(address(router), intent);
+        vm.expectRevert();
+        _submitFull(data, intent, TAKER_BPS);
+
+        assertEq(surcharge.balanceOf(address(router)), 0, "the router stranded value");
+        assertEq(surcharge.balanceOf(collector), 0, "the collector was credited by a settlement that failed");
+        assertEq(asset.balanceOf(buyer), 0, "the asset was delivered by a settlement that failed");
     }
 }
 

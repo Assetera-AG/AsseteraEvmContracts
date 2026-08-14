@@ -90,6 +90,29 @@ interface ISettler {
     ///      The invariant is zero STANDING balance, not that the venue consumed the whole quote.
     error RouterBalanceChanged();
 
+    /// @dev The settlement-token pull did not move exactly what it was asked to move: the
+    ///      router's MEASURED balance delta over `safeTransferFrom` is not `venueQuoteIn +
+    ///      buyerFee`.
+    ///
+    ///      ⚠️ **Both directions revert, and the short one is the case that matters.** A
+    ///      fee-on-transfer or deflationary settlement currency debits the buyer in full and
+    ///      credits the router less. Proceeding on the quoted number instead of the measured
+    ///      one does not fail closed — it settles while misreporting, counting the token's own
+    ///      burn as venue consumption and paying the collector below the attested fee. Both are
+    ///      silent. The buyer signed `venueQuoteIn + buyerFee`; approving the venue any less
+    ///      than the signed quote would be a smaller purchase than the buyer consented to, and
+    ///      paying the collector any less than the attested fee is exactly the defect this
+    ///      error replaces — so a short pull is refused rather than absorbed. A surplus is
+    ///      refused for the mirror reason: the router would report a venue consumption that
+    ///      never happened.
+    ///
+    ///      Its practical consequence, stated rather than hidden: a deflationary settlement
+    ///      currency cannot be settled in AT ALL. That is a listing decision, and it is now
+    ///      taken at the first line that moves money instead of discovered in the ledger.
+    /// @param requested The full authorised debit, `venueQuoteIn + buyerFee`.
+    /// @param received  What the router's own balance actually grew by.
+    error SettlementPullMismatch(uint256 requested, uint256 received);
+
     /// @dev The venue call reverted or returned failure.
     error VenueCallFailed();
 }

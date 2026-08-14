@@ -150,3 +150,46 @@ contract FeeOnTransferCurrency is ERC20 {
         if (burned != 0) super._update(from, address(0), burned);
     }
 }
+
+/// @title SenderSurchargeCurrency
+/// @notice A settlement currency that charges the SENDER on top of the amount moved: the
+///         recipient is credited in FULL and the sender is debited `value` plus a surcharge.
+///         Six decimals, so it drops into the same USDC-shaped fixtures as the deflationary one.
+///
+///         It is the mirror image of `FeeOnTransferCurrency` and it exists for one reason: it is
+///         the only shape that gets PAST `VenueSettler`'s measured pull — the router is credited
+///         exactly what it asked for, so `SettlementPullMismatch` does not fire — and then
+///         breaks the router's balance on the way OUT, when the venue pulls its approved quote.
+///         That makes it the only remaining way to reach the LOWER half of the post-call bounds
+///         check (`held < routerBefore + buyerFee`), which the deflationary currency used to
+///         reach before the pull was measured.
+///
+/// @dev    Not a contrivance: "the sender pays the transfer fee" is a real token pattern, and it
+///         is the one that leaves a router holding less than it was approved to hand on.
+contract SenderSurchargeCurrency is ERC20 {
+    /// @notice Basis points burned from the SENDER on top of every transfer between two
+    ///         non-zero addresses.
+    uint16 public immutable SURCHARGE_BPS;
+
+    constructor(string memory name_, string memory symbol_, uint16 surchargeBps_) ERC20(name_, symbol_) {
+        SURCHARGE_BPS = surchargeBps_;
+    }
+
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        super._update(from, to, value);
+        if (from == address(0) || to == address(0) || SURCHARGE_BPS == 0) return;
+
+        // Burned from the SENDER after the transfer itself, so the recipient's credit is exact
+        // and the shortfall lands entirely on whoever moved the tokens.
+        uint256 surcharge = (value * SURCHARGE_BPS) / 10_000;
+        if (surcharge != 0) super._update(from, address(0), surcharge);
+    }
+}

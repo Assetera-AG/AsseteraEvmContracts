@@ -28,7 +28,9 @@ import {FeeMath} from "../../libs/FeeMath.sol";
 ///           2. snapshot `assetToken.balanceOf(intent.buyer)` and this contract's own
 ///              `settlementToken` balance;
 ///           3. pull `venueQuoteIn + buyerFee` from the buyer — never an unlimited allowance,
-///              always an exact amount for this one settlement;
+///              always an exact amount for this one settlement — and MEASURE what arrived,
+///              refusing the settlement (`SettlementPullMismatch`) if the currency delivered
+///              anything other than the amount asked for;
 ///           4. approve EXACTLY `venueQuoteIn` to `intent.venue` and call it with
 ///              `venueCalldata`;
 ///           5. set the approval back to zero and measure what the venue actually consumed;
@@ -61,6 +63,17 @@ import {FeeMath} from "../../libs/FeeMath.sol";
 ///             6. That is not satisfiable: between the refund and the fee transfer the router
 ///             still holds exactly `buyerFee`. The assertion is made once, LAST, where it is
 ///             strongest — it then also catches a fee transfer that silently moved nothing.
+///
+///         ⚠️ **BOTH legs are measured, and the settlement leg only became so on review of
+///         PR #58.** The asset leg was always judged on a balance delta; the settlement leg was
+///         not — `safeTransferFrom` was called for `venueQuoteIn + buyerFee` and the flow then
+///         assumed the router held that. On a fee-on-transfer or deflationary currency it does
+///         not, and the failure was NOT clean: it failed closed only when the venue happened to
+///         ask for the whole quote, and otherwise settled while misreporting — the token's own
+///         burn counted as venue consumption, the collector credited below the attested fee,
+///         both silently. Step 3 now measures the pull and refuses anything other than the
+///         exact amount, which makes such a currency unsettleable rather than lossy. That is a
+///         listing decision, taken at the first line that moves money.
 ///
 ///         ⚠️ **What the balance-delta assertion does and does not survive.** An earlier
 ///         version of this comment claimed a rebase "cannot occur mid-call". That is false —
@@ -183,12 +196,34 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         uint256 buyerAssetBefore = asset.balanceOf(intent.buyer);
         uint256 routerBefore = currency.balanceOf(address(this));
 
-        // ── 3 · pull exactly this settlement's debit ──────────────────────────────────────
+        // ── 3 · pull exactly this settlement's debit, and MEASURE what arrived ────────────
         // The buyer's allowance to this router is the true ceiling on a compromised settlement
         // signer, and it is an exact amount for one transaction rather than a standing grant.
         // That is what makes the loss ceiling one transaction structurally rather than by
         // policy, and it is why nothing on this path ever asks for `type(uint256).max`.
         currency.safeTransferFrom(intent.buyer, address(this), debit);
+
+        // 🔴 What `safeTransferFrom` was ASKED to move is not what this contract RECEIVED. A
+        //    fee-on-transfer or deflationary currency debits the buyer in full and credits us
+        //    less, and every number computed after this point is a difference of the ROUTER's
+        //    own balances — so a flow driven by the quoted `debit` on such a token settles
+        //    while misreporting: the token's burn is counted as venue consumption and the
+        //    collector is credited below the attested fee. Measured, not quoted, which is the
+        //    discipline the asset leg in step 7 already follows.
+        //
+        //    Clamped rather than left to a checked subtraction so a balance that went DOWN
+        //    reports through the named error instead of an arithmetic panic.
+        uint256 afterPull = currency.balanceOf(address(this));
+        uint256 received = afterPull > routerBefore ? afterPull - routerBefore : 0;
+        // A short pull REVERTS rather than quietly becoming a smaller purchase: the buyer
+        // signed `venueQuoteIn + buyerFee`, so approving the venue less than the signed quote
+        // is not the trade they consented to, and paying the collector less than the attested
+        // fee is the defect being fixed. A surplus is refused for the mirror reason — the
+        // router would report a venue consumption that never happened. See
+        // `ISettler.SettlementPullMismatch`; the consequence is that a deflationary settlement
+        // currency cannot settle at all, which is a listing decision taken here rather than
+        // discovered in the ledger.
+        if (received != debit) revert SettlementPullMismatch(debit, received);
 
         // ── 4 · approve exactly the quote, then hand over the bytes ───────────────────────
         // `buyerFee` is deliberately NOT in the approval: our fee is never reachable by the
@@ -207,14 +242,19 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         currency.forceApprove(intent.venue, 0);
 
         uint256 held = currency.balanceOf(address(this));
-        // `held` must lie in `[routerBefore + buyerFee, routerBefore + debit]`. The lower bound
-        // says the venue took no more than the `venueQuoteIn` it was approved and never
+        // `held` must lie in `[routerBefore + buyerFee, routerBefore + received]`. The lower
+        // bound says the venue took no more than the `venueQuoteIn` it was approved and never
         // touched our fee or a pre-existing balance; the upper bound says it did not push
         // settlement token back at us. Both subtractions below are provably safe under it.
-        if (held < routerBefore + intent.buyerFee || held > routerBefore + debit) {
+        //
+        // Against `received` — what we hold — rather than against `debit` — what we asked for.
+        // Step 3 has already made the two equal, so nothing changes today; the point is that
+        // the venue is judged against the money that is actually here, so this arithmetic
+        // cannot start lying if that equality is ever relaxed.
+        if (held < routerBefore + intent.buyerFee || held > routerBefore + received) {
             revert RouterBalanceChanged();
         }
-        uint256 venueIn = routerBefore + debit - held;
+        uint256 venueIn = routerBefore + received - held;
         uint256 refund = intent.venueQuoteIn - venueIn;
 
         // ── 6 · refund what the venue rounded away ────────────────────────────────────────
