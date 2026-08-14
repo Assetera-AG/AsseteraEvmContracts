@@ -199,6 +199,19 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         if (refund != 0) currency.safeTransfer(intent.buyer, refund);
 
         // ── 7 · the delivery assertion ────────────────────────────────────────────────────
+        // ⚠️ TODO(AO-550) — `intent.assetToken` may be a CLAIM token rather than the instrument
+        //    the buyer bought, and nothing here can tell the difference. Every supplier we
+        //    settle against (Dinari, Ondo, our own minting) is atomic, and where a mint is
+        //    genuinely asynchronous it is fronted by a claim minted synchronously in this same
+        //    transaction — which is exactly what makes this balance delta measurable and this
+        //    contract correct either way.
+        //
+        //    What is NOT settled is what the layers above do with a claim: the activity ledger
+        //    could report it as a final position, and the claim-to-instrument leg is a second
+        //    event that nothing currently emits. Deliberately deferred (2026-08-14) rather than
+        //    designed for now, because the indexer already watches every token in the catalogue,
+        //    so the transfers are observed even before anyone models the distinction. Settle it
+        //    when the first primary sale is built out.
         uint256 buyerAssetAfter = asset.balanceOf(intent.buyer);
         // Clamped rather than left to a checked subtraction so a balance that went DOWN — a
         // downward rebase inside the call, or a venue that took the buyer's asset — reports
