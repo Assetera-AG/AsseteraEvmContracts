@@ -288,15 +288,13 @@ contract VenueSettlerFeeOnTransferTest is HostileSettlementBase {
 }
 
 /// @title VenueSettlerRebasingAssetTest
-/// @notice 🔴 The claim `VenueSettler` makes about its balance-delta assertion, put under test:
-///         "measured inside one transaction, a rebase cannot occur mid-call".
-///
-///         Half of that claim holds and is worth pinning. Half of it does not, and the tests
-///         below say which is which:
+/// @notice 🔴 What `VenueSettler`'s balance-delta assertion survives, under test. These tests are
+///         what its warning cites, and they are the reason that warning no longer says a rebase
+///         "cannot occur mid-call" — it can, and one of the tests below does it:
 ///
 ///           * A rebase that happened BEFORE the settlement contributes nothing, because the
 ///             snapshot is taken inside the call rather than carried across blocks. That is the
-///             property the warning is really about and it holds exactly.
+///             half of the original claim that holds, and it holds exactly.
 ///           * A rebase DURING the call is possible, because the venue is arbitrary code and
 ///             can call the asset token. It is then counted as delivery.
 ///

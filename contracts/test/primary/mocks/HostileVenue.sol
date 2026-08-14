@@ -29,9 +29,9 @@ interface IHostileTarget {
 ///             (takes exactly the approval), or more than the approval (fails inside the
 ///             token, which is what makes `forceApprove(venue, venueQuoteIn)` a ceiling).
 ///           * `rebaseBps` — a rebase of the RECIPIENT's asset balance, triggered from inside
-///             the venue call. ⚠️ This is the step that tests the claim in `VenueSettler` that
-///             a rebase "cannot occur mid-call": the venue is arbitrary code, so it can call
-///             the token.
+///             the venue call. ⚠️ This is the step that disproved the claim `VenueSettler` used
+///             to make, that a rebase "cannot occur mid-call": the venue is arbitrary code, so
+///             it can call the token, and the resulting delta is counted as delivery.
 ///           * `deliverAmount` — the honest step. Zero is the venue that lies about filling.
 ///           * `pushBackAmount` — settlement token pushed back AT the router, which must not be
 ///             absorbed into the refund or counted as anything.

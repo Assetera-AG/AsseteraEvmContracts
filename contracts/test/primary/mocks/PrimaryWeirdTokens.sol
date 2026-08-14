@@ -81,9 +81,9 @@ contract SilentTransferToken is ERC20 {
 /// @notice A rebasing 18-decimal asset token: a holder's balance can move without any transfer.
 ///
 ///         Tokenised equities rebase on corporate actions, so this is the shape of the real
-///         asset leg rather than an exotic one. It exists to test the claim `VenueSettler`
-///         makes about its balance-delta assertion, which is that measuring inside ONE
-///         transaction is safe.
+///         asset leg rather than an exotic one. It exists to test what `VenueSettler`'s
+///         balance-delta assertion actually survives: a rebase BEFORE the call is outside the
+///         measurement, a rebase DURING the call is counted as delivery.
 ///
 /// @dev    `rebase` is permissionless, which is the honest model: a rebase is triggered by
 ///         whatever the token's own rules say, and nothing on the settlement path gets to

@@ -62,10 +62,31 @@ import {FeeMath} from "../../libs/FeeMath.sol";
 ///             still holds exactly `buyerFee`. The assertion is made once, LAST, where it is
 ///             strongest — it then also catches a fee transfer that silently moved nothing.
 ///
-///         ⚠️ **The balance-delta assertion is safe here and only here:** measured inside one
-///         transaction, a rebase cannot occur mid-call. Any path that holds a rebasing asset
-///         (which is what tokenised equities are) ACROSS blocks and reasons about a raw
-///         balance is wrong.
+///         ⚠️ **What the balance-delta assertion does and does not survive.** An earlier
+///         version of this comment claimed a rebase "cannot occur mid-call". That is false —
+///         the venue is arbitrary code and can call the asset token during its own execution —
+///         and the three tests in `VenueSettlerRebasingAssetTest`
+///         (`test/primary/VenueSettlerHostile.t.sol`) pin what is actually true:
+///           * A rebase BEFORE the call contributes nothing, because the snapshot is taken
+///             inside the call rather than carried across blocks
+///             (`test_Rebasing_ARebaseBeforeTheCallIsOutsideTheMeasurement`). Any path that
+///             holds a rebasing asset (which is what tokenised equities are) ACROSS blocks and
+///             reasons about a raw balance is still wrong.
+///           * A rebase DURING the call IS counted as delivery
+///             (`test_Rebasing_ARebaseDuringTheCallIsCountedAsDelivery`: the venue takes the
+///             whole quote, delivers nothing, rebases the buyer's existing position up by 10 %
+///             and clears the floor). Nothing here can tell it from an honest transfer, because
+///             both are only a balance delta.
+///           * The practical bound, stated honestly rather than reassuringly: it grants a venue
+///             that fully CONTROLS the asset token nothing new, since such a venue could simply
+///             mint to the buyer — and minting to the buyer is what honest delivery is. Where
+///             it bites is a genuinely rebasing asset whose rebase the venue can trigger but
+///             does not control, and it additionally requires the buyer to ALREADY hold a
+///             position in that asset, which a primary sale usually does not
+///             (`test_Rebasing_TheSameVenueIsRefusedWhenTheBuyerHoldsNoPosition`: same venue,
+///             empty buyer, measured delta zero, settlement refused).
+///         Reported rather than patched: the venue and the asset are both named in an intent the
+///         buyer signed, and there is no on-chain check that separates the two cases.
 ///
 ///         ⚠️ **An unset cap is CLOSED, and this file is where that becomes a settlement-level
 ///         property rather than a module-level one.** `SettlementLimits` reads zero as "this
