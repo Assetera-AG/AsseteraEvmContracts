@@ -1,75 +1,47 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IntentGate} from "../IntentGate.sol";
 import {ISettlementLimits} from "../interfaces/ISettlementLimits.sol";
 
 /// @title SettlementLimits
-/// @notice Per-transaction and per-day caps on settled value, per settlement token, enforced on
-///         the amount ACTUALLY DEBITED from the buyer — the quote minus whatever the venue did
-///         not take — rather than on the quoted one. The settler families call
-///         `_consumeSettlementLimit` once the refund is known.
+/// @notice A per-transaction cap on settled value, per settlement token, enforced on the amount
+///         ACTUALLY DEBITED from the buyer — the quote minus whatever the venue did not take —
+///         rather than on the quoted one. The settler families call `_consumeSettlementLimit`
+///         once the refund is known.
 ///
-///         Two dimensions, and only two:
-///           * **Per settlement token.** A cap in USDC units is meaningless applied to a token
-///             with different decimals or a different price, so there is one pair of caps per
-///             currency and no global one.
-///           * **Per day, across every buyer.** There is deliberately no buyer dimension. A
-///             per-buyer daily cap bounds nothing: the settlement operator names the buyer in
-///             the intent it signs, so a compromised signer would mint a fresh buyer per
-///             settlement and spend a fresh allowance each time. What has to be bounded is what
-///             the ROUTER can move in a day.
+///         **Size this as a bound on BUGS, not as a loss limit.** See `ISettlementLimits` for
+///         why the per-day cap that used to live here was withdrawn on 2026-08-14: what bounds a
+///         compromised signer is the sum of live buyer allowances, not a number in this
+///         contract, and any cap set high enough not to hinder a regulated brokerage sits above
+///         that sum anyway. What a per-transaction cap catches, cheaply and reliably, is an
+///         arithmetic or decimals mistake — a factor of a trillion between 6-decimal and
+///         18-decimal units — which is a real and common failure in this kind of integration.
+///         Ten to a hundred times the largest plausible order never fires in normal business and
+///         still turns that bug into a revert.
 ///
-/// @dev    ⚠️ This packet was a venue and selector allowlist until 2026-08-13 and is
-///         deliberately no longer one. Do not quietly reintroduce a list: it did not bound a
-///         compromised signer's damage to the buyer — the attacker names the *genuine* venue
-///         and selector with `minAssetOut = 0` — and it did not protect the minting right,
-///         because a generic mint path would have had to allowlist `(ourToken, mint)` for the
-///         feature to work at all. Caps bound IMPACT rather than likelihood, and with nothing
-///         on-chain constraining the call target they are the only remaining contract-level
-///         limit on how much a single compromised key can move. If a change here starts to look
-///         like `mapping(address => bool) allowed`, it is the wrong change.
+///         **The cap is set in WHOLE TOKENS and stored in raw units.** That is how one setter
+///         works across currencies with different decimals: `decimals()` is read once, in the
+///         admin call, and never on the settlement path, which stays a pure comparison with no
+///         external call. It also keeps the Safe calldata readable, which is the same reason
+///         `ExchangeAdmin` is shaped the way it is.
 ///
-///         **A ZERO `perTxCap` means "no settlement in this token at all", not "unlimited".**
-///         That is the whole default: every token starts unconfigured, so a currency nobody
-///         deliberately sized cannot be settled in, and the same setter that opens a token
-///         closes it again. `_consumeSettlementLimit` tests the zero explicitly rather than
-///         relying on `amountDebited > 0`, because a zero debit against a zero cap would
-///         otherwise pass the comparison and wave an unconfigured token through.
+/// @dev    ⚠️ **A ZERO cap means "no settlement in this token at all", not "unlimited".** Every
+///         token starts unconfigured, so a currency nobody deliberately sized cannot be settled
+///         in, and the same setter that opens a token closes it again. `_consumeSettlementLimit`
+///         tests the zero explicitly rather than relying on `amountDebited > 0`, because a zero
+///         debit against a zero cap would otherwise pass the comparison and wave an
+///         unconfigured token through.
 ///
-///         **The daily window is a FIXED UTC-DAY BUCKET** (`block.timestamp / 1 days`), not a
-///         sliding 24-hour window, and that is a deliberate trade rather than an approximation
-///         nobody noticed:
-///           * A true sliding window has to remember every settlement's timestamp and amount
-///             and prune them as they age out. That is unbounded storage growth and unbounded
-///             gas on a path that already does three `ecrecover`s and several token transfers,
-///             and it makes one unlucky buyer pay for everybody else's pruning. On a router
-///             whose entire purpose is to bound loss, a limit that can itself be griefed into
-///             costing more gas than the block allows is not a limit.
-///           * A decaying "leaky bucket" (subtract `elapsed * cap / 1 days` on each touch)
-///             is O(1) too and has no boundary step, but it turns the cap into a drip rate:
-///             `settledToday` would no longer answer "how much has moved today", which is the
-///             question the interface asks and the one an operator, a compliance officer and a
-///             daily reconciliation actually ask.
-///           * The price of the bucket is a KNOWN, BOUNDED boundary effect: up to `2 *
-///             perDayCap` can move across a single UTC midnight, by filling the cap just before
-///             and again just after. That is pinned by
-///             `test_Window_AllowsTwiceThePerDayCapAcrossABoundary` so it is a documented
-///             property rather than a surprise, and it is priced in by halving the cap if the
-///             true 24-hour exposure is what needs sizing.
-///
-///         Caps default to zero and this packet deploys nothing. Sizing real ones needs
-///         evidence the contract cannot supply: the observed distribution of primary-sale
-///         order sizes (so the per-tx cap sits above the legitimate tail rather than through
-///         it), the daily settled volume per currency, and the loss the business is willing to
-///         absorb between a signer compromise and the multisig reacting. A cap high enough
-///         never to fire is theatre; one low enough to break a legitimate large order creates a
-///         support path that gets used to argue for raising it.
+///         ⚠️ Do not reintroduce a venue or selector allowlist here. If a change starts to look
+///         like `mapping(address => bool) allowed`, it is the wrong change; `ISettlementLimits`
+///         records why in full.
 abstract contract SettlementLimits is IntentGate, ISettlementLimits {
-    /// @notice The length of one cap window: a fixed UTC day, indexed by
-    ///         `block.timestamp / SETTLEMENT_CAP_WINDOW`. Public so ops and the admin UI read
-    ///         the window from the contract rather than assuming it.
-    uint256 public constant SETTLEMENT_CAP_WINDOW = 1 days;
+    /// @notice The most decimals a settlement currency may plausibly report. Well above the 18
+    ///         of every stablecoin in use and far below the point where converting a whole-unit
+    ///         cap overflows, so it rejects a nonsense token without constraining a real one.
+    uint8 public constant MAX_SETTLEMENT_TOKEN_DECIMALS = 36;
 
     // --------------------------------------------------------------------- //
     //                            Public getters                              //
@@ -82,20 +54,8 @@ abstract contract SettlementLimits is IntentGate, ISettlementLimits {
     }
 
     /// @inheritdoc ISettlementLimits
-    function perDayCap(address token) public view returns (uint256) {
-        return _primary().settlementPerDayCap[token];
-    }
-
-    /// @inheritdoc ISettlementLimits
-    /// @dev Reads ZERO once the window has rolled, without anybody having to touch the
-    ///      contract to clear it. The accumulator is only cleared lazily, on the next
-    ///      settlement, so returning the raw stored number would report yesterday's total as
-    ///      today's — and every off-chain consumer of this getter would size headroom against
-    ///      a figure that is about to be discarded.
-    function settledToday(address token) public view returns (uint256) {
-        PrimaryData storage $ = _primary();
-        if ($.settlementCapWindow[token] != _capWindow()) return 0;
-        return $.settledInCapWindow[token];
+    function perTxCapWholeUnits(address token) public view returns (uint256) {
+        return _primary().settlementPerTxCapWholeUnits[token];
     }
 
     // --------------------------------------------------------------------- //
@@ -104,94 +64,100 @@ abstract contract SettlementLimits is IntentGate, ISettlementLimits {
 
     /// @inheritdoc ISettlementLimits
     /// @dev `DEFAULT_ADMIN_ROLE` — the Safe multisig in production — following `ExchangeAdmin`
-    ///      rather than a new ownership model: one setter, one event, calldata a human can read
-    ///      in the Safe UI. Deliberately NOT the settlement operator's role. These caps are the
-    ///      only contract-level bound on what that key can move, so letting it raise its own
-    ///      ceiling would leave no bound at all.
+    ///      rather than a new ownership model: one setter, one event, calldata a human can read.
+    ///      Deliberately NOT the settlement operator's role: the cap is a check on what that key
+    ///      can do, so letting it raise its own ceiling would leave no ceiling.
     ///
-    ///      Both caps are written together, on purpose. They are one policy for one currency,
-    ///      and a two-setter surface has a window in which half of a policy is live.
+    ///      `decimals()` is read HERE and only here. Reading it on the settlement path would put
+    ///      an external call to a token contract inside the hot path, and would let an
+    ///      upgradeable token change the meaning of an already-approved cap between the moment
+    ///      it was signed off and the moment it is enforced. Converting once, at the point a
+    ///      human authorised a number, is the version that can be audited.
     ///
-    ///      No relationship between the two is enforced. `newPerDayCap < newPerTxCap` simply
-    ///      makes the per-transaction cap unreachable and lets the daily one bind, which is
-    ///      coherent and occasionally what you want; `(0, 0)` is how a token is closed again.
-    ///      Every combination fails CLOSED, so there is nothing here worth a revert.
-    ///
-    /// @param token        The settlement currency the caps apply to. Never `address(0)` — that
-    ///                     is a fat-fingered Safe transaction, not a policy.
-    /// @param newPerTxCap  New per-transaction cap on the amount debited. Zero closes the token.
-    /// @param newPerDayCap New per-day cap on the amount debited, across every buyer.
-    function setSettlementCaps(address token, uint256 newPerTxCap, uint256 newPerDayCap)
-        external
-        onlyRole(DEFAULT_ADMIN_ROLE)
-    {
+    ///      ⚠️ Consequence worth knowing: if a settlement currency ever DID change its decimals
+    ///      after a cap was set, the stored raw cap would silently mean something else. The
+    ///      decimals in force at set time are therefore emitted on the event, so the record
+    ///      shows what the number was converted against. Re-set the cap if that ever happens.
+    function setSettlementCap(address token, uint256 wholeUnits) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (token == address(0)) revert ZeroAddress();
 
         PrimaryData storage $ = _primary();
-        $.settlementPerTxCap[token] = newPerTxCap;
-        $.settlementPerDayCap[token] = newPerDayCap;
 
-        // The day's accumulator is deliberately NOT reset. Lowering a cap mid-day must not hand
-        // back the allowance already spent under the old one, which is exactly the move an
-        // attacker who has reached the admin role would otherwise make; and raising it must not
-        // require the operator to first forget what has already moved.
-        emit SettlementCapsSet(token, newPerTxCap, newPerDayCap);
+        // Closing a token needs no decimals and must keep working even for a token that has
+        // stopped reporting them, so the zero case short-circuits before the external call.
+        if (wholeUnits == 0) {
+            $.settlementPerTxCap[token] = 0;
+            $.settlementPerTxCapWholeUnits[token] = 0;
+            emit SettlementCapSet(token, 0, 0, 0);
+            return;
+        }
+
+        uint8 tokenDecimals = _tokenDecimals(token);
+        // Checked arithmetic: a `wholeUnits` large enough to overflow at this scale panics
+        // rather than wrapping, which still fails closed and leaves the token unsettleable.
+        uint256 rawCap = wholeUnits * (10 ** uint256(tokenDecimals));
+
+        $.settlementPerTxCap[token] = rawCap;
+        $.settlementPerTxCapWholeUnits[token] = wholeUnits;
+
+        emit SettlementCapSet(token, wholeUnits, rawCap, tokenDecimals);
     }
 
     // --------------------------------------------------------------------- //
     //                             Enforcement                                //
     // --------------------------------------------------------------------- //
 
-    /// @dev Charge one settlement against the caps for its settlement token, and revert if it
+    /// @dev Charge one settlement against the cap for its settlement token, and revert if it
     ///      does not fit. Called by each settler family with the amount actually debited from
     ///      the buyer — after the refund is known, not the quote.
     ///
-    ///      Order matters: the per-transaction cap is checked FIRST, so a single oversized
-    ///      settlement reports `PerTxCapExceeded` rather than being reported as having
-    ///      exhausted the day. Both errors carry the debited amount, which is what makes it
-    ///      possible to tell from a revert alone whether the caller charged the debit or the
-    ///      quote.
+    ///      A pure comparison: no external call, no conversion, no state write. The conversion
+    ///      happened once, in `setSettlementCap`.
     ///
-    ///      This writes, so it must be called AFTER the debit is measured and BEFORE the
-    ///      transaction can end; a family that reverts later unwinds the accumulator with the
-    ///      rest of the state, which is the correct behaviour — an unsettled settlement
-    ///      consumes no allowance.
+    ///      ⚠️ This only bounds a family that CALLS it. The cap is a convention between this
+    ///      module and each settler, not something the entry point enforces on their behalf.
+    ///      Worth revisiting when the mint family lands: the entry point already receives the
+    ///      measured debit back from the family, so charging centrally would make it structural
+    ///      rather than something a future packet has to remember.
     ///
     /// @param token         The settlement currency being debited.
     /// @param amountDebited The amount ACTUALLY taken from the buyer: quote plus fee, minus the
     ///                      refund the venue did not consume.
     function _consumeSettlementLimit(address token, uint256 amountDebited) internal virtual {
-        PrimaryData storage $ = _primary();
-
-        uint256 txCap = $.settlementPerTxCap[token];
-        // ⚠️ The `txCap == 0` test is load-bearing and not redundant with the comparison after
-        //    it. A zero cap means "this token cannot settle", and a zero debit against a zero
-        //    cap would pass `0 > 0`. That is not a hypothetical: a venue that consumed exactly
+        uint256 cap = _primary().settlementPerTxCap[token];
+        // ⚠️ The `cap == 0` test is load-bearing and not redundant with the comparison after it.
+        //    A zero cap means "this token cannot settle", and a zero debit against a zero cap
+        //    would pass `0 > 0`. That is not a hypothetical: a venue that consumed exactly
         //    nothing with a zero fee produces one, and it must not be the one debit an
         //    unconfigured currency accepts.
-        if (txCap == 0 || amountDebited > txCap) revert PerTxCapExceeded(token, amountDebited, txCap);
-
-        uint256 window = _capWindow();
-        // A stale window is an EMPTY window. Clearing lazily, on the settlement that discovers
-        // the roll, is what keeps the whole mechanism O(1): nobody has to be paid to run a
-        // daily reset, and a token that goes untouched for a month costs nothing.
-        uint256 spent = $.settlementCapWindow[token] == window ? $.settledInCapWindow[token] : 0;
-        uint256 dayCap = $.settlementPerDayCap[token];
-        // `spent` is bounded by `dayCap` and `amountDebited` by `txCap`, so this can only
-        // overflow if an admin set caps near `type(uint256).max` — in which case checked
-        // arithmetic panics, which still fails closed.
-        uint256 total = spent + amountDebited;
-        if (total > dayCap) revert PerDayCapExceeded(token, amountDebited, dayCap);
-
-        $.settlementCapWindow[token] = window;
-        $.settledInCapWindow[token] = total;
+        if (cap == 0 || amountDebited > cap) revert PerTxCapExceeded(token, amountDebited, cap);
     }
 
-    /// @dev The current cap window: the UTC day index. `block.timestamp` is used for bucketing
-    ///      only, never as a security boundary — a validator nudging the clock by seconds moves
-    ///      a settlement between two adjacent buckets and cannot create allowance that the
-    ///      2× boundary effect documented above does not already grant.
-    function _capWindow() internal view returns (uint256) {
-        return block.timestamp / SETTLEMENT_CAP_WINDOW;
+    /// @dev The token's decimals, or a revert naming the token. `decimals()` is not part of the
+    ///      required ERC-20 interface, so a token may not implement it at all, and a
+    ///      non-conforming one may return something that does not decode as `uint8`. Both are
+    ///      caught here and both fail CLOSED — the cap is not set, so the token stays
+    ///      unsettleable, which is the safe end of the trade.
+    ///      ⚠️ A low-level `staticcall` rather than `try IERC20Metadata(token).decimals()`, and
+    ///      that is not a style choice. `try` does NOT catch a contract that returns data which
+    ///      cannot be decoded: the call itself succeeds, and the decode then reverts in this
+    ///      contract's own frame, outside the `catch`. A token with code but no `decimals()`
+    ///      returns exactly that — empty data — so the `try` form would bubble a bare revert
+    ///      instead of the named error, and the operator would be told nothing. Found by
+    ///      `test_ATokenThatDoesNotReportDecimalsCannotBeCapped`.
+    function _tokenDecimals(address token) private view returns (uint8) {
+        // An address with no code is the fat-fingered-address case: a call to it succeeds and
+        // returns nothing, so it has to be rejected before the call rather than after.
+        if (token.code.length == 0) revert TokenDecimalsUnavailable(token);
+
+        (bool ok, bytes memory data) = token.staticcall(abi.encodeCall(IERC20Metadata.decimals, ()));
+        if (!ok || data.length < 32) revert TokenDecimalsUnavailable(token);
+
+        // Decoded as `uint256` on purpose. A non-conforming token can return a value that does
+        // not fit in `uint8`, and decoding straight into one would revert unhelpfully; the
+        // plausibility bound below rejects it with a named error instead.
+        uint256 decoded = abi.decode(data, (uint256));
+        if (decoded > MAX_SETTLEMENT_TOKEN_DECIMALS) revert TokenDecimalsImplausible(token, decoded);
+        return uint8(decoded);
     }
 }
