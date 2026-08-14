@@ -394,14 +394,26 @@ contract VenueSettlerRevertTest is VenueSettlerTestBase {
     /// 🔴 The hole `IntentGate` leaves open: its collector allowlist check only fires when the
     /// ATTESTED basis points are non-zero, so a settlement signer who puts a `buyerFee` on an
     /// intent whose fee attestation says zero bps would otherwise pay an arbitrary address.
-    function test_SettleVenue_RevertsOnABuyerFeePayableToAnUnlistedCollector() public {
+    /// A settlement signer who puts a fee on an intent whose FEE attestation says zero basis
+    /// points cannot pay an arbitrary address. `IntentGate` only reaches the collector
+    /// allowlist when the attested bps are non-zero, so this is the case that would otherwise
+    /// slip through.
+    ///
+    /// @dev It is now the buyer-fee cross-check that refuses it, one step earlier than the
+    ///      settler's own collector guard: zero attested bps imply a zero fee, so the invented
+    ///      `buyerFee` fails `BuyerFeeMismatch` before the recipient is ever considered. The
+    ///      test asserts the guarantee (an invented fee to an unlisted address is refused, and
+    ///      nothing moves) rather than which line refuses it.
+    function test_SettleVenue_RefusesABuyerFeeInventedForAnUnlistedCollector() public {
         address unlisted = makeAddr("unlisted");
         bytes memory data = _venueCalldata(QUOTE, ASSET_OUT);
         PrimaryTypes.SettlementIntent memory intent = _venueIntent(data, QUOTE, FEE, unlisted);
 
         _approveExact(intent);
-        vm.expectRevert(abi.encodeWithSelector(IFeeGate.FeeCollectorNotAllowed.selector, unlisted));
+        vm.expectRevert(abi.encodeWithSelector(VenueSettler.BuyerFeeMismatch.selector, FEE, 0));
         _submit(data, intent, 0);
+
+        assertEq(currency.balanceOf(unlisted), 0, "the unlisted collector must be paid nothing");
     }
 }
 
@@ -475,15 +487,21 @@ contract VenueSettlerFeeVectorsTest is VenueSettlerTestBase {
     ///
     /// ⚠️ This is an interop contract with `AsseteraSignerService`, which must compute
     /// `buyerFee` the same way or every inexact settlement reverts on a one-wei disagreement.
-    function test_ExpectedBuyerFee_RoundsUpInOurFavour() public view {
-        assertEq(router.expectedBuyerFee(1_234_567, 37), 4_568, "the fee must round up");
-        assertEq(uint256(4_567), FeeMath.feeAmount(1_234_567, 37), "the vector must be one the floor gets wrong");
+    /// ⚠️ The rounding direction is an interop contract, not a revenue decision. Every fee in
+    /// this system floors, so this one must too: the signer service and the marketplace API
+    /// derive the same number off-chain, and a one-wei disagreement reverts every settlement
+    /// whose fee does not divide exactly. This vector is chosen to be one the two roundings
+    /// disagree about, so the test fails if anybody switches it back to a ceiling.
+    function test_ExpectedBuyerFee_FloorsExactlyAsEveryOtherFeeInTheSystemDoes() public view {
+        assertEq(router.expectedBuyerFee(1_234_567, 37), 4_567, "the fee must floor");
+        assertEq(router.expectedBuyerFee(1_234_567, 37), FeeMath.feeAmount(1_234_567, 37), "must match FeeMath");
+        assertEq(uint256(4_568), FeeMath.ceilDiv(1_234_567 * 37, FeeMath.BPS_DENOMINATOR), "ceiling differs here");
     }
 
-    /// A one-wei quote at one basis point still owes a wei. Rounding up means a fee is never
-    /// silently free.
-    function test_ExpectedBuyerFee_NeverRoundsANonZeroFeeAwayToNothing() public view {
-        assertEq(router.expectedBuyerFee(1, 1), 1);
+    /// A fee too small to reach one wei is zero, and that is the same answer the exchange gives
+    /// on a dust trade. The signer must attest zero for it, and the cross-check then agrees.
+    function test_ExpectedBuyerFee_IsZeroWhenTheFeeCannotReachOneWei() public view {
+        assertEq(router.expectedBuyerFee(1, 1), 0);
     }
 
     /// Zero bps is zero fee, not one wei. The ceiling must not manufacture a fee the fee service

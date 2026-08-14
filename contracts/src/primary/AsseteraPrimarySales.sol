@@ -186,7 +186,10 @@ contract AsseteraPrimarySales is
         _consumeKycAndFee(intent.buyer, action, 0, kyc, fee);
         _consumeIntent(action, intent);
 
-        SettlementResult memory result = _settleVenue(venueCalldata, intent);
+        // `fee.takerFeeBps` is carried into the family so it can cross-check `intent.buyerFee`
+        // against what the FEE signer attested. Two independent signers must agree on one
+        // number; without this the basis points are decorative. Internal signature only.
+        SettlementResult memory result = _settleVenue(venueCalldata, intent, fee.takerFeeBps);
 
         // ⚠️ `forge build` reports "Unreachable code" here, and that is the CORRECT reading
         //    while no settlement family is implemented: `VenueSettler._settleVenue` reverts
