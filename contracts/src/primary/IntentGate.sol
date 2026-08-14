@@ -109,6 +109,22 @@ abstract contract IntentGate is PrimaryStorage, IIntentGate {
         // A zero delivery floor makes the post-call assertion vacuous — the transaction would
         // be a pure debit with nothing owed to the buyer. No honest settlement produces one.
         if (intent.minAssetOut == 0) revert ZeroAmount();
+        // 🔴 And the mirror image: a zero quote pays the venue nothing while the settlement
+        // still asserts a delivery floor — "pay nothing, receive something". Nothing else on
+        // the path catches it: the per-transaction cap only rejects a debit ABOVE the cap, so a
+        // zero debit passes every value check there is, and `_settleVenue` would approve zero,
+        // call the venue and judge the result purely on the asset delta.
+        //
+        // ⚠️ A genuinely FREE distribution — a promotional allocation, say — is exactly this
+        // shape, and this check forbids it. That is the deliberate safe default for a sale
+        // router rather than an oversight: the intent a giveaway signs and the intent a
+        // compromised settlement signer signs are indistinguishable on-chain, so enabling one
+        // should be a deliberate change with its own gate rather than something that already
+        // silently works.
+        //
+        // Its own error rather than the `ZeroAmount` above, so the signer service and the
+        // marketplace API can tell a missing floor from a missing price.
+        if (intent.venueQuoteIn == 0) revert ZeroVenueQuote();
         // The buyer's own cap must cover the debit the same signature authorises, or the
         // number shown in the UI as "you pay at most" is not the number being authorised.
         if (intent.maxSettlementIn < intent.venueQuoteIn + intent.buyerFee) revert MaxSettlementTooLow();

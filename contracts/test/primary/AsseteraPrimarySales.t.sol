@@ -592,6 +592,50 @@ contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
         );
     }
 
+    /// 🔴 The mirror image, and the reason it needs its own check: the per-transaction cap only
+    /// rejects a debit ABOVE the cap, so a zero `venueQuoteIn` passes every other value check on
+    /// the path — "pay nothing, receive something". Its own error rather than `ZeroAmount`, so
+    /// the signer service and the marketplace API can tell a missing price from a missing floor.
+    ///
+    /// A genuinely free distribution has this exact shape and is therefore refused. That is the
+    /// deliberate default for a sale router; enabling one is a change, not a discovery.
+    function test_SettlePrimary_RejectsAZeroVenueQuote() public {
+        PrimaryTypes.SettlementIntent memory intent = _intent();
+        intent.venueQuoteIn = 0;
+        intent.buyerFee = 0; // the whole debit is zero: nothing leaves the buyer at all
+        bytes32 paramsHash = _paramsHash(intent);
+
+        vm.prank(buyer);
+        vm.expectRevert(IIntentGate.ZeroVenueQuote.selector);
+        sales.settlePrimary(
+            VENUE_CALLDATA,
+            intent,
+            _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
+            _kyc(address(sales), paramsHash),
+            _fee(address(sales), paramsHash)
+        );
+    }
+
+    /// And it is refused even when the buyer is still charged a fee — the shape where the whole
+    /// debit goes to us and the venue is asked for a delivery it was paid nothing for.
+    function test_SettlePrimary_RejectsAZeroVenueQuoteEvenWithANonZeroFee() public {
+        PrimaryTypes.SettlementIntent memory intent = _intent();
+        intent.venueQuoteIn = 0;
+        bytes32 paramsHash = _paramsHash(intent);
+
+        vm.prank(buyer);
+        vm.expectRevert(IIntentGate.ZeroVenueQuote.selector);
+        sales.settlePrimary(
+            VENUE_CALLDATA,
+            intent,
+            _signIntent(address(sales), intent),
+            _signBuyerConsent(address(sales), intent),
+            _kyc(address(sales), paramsHash),
+            _fee(address(sales), paramsHash)
+        );
+    }
+
     function test_SettlePrimary_RejectsAnAssetLegEqualToTheSettlementLeg() public {
         PrimaryTypes.SettlementIntent memory intent = _intent();
         intent.settlementToken = ASSET;

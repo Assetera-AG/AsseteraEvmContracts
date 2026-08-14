@@ -72,6 +72,25 @@ interface IIntentGate {
     /// @dev `minAssetOut` is zero, which would make the post-call delivery assertion vacuous:
     ///      the transaction would be a pure debit with nothing owed to the buyer.
     error ZeroAmount();
+    /// @dev `venueQuoteIn` is zero: the mirror image of `ZeroAmount`, and the "pay nothing,
+    ///      receive something" shape. The per-transaction cap cannot catch it —
+    ///      `ISettlementLimits` only rejects a debit ABOVE the cap — so a zero quote otherwise
+    ///      passes every value check on the path.
+    ///
+    ///      ⚠️ **Its own selector rather than `ZeroAmount`**, so `AsseteraSignerService` and
+    ///      `AsseteraMarketplaceAPI` can tell a missing delivery floor from a missing price
+    ///      instead of mapping one error to two different operator instructions. Adding it is
+    ///      an ABI addition: a consumer decoding this router's reverts by selector should map
+    ///      the new one.
+    ///
+    ///      ⚠️ **The consideration, recorded rather than left implicit.** A genuinely FREE
+    ///      distribution — a promotional allocation, say — is exactly a zero-quote settlement,
+    ///      and this check forbids it. That is the safe default for a SALE router: the bytes a
+    ///      giveaway wants and the bytes a compromised settlement signer wants are the same
+    ///      bytes, and nothing on-chain separates them. Enabling a free distribution later
+    ///      should be a deliberate change with a gate of its own, not something that already
+    ///      silently works.
+    error ZeroVenueQuote();
 
     /// @dev `SETTLEMENT_OPERATOR_ROLE` and `usedIntentNonce` are deliberately NOT declared
     ///      here even though they are part of the same public surface. They are declared by
