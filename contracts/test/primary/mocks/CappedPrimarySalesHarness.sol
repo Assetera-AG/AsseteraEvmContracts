@@ -7,12 +7,12 @@ import {ISettlementLimits} from "../../../src/primary/interfaces/ISettlementLimi
 /// @notice `AsseteraPrimarySales` with the REAL S2 settler and a MOCK `ISettlementLimits`.
 ///
 ///         The venue settler charges `_consumeSettlementLimit` before it moves anything, and
-///         the caps module (AO-517) is a stub that reverts unconditionally, so a settlement
-///         against the plain contract cannot reach a single line of the money path. This
-///         harness supplies the smallest thing that satisfies the frozen `ISettlementLimits`
-///         semantics — a per-transaction cap enforced on the amount handed to it — so the
-///         venue packet can be tested without waiting for, or depending on, that packet
-///         landing.
+///         the real module reads an unset cap as CLOSED, so every test of the money path would
+///         otherwise have to open a cap in its fixture first. This harness inverts that one
+///         reading and nothing else — zero means uncapped here — so the venue suites assert
+///         venue behaviour rather than cap configuration. What the real module does with a
+///         zero is asserted separately, against the real module, in `VenueSettlerLimitsTest`
+///         and in `SettlementLimits.t.sol`.
 ///
 ///         It also records what it was charged. "Which number the settler passes to the caps"
 ///         is a claim about this packet rather than about AO-517, so it is asserted here.
@@ -55,8 +55,9 @@ contract CappedPrimarySalesHarness is AsseteraPrimarySales {
         if (cap != 0 && amount > cap) revert ISettlementLimits.PerTxCapExceeded(token, amount, cap);
     }
 
-    /// @notice Direct read of the unwired buyer-fee derivation, so its rounding policy can be
-    ///         pinned by hardcoded vectors even though `_settleVenue` cannot yet call it.
+    /// @notice Direct read of the buyer-fee derivation `_settleVenue` cross-checks against, so
+    ///         its rounding policy can be pinned by hardcoded vectors rather than only observed
+    ///         through a whole settlement.
     /// @param venueQuoteIn The venue's firm quote.
     /// @param takerFeeBps  The attested basis points.
     /// @return The fee those two imply.
@@ -64,7 +65,8 @@ contract CappedPrimarySalesHarness is AsseteraPrimarySales {
         return _expectedBuyerFee(venueQuoteIn, takerFeeBps);
     }
 
-    /// @notice Direct call of the unwired buyer-fee cross-check.
+    /// @notice Direct call of the buyer-fee cross-check, so its boundary cases can be asserted
+    ///         one intent at a time.
     /// @param intent      The settlement intent whose `buyerFee` is under test.
     /// @param takerFeeBps The basis points the fee service attested for it.
     function assertBuyerFee(SettlementIntent calldata intent, uint16 takerFeeBps) external pure {

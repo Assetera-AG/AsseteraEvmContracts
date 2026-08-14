@@ -18,10 +18,16 @@ import {PrimarySalesTestBase} from "./PrimarySalesTestBase.sol";
 ///         so it cannot be overridden again. Everything else — the fixtures, the three signers,
 ///         the intent and attestation builders — comes from `PrimarySalesTestBase`.
 ///
-/// @dev    ⚠️ The stub's debit is `venueQuoteIn + buyerFee - refund`, which is the number
-///         `VenueSettler` hands over. It is deliberately DIFFERENT from every quoted number in
-///         the intent, so a test that passes here cannot also pass against an implementation
-///         that charges the quote.
+/// @dev    ⚠️ The stub charges `venueQuoteIn + buyerFee - refund`, which is deliberately
+///         DIFFERENT from every quoted number in the intent, so a test that passes here cannot
+///         also pass against a module that ignores what it was handed and reads the intent.
+///
+///         ⚠️ **That is NOT the number the real `VenueSettler` hands over.** S2 charges
+///         `venueQuoteIn + buyerFee`, the full authorised debit, before its first external call
+///         — the refund is not known until after the venue has been called. These suites are
+///         about the module: what it stores, how it converts, and that it refuses whatever
+///         number exceeds the cap. Which number a family passes is asserted where that family
+///         lives, in `VenueSettler.t.sol`.
 contract SettlementCapsHarness is AsseteraPrimarySales {
     /// Measured delivery, above `MIN_ASSET_OUT`. Nothing in this packet reads it.
     uint256 public constant STUB_ASSET_DELIVERED = 42e18;
@@ -357,13 +363,14 @@ contract SettlementCapEnforcementTest is SettlementLimitsTestBase {
 }
 
 /// @title SettlementCapThroughTheEntryPointTest
-/// @notice The same claims through a real settlement, which is what proves the number the settler
-///         hands over is the DEBITED one rather than the quoted one.
+/// @notice The same claims through a whole settlement rather than through the hook alone: the cap
+///         is charged on the number the FAMILY hands over, and a cap that refuses leaves nothing
+///         behind.
 contract SettlementCapThroughTheEntryPointTest is SettlementLimitsTestBase {
-    /// 🔴 The cap is charged on what the buyer actually paid, not on what was quoted. Sized so
-    /// that the quote is over the cap and the debit is not: an implementation charging the quote
-    /// fails this test, and one charging the debit passes.
-    function test_Settlement_ChargesTheDebitedAmountNotTheQuotedOne() public {
+    /// The module charges what it is handed and does not go looking at the intent for a number
+    /// of its own. The stub's debit differs from every quoted number in the intent, so an
+    /// implementation that read `venueQuoteIn` instead would fail this.
+    function test_Settlement_ChargesTheAmountTheFamilyHandsOver() public {
         vm.prank(admin);
         caps.setSettlementCap(CURRENCY, 0);
         // A raw cap strictly between the two numbers, set directly so no rounding to whole units

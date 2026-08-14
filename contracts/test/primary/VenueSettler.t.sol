@@ -127,20 +127,37 @@ abstract contract VenueSettlerTestBase is PrimarySalesTestBase {
     /// `_settleVenueWith` because `vm.expectRevert` and `vm.expectEmit` apply to the NEXT call,
     /// and the `approve` must not be the call they land on.
     function _approveExact(PrimaryTypes.SettlementIntent memory intent) internal {
+        _approveExactTo(address(router), intent);
+    }
+
+    /// The same, against a router other than the mock-capped one.
+    function _approveExactTo(address spender, PrimaryTypes.SettlementIntent memory intent) internal {
         vm.prank(buyer);
-        currency.approve(address(router), intent.venueQuoteIn + intent.buyerFee);
+        currency.approve(spender, intent.venueQuoteIn + intent.buyerFee);
     }
 
     /// Submit without touching the buyer's allowance, so allowance behaviour can be varied.
     function _submit(bytes memory data, PrimaryTypes.SettlementIntent memory intent, uint16 takerBps) internal {
+        _submitTo(AsseteraPrimarySales(address(router)), data, intent, takerBps);
+    }
+
+    /// The same, against a router other than the mock-capped one. Every payload is signed for
+    /// `target`, because the EIP-712 verifying contract is part of each digest — a settlement
+    /// assembled for one proxy is refused by another by construction.
+    function _submitTo(
+        AsseteraPrimarySales target,
+        bytes memory data,
+        PrimaryTypes.SettlementIntent memory intent,
+        uint16 takerBps
+    ) internal {
         bytes32 paramsHash = _paramsHash(intent);
         vm.prank(buyer);
-        router.settlePrimary(
+        target.settlePrimary(
             data,
             intent,
-            _signIntent(address(router), intent),
-            _kyc(address(router), paramsHash),
-            _fee(address(router), paramsHash, 0, takerBps, intent.feeCollector, address(currency))
+            _signIntent(address(target), intent),
+            _kyc(address(target), paramsHash),
+            _fee(address(target), paramsHash, 0, takerBps, intent.feeCollector, address(currency))
         );
     }
 }
@@ -394,10 +411,6 @@ contract VenueSettlerRevertTest is VenueSettlerTestBase {
     /// 🔴 The hole `IntentGate` leaves open: its collector allowlist check only fires when the
     /// ATTESTED basis points are non-zero, so a settlement signer who puts a `buyerFee` on an
     /// intent whose fee attestation says zero bps would otherwise pay an arbitrary address.
-    /// A settlement signer who puts a fee on an intent whose FEE attestation says zero basis
-    /// points cannot pay an arbitrary address. `IntentGate` only reaches the collector
-    /// allowlist when the attested bps are non-zero, so this is the case that would otherwise
-    /// slip through.
     ///
     /// @dev It is now the buyer-fee cross-check that refuses it, one step earlier than the
     ///      settler's own collector guard: zero attested bps imply a zero fee, so the invented
@@ -422,6 +435,25 @@ contract VenueSettlerRevertTest is VenueSettlerTestBase {
 ///         money moves. The caps themselves are AO-517; which number reaches them is this
 ///         packet's claim, so it is asserted against a mock rather than against that packet.
 contract VenueSettlerLimitsTest is VenueSettlerTestBase {
+    /// A FOURTH proxy: the real `VenueSettler` behind the REAL `SettlementLimits`, over the same
+    /// real tokens. `router` mocks the caps (zero means uncapped there) and the shared `sales`
+    /// fixture uses bare placeholder addresses that cannot carry a balance, so neither can show
+    /// what an unconfigured currency does to a settlement that would otherwise succeed.
+    AsseteraPrimarySales internal realCaps;
+
+    function setUp() public virtual override {
+        super.setUp();
+
+        AsseteraPrimarySales impl = new AsseteraPrimarySales(address(forwarder));
+        bytes memory initData =
+            abi.encodeCall(AsseteraPrimarySales.initialize, (admin, kycSigner, feeSigner, settlementSigner));
+        realCaps = AsseteraPrimarySales(address(new ERC1967Proxy(address(impl), initData)));
+
+        // Deliberately NO `setSettlementCap` here: the unset cap is the fixture.
+        vm.prank(admin);
+        realCaps.setAllowedCollector(collector, true);
+    }
+
     /// Charged once, with the settlement token and the full debit the buyer is asked for.
     function test_SettleVenue_ChargesTheCapsOnceWithTheFullDebit() public {
         (bytes memory data, PrimaryTypes.SettlementIntent memory intent) = _happyPath();
@@ -451,12 +483,46 @@ contract VenueSettlerLimitsTest is VenueSettlerTestBase {
         assertEq(currency.balanceOf(address(venue)), 0, "venue paid under a breached cap");
     }
 
-    /// The fail-closed seam, seen from the other side: the REAL contract, with the caps module
-    /// still a stub, cannot reach a single line of the money path. `SettlementLimitsNotImplemented`
-    /// is raised by `SettlementLimits`, from inside `_settleVenue`, before the first token call.
-    function test_SettleVenue_FailsClosedWhileTheCapsModuleIsAStub() public {
-        vm.expectRevert(ISettlementLimits.SettlementLimitsNotImplemented.selector);
-        _settle(sales);
+    /// 🔴 An UNSET cap is closed, not unlimited — asserted through the real settler and the real
+    /// caps module rather than through the mock above, which reads zero the opposite way so that
+    /// every other test in this file does not need a setter call.
+    ///
+    /// This is the deployment trap the pair exists to catch: `settlementPerTxCap` is a
+    /// `mapping(address => uint256)`, so a currency nobody sized reads zero, and if zero meant
+    /// "unlimited" the first primary sale in a newly listed currency would run uncapped. The
+    /// precondition is asserted explicitly, because a test that only checked the revert would
+    /// still pass if the fixture had quietly acquired a very small cap instead of none.
+    function test_SettleVenue_FailsClosedWhenTheSettlementCurrencyHasNoCap() public {
+        assertEq(realCaps.perTxCap(address(currency)), 0, "fixture: the currency must be unconfigured");
+        (bytes memory data, PrimaryTypes.SettlementIntent memory intent) = _happyPath();
+        uint256 buyerCurrencyBefore = currency.balanceOf(buyer);
+
+        _approveExactTo(address(realCaps), intent);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISettlementLimits.PerTxCapExceeded.selector, address(currency), QUOTE + FEE, uint256(0)
+            )
+        );
+        _submitTo(AsseteraPrimarySales(address(realCaps)), data, intent, TAKER_BPS);
+
+        assertEq(currency.balanceOf(buyer), buyerCurrencyBefore, "the buyer was debited under an unset cap");
+        assertEq(currency.balanceOf(address(venue)), 0, "the venue was paid under an unset cap");
+        assertEq(asset.balanceOf(buyer), 0, "the asset was delivered under an unset cap");
+    }
+
+    /// The mutation that proves the test above fails for the reason it names: size the SAME
+    /// currency and the SAME settlement goes through. Without this pair, an unrelated breakage
+    /// anywhere upstream would read as "the cap failed closed".
+    function test_SettleVenue_SucceedsOnceTheAdminSizesTheCurrency() public {
+        vm.prank(admin);
+        realCaps.setSettlementCap(address(currency), 10_000);
+
+        (bytes memory data, PrimaryTypes.SettlementIntent memory intent) = _happyPath();
+        _approveExactTo(address(realCaps), intent);
+        _submitTo(AsseteraPrimarySales(address(realCaps)), data, intent, TAKER_BPS);
+
+        assertEq(asset.balanceOf(buyer), ASSET_OUT, "the asset was not delivered under a sized cap");
+        assertEq(currency.balanceOf(address(venue)), QUOTE, "the venue was not paid under a sized cap");
     }
 }
 
@@ -466,12 +532,14 @@ contract VenueSettlerLimitsTest is VenueSettlerTestBase {
 ///         `venueQuoteIn`. Two independent signers must agree on one number, or the basis
 ///         points are decorative.
 ///
-/// @dev    ⚠️ **`_settleVenue` does not call this yet, and these tests do not claim it does.**
-///         The frozen seam is `_settleVenue(bytes, SettlementIntent)`, `takerFeeBps` lives on
-///         the `FeeAttestation`, and nothing on the path carries it that far. See the
-///         `_assertBuyerFee` doc comment for the one-line wiring change and why this packet
-///         does not make it. What IS pinned here is the arithmetic and the rounding policy, as
-///         hardcoded vectors, the way the exchange pins its own fee maths.
+/// @dev    ⚠️ An earlier revision of this file said `_settleVenue` did not call the cross-check
+///         yet. It does: the seam takes `takerFeeBps` as a third parameter, and
+///         `_assertBuyerFee` runs in step 0, before anything moves. What these tests add on top
+///         of that wiring is the ARITHMETIC and the ROUNDING POLICY, as hardcoded vectors
+///         driven straight through the harness, the way the exchange pins its own fee maths —
+///         a formula change then shows up as a failing literal rather than as two expressions
+///         agreeing with each other. `test_SettleVenue_RefusesABuyerFeeInventedForAnUnlistedCollector`
+///         is the one that proves the wiring.
 contract VenueSettlerFeeVectorsTest is VenueSettlerTestBase {
     /// The exact vector. 50 bps of 1 000.000000 USDC is 5.000000 USDC, hardcoded rather than
     /// recomputed, so a change to the formula shows up as a failing literal rather than as two
@@ -481,12 +549,10 @@ contract VenueSettlerFeeVectorsTest is VenueSettlerTestBase {
     }
 
     /// 🔴 The rounding policy, on a vector that does NOT divide exactly.
-    /// 1.234567 USDC × 37 bps = 4 567.8979, so the fee is 4 568 rounded UP — in our favour —
-    /// and 4 567 would be the floor `FeeMath.feeAmount` returns. The two literals are one apart
-    /// on purpose: this is the only test that can tell the two roundings apart.
+    /// 1.234567 USDC × 37 bps = 4 567.8979, so the FLOOR is 4 567 and the ceiling would be
+    /// 4 568. The two literals are one apart on purpose: this is the only test that can tell
+    /// the two roundings apart, and it asserts the floor.
     ///
-    /// ⚠️ This is an interop contract with `AsseteraSignerService`, which must compute
-    /// `buyerFee` the same way or every inexact settlement reverts on a one-wei disagreement.
     /// ⚠️ The rounding direction is an interop contract, not a revenue decision. Every fee in
     /// this system floors, so this one must too: the signer service and the marketplace API
     /// derive the same number off-chain, and a one-wei disagreement reverts every settlement

@@ -7,6 +7,7 @@ import {ERC2771Forwarder} from "@openzeppelin/contracts/metatx/ERC2771Forwarder.
 import {AsseteraPrimarySales} from "../../src/primary/AsseteraPrimarySales.sol";
 import {PrimaryTypes} from "../../src/primary/types/PrimaryTypes.sol";
 import {GateTypes} from "../../src/types/GateTypes.sol";
+import {ISettlementLimits} from "../../src/primary/interfaces/ISettlementLimits.sol";
 import {PrimarySalesHarness} from "./mocks/PrimarySalesHarness.sol";
 
 /// @title PrimarySalesTestBase
@@ -259,6 +260,24 @@ abstract contract PrimarySalesTestBase is Test {
             _signIntent(address(target), intent),
             _kyc(address(target), paramsHash),
             _fee(address(target), paramsHash)
+        );
+    }
+
+    /// 🔴 The revert a well-formed settlement against `sales` ends at, and the MARKER three
+    /// suites use to mean "every gate passed and execution got into the settler's money path".
+    ///
+    /// `CURRENCY` is never given a cap on the `sales` fixture, and an unset cap is CLOSED, so
+    /// `VenueSettler`'s step 1 refuses the settlement before its first token call. The error is
+    /// a stronger marker than the `SettlementLimitsNotImplemented` it replaced, because it is
+    /// not a bare selector: it carries the settlement token and `QUOTE_IN + BUYER_FEE`, so it
+    /// also proves the intent's own numbers survived every gate intact. A settlement that
+    /// stopped anywhere earlier reverts with a different error, and one that got past this line
+    /// would fail on `ASSET`/`CURRENCY` being bare addresses with no code.
+    function _expectReachesTheMoneyPath() internal {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ISettlementLimits.PerTxCapExceeded.selector, CURRENCY, QUOTE_IN + BUYER_FEE, uint256(0)
+            )
         );
     }
 

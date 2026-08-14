@@ -11,8 +11,6 @@ import {GateStorage} from "../../src/gates/GateStorage.sol";
 import {IKycGate} from "../../src/interfaces/IKycGate.sol";
 import {IFeeGate} from "../../src/interfaces/IFeeGate.sol";
 import {IIntentGate} from "../../src/primary/interfaces/IIntentGate.sol";
-import {ISettler} from "../../src/primary/interfaces/ISettler.sol";
-import {ISettlementLimits} from "../../src/primary/interfaces/ISettlementLimits.sol";
 import {AsseteraECS} from "../../src/AsseteraECS.sol";
 import {PrimarySalesTestBase} from "./PrimarySalesTestBase.sol";
 
@@ -182,8 +180,8 @@ contract PrimarySalesDomainTest is PrimarySalesTestBase {
     }
 
     /// The other half of the same fact: swap ONLY the domain back and the identical attestation
-    /// sails through the gate, reaching the unimplemented value caps. Without this the test
-    /// above would also pass if the attestation were malformed for some unrelated reason.
+    /// sails through the gate and into the settler's money path. Without this the test above
+    /// would also pass if the attestation were malformed for some unrelated reason.
     function test_TheSameAttestationUnderThisDomainIsAccepted() public {
         PrimaryTypes.SettlementIntent memory intent = _intent();
         bytes32 paramsHash = _paramsHash(intent);
@@ -191,7 +189,7 @@ contract PrimarySalesDomainTest is PrimarySalesTestBase {
         GateTypes.KycAttestation memory att = _kyc(PRIMARY_DOMAIN_NAME, address(sales), 0, paramsHash);
 
         vm.prank(buyer);
-        vm.expectRevert(ISettlementLimits.SettlementLimitsNotImplemented.selector);
+        _expectReachesTheMoneyPath();
         sales.settlePrimary(
             VENUE_CALLDATA, intent, _signIntent(address(sales), intent), att, _fee(address(sales), paramsHash)
         );
@@ -205,22 +203,26 @@ contract PrimarySalesDomainTest is PrimarySalesTestBase {
 }
 
 /// @title PrimarySalesEntryPointTest
-/// @notice Everything the frozen entry point checks, asserted against the contract with no
-///         value-caps implementation. Reaching `SettlementLimitsNotImplemented` is the signal
-///         that every check upstream of the money passed.
+/// @notice Everything the frozen entry point checks, asserted against `sales` — the real
+///         contract, in a settlement currency no admin has ever sized. `PerTxCapExceeded` with
+///         a zero cap is the signal that every check upstream of the money passed; see
+///         `_expectReachesTheMoneyPath`.
 ///
-/// @dev    ⚠️ These tests expected `SettlerNotImplemented` until AO-518 filled the S2 seam.
-///         The signal moved one module along, not one module back: `VenueSettler` charges
-///         `_consumeSettlementLimit` before its first external call, and the caps module
-///         (AO-517) is still the stub that fails closed. The claim is unchanged — a settlement
-///         cannot reach the money with a module unimplemented — and it will move again, to a
-///         real settlement, when that packet lands.
+/// @dev    ⚠️ This marker has moved twice and the CLAIM has not moved at all. It was
+///         `SettlerNotImplemented` while the S2 seam was empty, then
+///         `SettlementLimitsNotImplemented` while the caps were a stub, and it is now the real
+///         caps module refusing an unconfigured currency. Each time the assertion is the same
+///         one: a well-formed settlement runs the whole verification path and is then stopped
+///         by the FIRST thing on the money path that is not satisfied. Re-point the marker when
+///         it moves again; do not weaken a module to keep it still.
 contract PrimarySalesEntryPointTest is PrimarySalesTestBase {
     /// 🔴 The packet's central claim: the proxy deploys, initialises and runs a full
-    /// settlement's worth of verification with no limits implementation present. The seam is a
-    /// real boundary rather than a comment, and it fails CLOSED.
-    function test_SettlePrimary_ReachesTheSettlerSeamWithNoFamilyImplemented() public {
-        vm.expectRevert(ISettlementLimits.SettlementLimitsNotImplemented.selector);
+    /// settlement's worth of verification — three signatures, both attestation bindings, the
+    /// calldata binding, three nonce burns — and only then hands over to the settler, which
+    /// stops it at the value cap. The seam is a real boundary rather than a comment, and every
+    /// unsatisfied precondition on it fails CLOSED.
+    function test_SettlePrimary_ReachesTheMoneyPathWithEveryGatePassed() public {
+        _expectReachesTheMoneyPath();
         _settle(sales);
     }
 
@@ -730,7 +732,10 @@ contract PrimarySalesAdminTest is PrimarySalesTestBase {
         sales.unpause();
         vm.stopPrank();
 
-        vm.expectRevert(ISettlementLimits.SettlementLimitsNotImplemented.selector);
+        // The marker is what makes this an assertion rather than a shrug: after the unpause the
+        // settlement runs the whole verification path again and stops exactly where an
+        // unpaused one always stops, instead of on `EnforcedPause`.
+        _expectReachesTheMoneyPath();
         _settle(sales);
     }
 
