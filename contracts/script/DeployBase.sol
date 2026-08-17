@@ -16,10 +16,12 @@ import {console2} from "forge-std/Script.sol";
 ///
 ///         {
 ///           "chainId": 31337, "caip2": "eip155:31337", "namespace": "eip155",
-///           "contracts":       { "AsseteraECS": "0x..(proxy)..", "Forwarder": "0x..", "MockUSDC": "0x..", "MockRWA": "0x.." },
-///           "implementations": { "AsseteraECS": "0x..(impl).." },
+///           "contracts":       { "AsseteraECS": "0x..(proxy)..", "AsseteraPrimarySales": "0x..(proxy)..",
+///                                "Forwarder": "0x..", "MockUSDC": "0x..", "MockRWA": "0x.." },
+///           "implementations": { "AsseteraECS": "0x..(impl)..", "AsseteraPrimarySales": "0x..(impl).." },
 ///           "metadata":        { "deployer": "0x..", "admin": "0x..", "operator": "0x..", "kycSigner": "0x..",
-///                                "feeSigner": "0x..", "relayer": "0x..", "deployBlock": 0, "deployTimestamp": 0 }
+///                                "feeSigner": "0x..", "settlementSigner": "0x..", "relayer": "0x..",
+///                                "deployBlock": 0, "deployTimestamp": 0 }
 ///         }
 ///
 ///         The numeric `chainId` key serves the viem/wagmi client; `caip2` + `namespace` let the CAIP-2-keyed
@@ -34,9 +36,14 @@ abstract contract DeployBase is CreateXScript {
 
     /// @dev Salt version of the exchange proxy and implementation ONLY. Separate from `SALT_VERSION` so the
     ///      planned fresh deploy rotates the exchange address without disturbing the forwarder or the mocks.
-    ///      Bumping this to "v2" is the intended way to land a storage-layout break: the new address has no
-    ///      code, so `Deploy.s.sol` takes the fresh-deploy branch and the old proxy is never touched.
-    string internal constant EXCHANGE_SALT_VERSION = "v1";
+    ///      Bumping this is the intended way to land a storage-layout break: the new address has no code,
+    ///      so `Deploy.s.sol` takes the fresh-deploy branch and the old proxy is never touched.
+    ///
+    ///      ⚠️ **"v2" since AO-514's gate extraction.** The exchange address on every chain therefore
+    ///      CHANGES on the next deploy, and nothing at the old address is migrated — the live testnet
+    ///      orders, offers and escrow stay where they are, on a proxy this source no longer describes.
+    ///      Every consumer (SDK, indexer, signer service, fronts) must re-point.
+    string internal constant EXCHANGE_SALT_VERSION = "v2";
 
     /// @dev Whether the implementation built from THIS commit may be installed onto an exchange proxy that
     ///      already has code, via `upgradeToAndCall`.
@@ -50,6 +57,14 @@ abstract contract DeployBase is CreateXScript {
     ///      the source tree, not of the operator running the script, so it belongs in the commit that makes
     ///      the layout incompatible. `Deploy.s.sol` and `UpgradeCalldata.s.sol` both refuse to produce an
     ///      in-place upgrade while it is `false`.
+    ///
+    ///      ⚠️ **Bumping `EXCHANGE_SALT_VERSION` to "v2" is NOT the moment to flip this back to `true`, and
+    ///      that bump is already made above.** After the bump the new exchange address has no code, so
+    ///      `Deploy.s.sol` takes the fresh-deploy branch and never reaches this guard — leaving it `false`
+    ///      costs the fresh deploy nothing. Flipping it belongs in a FOLLOW-UP commit made after that fresh
+    ///      deploy exists, because only then is the layout of the proxy sitting at the v2 address the one
+    ///      this source tree describes. Flip it earlier and the guard is open for a proxy nobody has
+    ///      deployed yet, against a layout nobody has checked.
     bool internal constant INPLACE_UPGRADE_ALLOWED = false;
 
     /// @dev Human-readable refusal reason, shared by both scripts so the two never drift.
@@ -62,11 +77,14 @@ abstract contract DeployBase is CreateXScript {
     // Resolved during the run; written on save.
     address internal exchangeProxy;
     address internal exchangeImpl;
+    address internal primarySalesProxy;
+    address internal primarySalesImpl;
     address internal forwarder;
     address internal usdc;
     address internal rwa;
     address internal kycSigner;
     address internal feeSigner;
+    address internal settlementSigner;
     address internal operator;
     address internal relayer;
     address internal admin;
@@ -89,6 +107,10 @@ abstract contract DeployBase is CreateXScript {
     /// @dev The salt version that applies to `name`. Per-component so one address can be rotated alone;
     ///      see `EXCHANGE_SALT_VERSION`. Matching on the exact labels rather than a prefix keeps a typo in a
     ///      label from silently inheriting the default version and computing an unrelated address.
+    ///
+    ///      `AsseteraPrimarySales.*` deliberately has NO version of its own: it has never been deployed, so
+    ///      there is no address to rotate away from and nothing a bump could rescue. Give it one at the
+    ///      first storage-layout break AFTER it is live, not before.
     function _saltVersion(string memory name) internal pure returns (string memory) {
         bytes32 h = keccak256(bytes(name));
         if (h == keccak256("AsseteraExchange.proxy") || h == keccak256("AsseteraExchange.impl")) {
@@ -179,9 +201,11 @@ abstract contract DeployBase is CreateXScript {
         if (usdc != address(0)) vm.serializeAddress(c, "MockUSDC", usdc);
         if (rwa != address(0)) vm.serializeAddress(c, "MockRWA", rwa);
         vm.serializeAddress(c, "Forwarder", forwarder);
+        vm.serializeAddress(c, "AsseteraPrimarySales", primarySalesProxy);
         string memory cJson = vm.serializeAddress(c, "AsseteraECS", exchangeProxy);
 
         string memory im = "implementations";
+        vm.serializeAddress(im, "AsseteraPrimarySales", primarySalesImpl);
         string memory imJson = vm.serializeAddress(im, "AsseteraECS", exchangeImpl);
 
         (uint256 deployBlock, uint256 deployTimestamp) = _provenance(proxyCreated);
@@ -192,6 +216,10 @@ abstract contract DeployBase is CreateXScript {
         vm.serializeAddress(m, "operator", operator);
         vm.serializeAddress(m, "kycSigner", kycSigner);
         vm.serializeAddress(m, "feeSigner", feeSigner);
+        // ⚠️ TODO(AO-520) — today this is the same key as `feeSigner`/`kycSigner` unless the operator
+        //    overrides it; AO-520 provisions a distinct settlement key. Recorded here so an operator can
+        //    see WHICH key holds SETTLEMENT_OPERATOR_ROLE without reading the chain.
+        vm.serializeAddress(m, "settlementSigner", settlementSigner);
         vm.serializeAddress(m, "relayer", relayer);
         vm.serializeUint(m, "deployBlock", deployBlock);
         string memory mJson = vm.serializeUint(m, "deployTimestamp", deployTimestamp);
