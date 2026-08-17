@@ -566,7 +566,10 @@ event OfferSettled(uint256 indexed id, address indexed by, uint256 makerReceived
 ### Primary sales — a second contract at a second address
 
 `AsseteraPrimarySales` is the **primary market**: a buyer's first acquisition of an asset, settled
-against a third-party venue (Dinari, Backed, …) or, later, against our own mint. It is a separate
+against a venue — a third party's contract (Dinari, Backed, …) or, later, the per-token sale
+contract fronting our own issuance. **There is one settlement family, not two**: our own issuance
+goes down the same code path as everybody else's, because to this router a sale contract is an
+address in a signed intent like any other venue. It is a separate
 UUPS proxy from `AsseteraECS` — separate pause lever, separate audit scope, separate blast radius —
 so **its events arrive from a different address and must be subscribed separately**. Not yet
 deployed to any network at the time of writing; there is no row for it in the address table at the
@@ -599,11 +602,15 @@ Three things follow for an indexer:
 | Value | Name |
 |---|---|
 | 0 | `None` — never gated, never accepted; a zero action is an unset field |
-| 1 | `SettleVenue` — settlement against a third-party venue (family S2) |
-| 2 | `SettleMint` — settlement by minting, where we hold the minting right (family S1). KYC-gated from `initialize` already, but **no entry point exists yet** — no event carries this ordinal today |
+| 1 | `SettleVenue` — a venue settlement through the constrained executor. **The only reachable ordinal**, and the one every settlement runs under, including our own issuance |
+| 2 | `SettleMint` — **RESERVED and unreachable.** `settlePrimary` hardcodes ordinal 1 and is the only settlement entry point, so no transaction can run under this ordinal and **no event can carry it**. Held because subscribing to our own issuance may later warrant different compliance treatment even though it uses the same code path; keeping the ordinal means that distinction costs no renumbering |
 
 Ordinals are append-only (the signer service signs the ordinal). `Action.SettleVenue` here and
 `Action.Place` on the exchange are both ordinal 1 and have nothing to do with each other.
+
+⚠️ **Do not build a branch on ordinal 2.** An indexer that treats it as a second settlement shape
+is coding against a design this contract does not have; if it ever becomes reachable it will be
+announced as a schema change here first.
 
 #### Role constants (`AsseteraPrimarySales`)
 
@@ -630,9 +637,9 @@ event PrimarySettled(address indexed buyer, address indexed assetToken, address 
 |---|---|
 | `buyer` | the party debited and delivered to; resolved actor (`_msgSender()`), not necessarily `tx.from` — see [§6](#actor-resolution-erc-2771-meta-tx). Always equals the signed `intent.buyer`; nobody settles on somebody else's behalf |
 | `assetToken` | the asset the buyer ends up holding. ⚠️ **may be a claim token rather than the final instrument** — see below |
-| `venue` | the address that was called. In the mint family (S1, not yet implemented) this will be the minted token itself, so the field is never zero and no family discriminator is needed |
+| `venue` | the address that was called. For our own issuance this is the **per-token sale contract**, never the token itself — the router holds no minting right and calls no token directly. Never zero, and never either of the two settled tokens (`VenueIsASettledToken`) |
 | `assetDelivered` | **measured** `assetToken` balance delta on `buyer` across the venue call. Asserted `>= intent.minAssetOut` or the whole transaction reverts (`InsufficientAssetDelivered`) |
-| `settlementToken` | the currency debited. Enforced equal to the fee attestation's `feeToken` (`SettlementTokenMismatch`), so the fee never comes out of what the buyer receives |
+| `settlementToken` | the currency debited. Enforced equal to the fee attestation's `feeToken`, so the fee never comes out of what the buyer receives. ⚠️ **The revert is the shared `IFeeGate.FeeTokenNotALeg(address feeToken)`, not a primary-specific error.** A primary sale has one currency leg, so it passes the settlement token in both leg positions of the estate-wide fee check and the shared leg test collapses to the strict denomination rule. The `SettlementTokenMismatch` error an earlier revision raised here **is gone from the ABI** — a selector-based decoder still carrying it will never match |
 | `venueIn` | **measured** settlement token the venue actually consumed. **May be less than the quote** the buyer signed (`intent.venueQuoteIn`) — a venue that rounds a fill down is normal, not an error |
 | `refund` | `intent.venueQuoteIn - venueIn`, returned to `buyer` in the same transaction. The router keeps no standing balance (`RouterBalanceChanged` guards it) |
 | `fee` | settlement token paid to `feeCollector`. Charged **on top of** the quote, not carved out of it. Cross-checked on-chain against `FeeMath.feeAmount(venueQuoteIn, feeAtt.takerFeeBps)` — **floored**, the same rounding every other fee in the estate uses — so the settlement signer and the fee signer must agree on one number |
@@ -650,11 +657,17 @@ from whatever the venue chose to emit**. That is why the indexer needs **no per-
 one signature covers every venue we will ever settle against, and a lying venue's own logs are
 irrelevant to what this event reports.
 
-**No family discriminator.** Venue settlement (S2) and mint settlement (S1) emit the same event —
-the activity-ledger leg is identical either way. The family is recoverable from the same
-transaction: `IntentConsumed` is emitted from the same call, with the gated `action` ordinal and the
-**same `nonce`**, so the two join on `(buyer, nonce)` with no ambiguity. Today only S2 emits, since
-`MintSettler` is still a stub.
+**No family discriminator, because there is only one family.** Every settlement this router
+performs runs through the same constrained executor and emits this one event, whether the venue is
+a third party's contract or the per-token sale contract fronting our own issuance. There is no
+second settler and no mint-specific event to wait for; a stub for one existed during development
+and was deleted before this contract's first release. **Do not build a family discriminator, and
+do not hold back on modelling primary sales in the expectation of a second event shape.**
+
+What distinguishes one settlement from another is the venue address, which the catalogue already
+maps to a supplier. `IntentConsumed` is emitted from the same call with the **same `nonce`**, so the
+two join on `(buyer, nonce)` with no ambiguity, but its `action` ordinal is `1` on every settlement
+and carries no information.
 
 ⚠️ **`assetToken` may be a CLAIM TOKEN, not the final instrument — open modelling question,
 AO-550.** Every supplier we settle against today is atomic, and where a supplier's mint is genuinely
@@ -688,7 +701,7 @@ event IntentConsumed(address indexed buyer, uint8 indexed action, uint256 nonce)
 | Field | Description |
 |---|---|
 | `buyer` | the intent's buyer, which is also the actor (`_msgSender()`) |
-| `action` | the primary-sale `Action` ordinal the intent was consumed under — **this contract's ordinals** (`1 = SettleVenue`, `2 = SettleMint`), not the exchange's |
+| `action` | the primary-sale `Action` ordinal the intent was consumed under — **this contract's ordinals**, not the exchange's. **Always `1` (`SettleVenue`)**: it is the only reachable ordinal, so this field is constant today and a decoder should not branch on it |
 | `nonce` | the intent's single-use nonce, now burned |
 
 A settlement intent was verified and its single-use nonce marked spent. Emitted **unconditionally**
@@ -877,7 +890,13 @@ The contract resolves identity via `_msgSender()` (ERC-2771), so a relayed call'
 
 ## 7. Errors (for revert-reason decoding)
 
-All reverts are custom errors (no revert strings). 4-byte selectors, for API layers that need to decode `eth_call`/`eth_estimateGas` revert data:
+All reverts are custom errors (no revert strings). 4-byte selectors, for API layers that need to decode `eth_call`/`eth_estimateGas` revert data.
+
+⚠️ **Two tables.** The first is `AsseteraECS`; the second is `AsseteraPrimarySales`, which is a
+different contract at a different address with its own error set. A few selectors appear in both
+because the two share the fee and attestation-binding code.
+
+### `AsseteraECS`
 
 | Error | Selector |
 |---|---|
@@ -916,6 +935,47 @@ All reverts are custom errors (no revert strings). 4-byte selectors, for API lay
 | `FeeTtlTooLong()` | `0x1a2d6586` |
 | `FeeNonceUsed()` | `0xd77d3a82` |
 | `FeeBadSigner()` | `0x26aa3fdd` |
+| `FeeTokenNotALeg(address)` | `0x11488bf1` — the fee attested in a token that is neither leg of the trade |
+
+### `AsseteraPrimarySales`
+
+Emitted from the **primary-sales proxy**, not the exchange. Everything below is reachable on
+`settlePrimary`.
+
+| Error | Selector | Meaning |
+|---|---|---|
+| `FeeTokenNotALeg(address)` | `0x11488bf1` | ⚠️ **the fee attested in a token other than `intent.settlementToken`.** A primary sale has one currency leg, so the shared leg test becomes the strict denomination rule. **This is the error a `settlementToken`/`feeToken` disagreement raises.** An earlier revision raised `SettlementTokenMismatch()` (`0x913c5c21`) here; that error **is not in the ABI** and will never be returned |
+| `InsufficientAssetDelivered(uint256,uint256)` | `0xd2c62759` | measured delivery to the buyer was below the signed `intent.minAssetOut`. The venue underfilled or delivered nothing |
+| `SettlementPullMismatch(uint256,uint256)` | `0x75310e1b` | the settlement currency actually received by the router differed from what it debited. Fee-on-transfer or rebasing currency, refused rather than absorbed |
+| `RouterBalanceChanged()` | `0xa3e853d4` | the router did not end the call with the balances it started with. Should never be seen; treat as an alertable invariant breach, not a user error |
+| `VenueCallFailed()` | `0xc2e441e5` | the venue reverted. **Its revert data is not propagated**, so there is no inner reason to decode; diagnose from the venue's own tooling |
+| `VenueIsASettledToken()` | `0x01d03f44` | the intent named one of the two settled tokens as the venue |
+| `BuyerFeeMismatch(uint256,uint256)` | `0x3e7e427a` | the attested fee did not equal `FeeMath.feeAmount(venueQuoteIn, takerFeeBps)`. The fee signer and the settlement signer disagree on the number |
+| `PerTxCapExceeded(address,uint256,uint256)` | `0x4edf5886` | the gross pull exceeded the admin cap for that currency. ⚠️ **An unset cap is zero and zero means closed**, so this is also what an unconfigured currency returns |
+| `TokenDecimalsUnavailable(address)` | `0x9cf5ab50` | cap configuration could not read `decimals()` on the currency |
+| `TokenDecimalsImplausible(address,uint256)` | `0x623f73cd` | `decimals()` returned a value outside the accepted band |
+| `MakerFeeNotSupported()` | `0x0b7d56e6` | the fee attestation carried a non-zero `makerFeeBps`. This router charges the buyer side only |
+| `MaxSettlementTooLow()` | `0x5fd4bec1` | the signed `maxSettlementIn` cannot cover `venueQuoteIn + fee` |
+| `ZeroVenueQuote()` | `0x0754d23a` | `venueQuoteIn` was zero. Its own error rather than the shared `ZeroAmount()`, so a zero quote is distinguishable from a zero elsewhere in the intent |
+| `FeeCollectorMismatch()` | `0x2c75e203` | the fee attestation and the intent named different collectors, both allowlisted |
+| `CalldataHashMismatch()` | `0xcb8a4609` | the venue calldata passed in did not hash to the value the buyer and the operator signed |
+| `SelectorMismatch()` | `0x42214767` | the venue calldata's leading 4 bytes were not the signed selector |
+| `IntentBuyerMismatch()` | `0xb5fccf4d` | the resolved actor was not `intent.buyer`. Nobody settles on somebody else's behalf |
+| `IntentExpired()` | `0x408b2234` | the intent's deadline has passed |
+| `IntentTtlTooLong()` | `0xc404a1ea` | the intent's TTL exceeded the accepted window |
+| `IntentNonceUsed()` | `0xbf493317` | the intent nonce was already burned. **Third namespace**, not the KYC or fee one |
+| `IntentBadSigner()` | `0x5055cade` | the operator signature did not recover to a `SETTLEMENT_OPERATOR_ROLE` holder |
+| `BuyerConsentBadSignature()` | `0xf97769d0` | the buyer's signature over the same digest did not validate (ERC-1271 aware, so a Safe is a valid buyer) |
+| `HandshakeTransferFailed(address,uint256)` | `0x6e6a21f1` | an admin handshake transfer failed |
+| `ParamsHashMismatch()` | `0xb1561fdb` | shared with the exchange; an attestation's `paramsHash` did not bind to the intent |
+| `SameToken()` | `0x201b580a` | shared; asset and settlement token were the same address |
+| `ZeroAmount()` | `0x1f2a2005` | shared |
+| `ZeroAddress()` | `0xd92e233d` | shared |
+| `InvalidFee()` | `0x58d620b3` | shared; the attested bps was outside the accepted bound |
+| `FeeCollectorNotAllowed(address)` | `0x4eda3f1b` | shared code, **separate allowlist** — this router's starts empty and the exchange's entries do not carry over |
+
+The KYC and fee attestation errors (`Kyc*`, `Fee*` in the table above) are raised from the same
+shared code on this contract too, with the same selectors.
 
 ---
 
