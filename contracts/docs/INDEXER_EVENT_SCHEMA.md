@@ -6,6 +6,7 @@
 **Meta-tx:** ERC-2771 (see [Actor resolution](#actor-resolution-erc-2771-meta-tx) — do not key identity off `tx.from`)
 **Source of truth:** `src/AsseteraECS.sol`. This document is generated from that file directly (event/error signatures hashed independently), not from the checked-in `abi/AsseteraECS.json`, which is stale — see [Schema versioning](#schema-versioning--breaking-change) below.
 **Second contract:** the primary market is `AsseteraPrimarySales` (`src/primary/AsseteraPrimarySales.sol`) — a **separate proxy at a separate address**, with its own EIP-712 domain, its own roles, its own nonce namespaces and its own events. Its event set is documented in [§4 · Primary sales](#primary-sales--a-second-contract-at-a-second-address). ⚠️ **Do not point one address filter at every event in this document.**
+**Third kind of address:** each of our own primary offerings has its own **per-offering sale contract**, `AsseteraIssuanceVenue` — one deployment per token, not upgradeable, not in any deployment manifest, discovered from the catalogue's `primary_sale_contract` column. Its events are documented in [§4 · Issuance venues](#issuance-venues--a-third-kind-of-address-one-per-offering). A settlement is fully described by the router's `PrimarySettled` whether the venue is ours or a third party's, so subscribing to venues is a reconciliation choice rather than a requirement.
 
 | Network | Chain ID | Proxy address | Forwarder |
 |---|---|---|---|
@@ -776,6 +777,156 @@ balance — a bare value transfer to it still reverts — so there is no "sweep"
 and no accumulating balance to reconcile. Nothing about a settlement flows through this event;
 it exists for the audit trail of an operational one-off.
 
+### Issuance venues — a THIRD kind of address, one per offering
+
+`AsseteraIssuanceVenue` (`src/primary/sale/AsseteraIssuanceVenue.sol`) is the per-token primary
+sale contract that fronts **our own** issuance. It is deployed **once per offering**, with its
+settlement currency and its asset token fixed at deployment, and it does one thing: take
+settlement currency from the router and mint the asset to the buyer at a price a compliance
+officer set.
+
+To `AsseteraPrimarySales` it is simply a venue — an address in a signed intent, called with
+calldata bound by hash and selector, judged on measured balance deltas — so **nothing about
+indexing a settlement changes when the venue is one of ours**. `PrimarySettled.venue` is the
+venue's address, and everything the activity-ledger leg needs is already on that event.
+
+Four things follow for an indexer:
+
+- **There is no fixed address list.** Unlike the exchange and the router, venues are created as
+  offerings are onboarded. The authority for "which address is the sale contract for this
+  offering" is the catalogue's `primary_sale_contract` column, not this document and not a
+  deployment manifest. A venue address never appears in
+  `packages/sdk/src/deployments/<chainId>.json`.
+- **It is NOT a proxy and is NOT upgradeable.** The address is the implementation. A new price
+  band, a different shape, or a second round means a **new venue at a new address**, with the old
+  one paused. Do not assume an address's behaviour is stable by upgrading; assume it is stable
+  because it cannot change.
+- **Its events are optional for the settlement leg and useful for reconciliation.** A settlement
+  is fully described by `PrimarySettled` from the router. `IssuanceMinted` below is the same
+  money seen from the other side of the same transaction, and the two joining on the transaction
+  hash is a cheap correctness check: `PrimarySettled.venueIn` must equal
+  `IssuanceMinted.settlementIn`, and `PrimarySettled.assetDelivered` must be at least
+  `IssuanceMinted.assetMinted`.
+- **`ProceedsWithdrawn` is not a trade.** Settlement currency accumulates in the venue and the
+  issuer withdraws it later, so a venue's balance is not a settlement obligation and a withdrawal
+  is not a fill. Any balance-reconciliation job over a venue address needs both events or it will
+  report a hole the size of every withdrawal.
+
+#### Role constants (`AsseteraIssuanceVenue`)
+
+| Role | Value |
+|---|---|
+| `DEFAULT_ADMIN_ROLE` | `0x0000000000000000000000000000000000000000000000000000000000000000` — role administration, the purchase cap, and `unpause` |
+| `RATE_SETTER_ROLE` | `keccak256("RATE_SETTER_ROLE")` — may move the price within immutable bounds and may do nothing else |
+| `PAUSER_ROLE` | `keccak256("PAUSER_ROLE")` — may stop purchases; ⚠️ **may not restart them** |
+| `TREASURY_ROLE` | `keccak256("TREASURY_ROLE")` — the issuer: withdraws proceeds, rescues a stray token |
+
+⚠️ These are **the venue's own roles**, unrelated to the router's. A `RoleGranted` from a venue
+address says nothing about the router.
+
+---
+
+### `IssuanceMinted`
+
+```solidity
+event IssuanceMinted(address indexed buyer, address indexed assetToken, uint256 assetMinted, address settlementToken, uint256 settlementIn, uint256 unitPrice);
+```
+- **topic0:** `0x648a6b6a3ea393436e5059f30c1efbd0ea17293356ee55fab4a2cbb6c2b4a9b5`
+- **Indexed:** `buyer`, `assetToken`
+- **Data:** `assetMinted`, `settlementToken`, `settlementIn`, `unitPrice`
+- **Emitted by:** an `AsseteraIssuanceVenue`, **not** the router and **not** the exchange
+
+| Field | Description |
+|---|---|
+| `buyer` | who received the asset. Named by the router in the venue calldata; the router separately asserts that this is the buyer named in four signatures, so a mismatch cannot settle |
+| `assetToken` | the asset minted. Fixed at this venue's deployment |
+| `assetMinted` | ⚠️ **the quantity ISSUED, not the buyer's measured balance delta.** The venue asserts the delta is at least this and then reports what it created, so an unrelated inflation of the buyer's existing position (an upward rebase inside the call) does not enter the offering's issuance record. The router's `PrimarySettled.assetDelivered` is the measured number |
+| `settlementToken` | the currency taken. Fixed at this venue's deployment |
+| `settlementIn` | what the purchase actually cost, measured as the venue's own balance delta over the pull. At most what the router authorised |
+| `unitPrice` | the price in force when the purchase executed: **the cost of ONE WHOLE asset token, in the settlement token's smallest unit.** With a 6-decimal currency and an 18-decimal asset, `12500000` means 12.50 per token |
+
+⚠️ **Units.** `assetMinted` is in the asset token's decimals, `settlementIn` and `unitPrice` are
+both in the **settlement** token's decimals. The identity an indexer can check is
+`settlementIn ≈ assetMinted * unitPrice / 10 ** assetDecimals`, rounded up. It is exact whenever
+the venue charged the full offer, which is always the case when the settlement token has fewer
+decimals than the asset.
+
+---
+
+### `UnitPriceSet`
+
+```solidity
+event UnitPriceSet(uint256 previousUnitPrice, uint256 newUnitPrice);
+```
+- **topic0:** `0x331ae672633d644ea349b76b039faa0137315afd2db07030227a7413ce1f048e`
+- **Indexed:** none
+- **Data:** `previousUnitPrice`, `newUnitPrice`
+- **Emitted by:** an `AsseteraIssuanceVenue`
+
+The offering was repriced by a `RATE_SETTER_ROLE` holder. Both values are in settlement-token
+units. **Emitted once at deployment too**, with `previousUnitPrice = 0`, which is the opening
+price and the only time zero appears in this event — the price itself can never be zero, because
+the immutable floor is greater than zero.
+
+A repricing is not retroactive and is not coordinated with intents in flight: an intent signed at
+the old price either still clears its signed delivery floor or reverts.
+
+---
+
+### `PurchaseCapSet`
+
+```solidity
+event PurchaseCapSet(uint256 wholeUnits, uint256 rawCap, uint8 decimals);
+```
+- **topic0:** `0x3d970bcaa46e2d36c05622ac4cde436d08bc804c16586bf9215c72d23995659b`
+- **Indexed:** none
+- **Data:** `wholeUnits`, `rawCap`, `decimals`
+- **Emitted by:** an `AsseteraIssuanceVenue`
+
+The venue's own per-purchase cap on settlement currency, the analogue of the router's
+`SettlementCapSet` and sized the same way: a bound on arithmetic and decimals **bugs**, not a loss
+limit. Also emitted once at deployment. ⚠️ **A cap of zero means "this venue cannot sell at all",
+not "unlimited"**, so a venue deployed or set to zero is closed.
+
+The two caps are independent: the router's is per settlement currency across every venue, this one
+is per purchase within one offering.
+
+---
+
+### `ProceedsWithdrawn`
+
+```solidity
+event ProceedsWithdrawn(address indexed to, uint256 amount);
+```
+- **topic0:** `0x0f2fb75cc1977a496e94837f859e957f68e26e70dc1b75d9945ee92ae57969ba`
+- **Indexed:** `to`
+- **Data:** `amount`
+- **Emitted by:** an `AsseteraIssuanceVenue`
+
+Settlement currency leaving the venue for the issuer. ⚠️ **Not a trade and not a settlement.**
+Proceeds accumulate in the venue rather than being forwarded during a purchase, so this is the
+only way the settlement currency legitimately leaves, and any reconciliation over a venue's
+balance must net it off. The destination is chosen per call and never stored.
+
+---
+
+### `TokensRescued`
+
+```solidity
+event TokensRescued(address indexed token, address indexed to, uint256 amount);
+```
+- **topic0:** `0x77023e19c7343ad491fd706c36335ca0e738340a91f29b1fd81e2673d44896c4`
+- **Indexed:** `token`, `to`
+- **Data:** `amount`
+- **Emitted by:** an `AsseteraIssuanceVenue`
+
+A token that is **not** the settlement currency being swept out of the venue by
+`TREASURY_ROLE`. The venue never takes custody of the asset it mints and holds nothing but its
+proceeds, so anything this event names arrived by accident. The settlement currency is refused by
+name here and must leave through `ProceedsWithdrawn`, so one event means one thing.
+
+---
+
 ---
 
 ## 5. Schema versioning — breaking change
@@ -976,6 +1127,34 @@ Emitted from the **primary-sales proxy**, not the exchange. Everything below is 
 
 The KYC and fee attestation errors (`Kyc*`, `Fee*` in the table above) are raised from the same
 shared code on this contract too, with the same selectors.
+
+### `AsseteraIssuanceVenue`
+
+Emitted from a **per-offering issuance venue**, not from the router. ⚠️ A settlement that fails
+inside the venue reaches the caller as the router's `VenueCallFailed()` (`0xc2e441e5`) with the
+inner reason **not propagated**, so these selectors are what a trace shows and what a direct call
+to the venue returns — they are not what `settlePrimary` reverts with.
+
+| Error | Selector | Meaning |
+|---|---|---|
+| `CallerNotRouter(address)` | `0xfb217bcd` | somebody other than the configured router called `purchase`. There is exactly one legitimate caller and it is fixed at deployment, so this is also what a hostile token attempting reentrancy gets |
+| `PurchaseCapExceeded(uint256,uint256)` | `0xa48e687d` | the purchase asks to spend more than the venue's per-purchase cap. ⚠️ **A zero cap means the venue cannot sell**, so this is also what an unopened or deliberately closed venue returns |
+| `NothingToMint(uint256,uint256)` | `0xd668208c` | the payment is too small to buy a single unit at the current price. Refused rather than taken for nothing. Unreachable when the settlement token has fewer decimals than the asset |
+| `InsufficientAssetOut(uint256,uint256)` | `0x7e529415` | the current price yields less than the caller's floor: the offering was repriced between the intent being signed and the transaction landing |
+| `SettlementPullMismatch(uint256,uint256)` | `0x75310e1b` | the venue's measured balance delta over the pull was not the amount charged. Same signature and selector as the router's, raised for the same reason: a fee-on-transfer or deflationary settlement currency **cannot be sold in at all** |
+| `AssetDeliveryShortfall(uint256,uint256)` | `0x47f51046` | the mint did not put the quoted quantity in the buyer's hands — a `mint` that no-ops, one that returns `false` rather than reverting, an asset that charges a transfer fee, or a downward rebase inside the call |
+| `ChargeExceedsAuthorised(uint256,uint256)` | `0xcbed1e84` | the venue computed a charge above the amount offered. Unreachable by construction and guarded anyway; treat as an alertable invariant breach, not a user error |
+| `UnitPriceOutOfBounds(uint256,uint256,uint256)` | `0x488c8017` | a repricing outside the bounds fixed at deployment. Both bounds are inclusive and the floor is always greater than zero |
+| `PriceBoundsInvalid(uint256,uint256)` | `0x7a845289` | deployment-time only: a zero price floor, or a floor above the ceiling |
+| `RescueOfSettlementToken()` | `0xf3a72631` | `rescue` was pointed at the settlement currency. Proceeds leave through `withdraw` |
+| `TokenDecimalsImplausible(address,uint256)` | `0x623f73cd` | deployment-time only; same selector as the router's |
+| `SameToken()` | `0x201b580a` | deployment-time only: the settlement currency and the asset are the same address |
+| `ZeroAddress()` | `0xd92e233d` | shared |
+| `ZeroAmount()` | `0x1f2a2005` | shared |
+| `EnforcedPause()` | `0xd93c0665` | OpenZeppelin `Pausable`: this offering is stopped. The router is unaffected |
+| `AccessControlUnauthorizedAccount(address,bytes32)` | `0xe2517d3f` | OpenZeppelin `AccessControl`. ⚠️ **Also what a purchase returns when the ISSUER never granted the venue the minting right on the asset token** — the account named is the venue and the role is the token's minter role |
+| `ReentrancyGuardReentrantCall()` | `0x3ee5aeb5` | OpenZeppelin `ReentrancyGuard`, shared by `purchase`, `withdraw` and `rescue` |
+
 
 ---
 
