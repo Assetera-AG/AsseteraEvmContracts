@@ -12,11 +12,21 @@ export interface Deployment {
   contracts: Record<string, Address>;
   /** UUPS implementation addresses, for upgrade diffing. */
   implementations: Record<string, Address>;
+  /**
+   * Who held which role **at initialization**.
+   *
+   * ⚠️ This is not a live view of the chain. Roles granted or revoked after the deploy never appear
+   * here, and on a long-lived deployment they will have been. Treat it as provenance, not as access
+   * control: if you need to know who holds a role right now, ask the contract.
+   */
   metadata: {
     deployer: Address;
     admin: Address;
     operator: Address;
     kycSigner: Address;
+    feeSigner: Address;
+    /** Absent on records written before the primary-sales router existed. */
+    settlementSigner?: Address;
     relayer: Address;
     deployBlock: number;
     deployTimestamp: number;
@@ -43,13 +53,33 @@ export function getContractAddress(chainId: number, name: string): Address | und
 /**
  * The AsseteraECS (Execution, Clearing & Settlement) proxy address for a chain.
  *
+ * Prefer this over `getContractAddress(chainId, "AsseteraECS")`: a typed accessor is the thing a
+ * rename has to break visibly, whereas a string key silently returns `undefined` forever.
+ *
  * @example
  * ```ts
- * const ecs = getEcsAddress(80002); // 0x58c3Fb1B69ca985A5461CcEfFd0Fe590b653F213
+ * const ecs = getEcsAddress(80002);
  * ```
  */
 export function getEcsAddress(chainId: number): Address | undefined {
   return getContractAddress(chainId, "AsseteraECS");
+}
+
+/**
+ * The AsseteraPrimarySales router proxy address for a chain.
+ *
+ * ⚠️ A **different address** from {@link getEcsAddress}, with its own EIP-712 domain, its own roles
+ * and its own events. Do not point one address filter at both.
+ *
+ * `undefined` on a chain whose deployment record predates the router.
+ *
+ * @example
+ * ```ts
+ * const router = getPrimarySalesAddress(80002);
+ * ```
+ */
+export function getPrimarySalesAddress(chainId: number): Address | undefined {
+  return getContractAddress(chainId, "AsseteraPrimarySales");
 }
 
 /**

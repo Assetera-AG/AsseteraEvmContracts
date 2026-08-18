@@ -1,17 +1,40 @@
 # AsseteraECS — Interface & Event Schema (Indexer/API Reference)
 
-**Contract version:** `3.1.0` (`version()`)
+**Contract version:** `AsseteraECS` 4.0.0, `AsseteraPrimarySales` 1.0.0 (both from `version()` in source). ⚠️ This is the version this document describes, i.e. what is in this source tree. A chain reports whatever implementation is installed on it, which can lag; ask the chain, do not assume.
 **Solidity:** 0.8.28
 **Proxy pattern:** UUPS (ERC-1967) — index the **proxy** address; ABI/events come from the **implementation**
 **Meta-tx:** ERC-2771 (see [Actor resolution](#actor-resolution-erc-2771-meta-tx) — do not key identity off `tx.from`)
 **Source of truth:** `src/AsseteraECS.sol`. This document is generated from that file directly (event/error signatures hashed independently), not from the checked-in `abi/AsseteraECS.json`, which is stale — see [Schema versioning](#schema-versioning--breaking-change) below.
 **Second contract:** the primary market is `AsseteraPrimarySales` (`src/primary/AsseteraPrimarySales.sol`) — a **separate proxy at a separate address**, with its own EIP-712 domain, its own roles, its own nonce namespaces and its own events. Its event set is documented in [§4 · Primary sales](#primary-sales--a-second-contract-at-a-second-address). ⚠️ **Do not point one address filter at every event in this document.**
 
-| Network | Chain ID | Proxy address | Forwarder |
-|---|---|---|---|
-| Polygon Amoy (testnet) | 80002 | `0x8B75B0c5Dc41Fca81c87Af0cbBA9Cf764aFE8616` | `0xc2D759d37bbfbE5a73b60d1cD4CFFd1B73CC4d7F` |
+### Addresses
 
-Source: `deployments/80002.json`. Confirm the current implementation address via `eip1967.proxy.implementation` slot or `proxiableUUID()` before assuming this doc's function set is deployed on a given network.
+**Addresses are not listed in this document.** They live in `packages/sdk/src/deployments/<chainId>.json`,
+one record per chain, written by the deploy script itself and shipped in the published SDK. Read them from
+there, not from prose:
+
+```ts
+import { getDeployment, getEcsAddress } from '@asseteragmbh/evm-contracts/contracts';
+
+const ecs       = getEcsAddress(chainId);                       // the exchange proxy
+const record    = getDeployment(chainId);
+const router    = record.contracts.AsseteraPrimarySales;        // a DIFFERENT address, see above
+const forwarder = record.contracts.Forwarder;
+const fromBlock = record.metadata.deployBlock;                  // where to start indexing
+```
+
+Non-TypeScript consumers can read the same JSON files directly; they are part of the package.
+
+This section used to carry a hardcoded table. Every address in it was wrong: the proxy and forwarder listed
+matched nothing in the repository, one of the two deployed chains was missing entirely, and the file path it
+cited as its source had moved. That is the expected end state for addresses written into prose, which is why
+there is no longer a table to update. A proxy address also survives implementation upgrades but **not** a
+fresh deploy at a new salt, so treat any address you have cached as valid only for the deployment record it
+came from.
+
+⚠️ Confirm the current implementation via the `eip1967.proxy.implementation` slot or `proxiableUUID()` before
+assuming this document's function set is what is deployed on a given network. The record names the
+implementation the deploy script installed, not necessarily what is live now.
 
 ---
 
@@ -880,7 +903,7 @@ venue" lever is worth keeping active. `cancelOrderForUser`/`cancelOfferForUser`
 
 ## 6. Actor resolution (ERC-2771 meta-tx)
 
-The contract resolves identity via `_msgSender()` (ERC-2771), so a relayed call's EVM-level `tx.origin`/outer `msg.sender` will be the **trusted forwarder** (`0xc2D759d37bbfbE5a73b60d1cD4CFFd1B73CC4d7F` on Amoy), not the actual user. **Never key user identity off the transaction's `from` field** when the forwarder is in play — always use the address embedded in the event itself (`maker`, `taker`, `account`, `by`, `proposedBy`, `buyer`, etc.), which is already correctly resolved by the contract before emission.
+The contract resolves identity via `_msgSender()` (ERC-2771), so a relayed call's EVM-level `tx.origin`/outer `msg.sender` will be the **trusted forwarder** (`contracts.Forwarder` in the chain's deployment record), not the actual user. **Never key user identity off the transaction's `from` field** when the forwarder is in play — always use the address embedded in the event itself (`maker`, `taker`, `account`, `by`, `proposedBy`, `buyer`, etc.), which is already correctly resolved by the contract before emission.
 
 `AsseteraPrimarySales` resolves identity the same way, through the **same** trusted forwarder, so a gasless primary sale works exactly like a gasless order and `PrimarySettled.buyer` / `IntentConsumed.buyer` are already resolved. The contract additionally requires `intent.buyer == _msgSender()` (`IntentBuyerMismatch`), so nobody settles on somebody else's behalf.
 
