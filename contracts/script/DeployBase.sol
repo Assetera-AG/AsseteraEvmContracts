@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 import {CreateXScript} from "createx-forge/script/CreateXScript.sol";
-import {console2} from "forge-std/Script.sol";
+import {console2, VmSafe} from "forge-std/Script.sol";
 import {DeploymentFile} from "./DeploymentFile.sol";
 
 /// @title DeployBase
@@ -234,7 +234,24 @@ abstract contract DeployBase is CreateXScript {
         vm.serializeString(root, "implementations", imJson);
         string memory rootJson = vm.serializeString(root, "metadata", mJson);
 
-        vm.writeJson(rootJson, deploymentPath);
-        console2.log("Deployment written to:", deploymentPath);
+        // ⚠️ A DRY RUN MUST NOT TOUCH THE REAL RECORD. `forge script` without `--broadcast` still executes
+        //    this function, so the previous revision overwrote the committed deployment file with the
+        //    addresses of contracts that were never deployed — turning "let me check what this would do"
+        //    into a silent corruption of the SDK's source of truth. The file is what every consumer reads,
+        //    so the damage outlives the terminal it happened in.
+        //
+        //    The dry-run output still goes somewhere, because seeing it is the point of a dry run: `out/` is
+        //    build output and gitignored, so it can be diffed against the real record without any chance of
+        //    being committed.
+        if (vm.isContext(VmSafe.ForgeContext.ScriptDryRun)) {
+            string memory dryPath = string.concat("out/deployment-", vm.toString(chainId), ".dryrun.json");
+            vm.writeJson(rootJson, dryPath);
+            console2.log("DRY RUN - the deployment record was NOT modified.");
+            console2.log("  would have written:", deploymentPath);
+            console2.log("  wrote preview to:  ", dryPath);
+        } else {
+            vm.writeJson(rootJson, deploymentPath);
+            console2.log("Deployment written to:", deploymentPath);
+        }
     }
 }
