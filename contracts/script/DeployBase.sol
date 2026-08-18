@@ -36,15 +36,18 @@ abstract contract DeployBase is CreateXScript {
     string internal constant SALT_VERSION = "v1";
 
     /// @dev Salt version of the exchange proxy and implementation ONLY. Separate from `SALT_VERSION` so the
-    ///      planned fresh deploy rotates the exchange address without disturbing the forwarder or the mocks.
-    ///      Bumping this is the intended way to land a storage-layout break: the new address has no code,
-    ///      so `Deploy.s.sol` takes the fresh-deploy branch and the old proxy is never touched.
+    ///      exchange address can be rotated without disturbing the forwarder or the mocks. Bumping this is
+    ///      the intended way to land a storage-layout break: the new address has no code, so `Deploy.s.sol`
+    ///      takes the fresh-deploy branch and the old proxy is never touched.
     ///
-    ///      ⚠️ **"v2" since AO-514's gate extraction.** The exchange address on every chain therefore
-    ///      CHANGES on the next deploy, and nothing at the old address is migrated — the live testnet
-    ///      orders, offers and escrow stay where they are, on a proxy this source no longer describes.
-    ///      Every consumer (SDK, indexer, signer service, fronts) must re-point.
-    string internal constant EXCHANGE_SALT_VERSION = "v2";
+    ///      ⚠️ **This counts rotations of the CURRENT label, and the label was renamed to `AsseteraECS.*`.**
+    ///      It reads "v1" because the `AsseteraECS.*` salt lineage starts here and has been rotated zero
+    ///      times — not because nothing came before. The predecessor lineage was labelled
+    ///      `AsseteraExchange.*` and reached "v2"; that number described a label this source no longer
+    ///      uses, and carrying it over would have made the constant claim a history this address does not
+    ///      have. Nothing at any earlier address is migrated: earlier orders, offers and escrow stay where
+    ///      they are, on proxies this source no longer describes.
+    string internal constant EXCHANGE_SALT_VERSION = "v1";
 
     /// @dev Whether the implementation built from THIS commit may be installed onto an exchange proxy that
     ///      already has code, via `upgradeToAndCall`.
@@ -115,7 +118,7 @@ abstract contract DeployBase is CreateXScript {
     ///      first storage-layout break AFTER it is live, not before.
     function _saltVersion(string memory name) internal pure returns (string memory) {
         bytes32 h = keccak256(bytes(name));
-        if (h == keccak256("AsseteraExchange.proxy") || h == keccak256("AsseteraExchange.impl")) {
+        if (h == keccak256("AsseteraECS.proxy") || h == keccak256("AsseteraECS.impl")) {
             return EXCHANGE_SALT_VERSION;
         }
         return SALT_VERSION;

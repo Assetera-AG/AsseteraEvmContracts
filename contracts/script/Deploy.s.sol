@@ -103,24 +103,28 @@ contract Deploy is DeployBase {
         // 3. Exchange implementation — CREATE2 keyed on the initcode, so unchanged bytecode maps to the same
         //    address (re-run is a true no-op) and changed bytecode yields a new impl (→ the upgrade path
         //    below). The forwarder is baked in as an immutable; the impl address is not consumer-facing.
-        //    ⚠️ The salt label below is deliberately still "AsseteraExchange.impl" — see the proxy salt note.
+        //    ⚠️ The salt label below is FROZEN from the first deploy that uses it — see the proxy salt note.
         (exchangeImpl, created) = _deploy2(
-            deployer, "AsseteraExchange.impl", abi.encodePacked(type(AsseteraECS).creationCode, abi.encode(forwarder))
+            deployer, "AsseteraECS.impl", abi.encodePacked(type(AsseteraECS).creationCode, abi.encode(forwarder))
         );
         console2.log(created ? "AsseteraECS impl deployed:" : "AsseteraECS impl reused: ", exchangeImpl);
 
         // 4. Exchange proxy — CREATE3 stable address, initialized atomically in the constructor (initData is
         //    part of the initcode, but CREATE3 makes the address initcode-independent, so there is no
         //    front-run window and the address is identical across chains and across future upgrades).
-        //    ⚠️ DO NOT RENAME THE SALT LABEL to "AsseteraECS.proxy" (AC-837). `_salt` hashes this string
-        //    into the CREATE3 salt, so the label IS the address, and a rename silently computes a different
-        //    one. Same reasoning for the ".impl" CREATE2 label above. The labels move to "AsseteraECS.*"
-        //    only at the planned production fresh deploy.
-        //    ⚠️ The address this computes has ALREADY moved off the old Amoy/Sepolia proxy at
-        //    0x58c3Fb1B…F213: `EXCHANGE_SALT_VERSION` is "v2" since AO-514's gate extraction, so the next
-        //    run takes the fresh-deploy branch below rather than no-op'ing on the live proxy. Nothing at the
-        //    old address is migrated — see the note on that constant.
-        bytes32 proxySalt = _salt(deployer, "AsseteraExchange.proxy");
+        //    ⚠️ **THE SALT LABEL IS THE ADDRESS. DO NOT RENAME IT.** `_salt` hashes this string into the
+        //    CREATE3 salt, so changing so much as its capitalisation computes a different address, silently
+        //    and with no error anywhere. The same applies to the ".impl" CREATE2 label above.
+        //
+        //    The labels were renamed once, from "AsseteraExchange.*", deliberately and at the only moment
+        //    it was free: a deploy where the address was already moving for another reason, so no live
+        //    contract was orphaned by the rename itself. That moment is spent. Any future rename orphans a
+        //    live deployment, and there is no second free one.
+        //
+        //    ⚠️ The deployer is also an input to every salt (see `_salt`), so deploying from a different
+        //    key moves EVERY address in the record, the forwarder and the mock tokens included, whatever
+        //    the salt versions say. If the addresses came out unexpectedly, check the deployer first.
+        bytes32 proxySalt = _salt(deployer, "AsseteraECS.proxy");
         exchangeProxy = computeCreate3Address(proxySalt, deployer);
         // Only a fresh proxy deployment sets the recorded creation block/timestamp; an upgrade or no-op re-run
         // must PRESERVE the existing provenance (see DeployBase._provenance / AC-665).
