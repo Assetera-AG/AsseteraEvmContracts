@@ -1,5 +1,22 @@
 # Changelog
 
+## [5.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v4.1.0...evm-contracts-v5.0.0) (2026-08-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* **script:** rename the exchange salt labels and make the deploy-support scripts usable ([#62](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/62))
+* **primary:** the exchange deploys to a new address on every chain. The existing testnet orders, offers and escrow are NOT migrated — they stay on the old proxy, which this source tree no longer describes. Every consumer (SDK deployment records, indexer, signer service, fronts) must re-point to the new address once the deploy has run.
+
+### Features
+
+* **primary:** add the primary settlement contract (AO-560) ([#58](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/58)) ([c975d39](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/c975d39b7ca22cb15098e1a424a55ecae6b1c6b2))
+
+
+### Refactors
+
+* **script:** rename the exchange salt labels and make the deploy-support scripts usable ([#62](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/62)) ([b140fd7](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/b140fd792b715f5612b1b669abe08675ea88dd4f))
+
 ## [4.1.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v4.0.2...evm-contracts-v4.1.0) (2026-08-05)
 
 
