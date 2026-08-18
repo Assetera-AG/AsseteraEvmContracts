@@ -76,6 +76,36 @@ if ! cast wallet list 2>/dev/null | grep -qF "$ACCOUNT"; then
   exit 1
 fi
 
+# --- Refuse a broadcast whose roles were never set -------------------------------------------------
+# Every role address in Deploy.s.sol falls back to the DEPLOYER when its variable is unset. That default
+# is right for a throwaway anvil run and wrong everywhere else, and it fails silently: the deploy
+# succeeds, the record looks plausible, and the deployer quietly holds admin plus every operator role on
+# a live contract. Leaving one chain's value in .env while deploying another is the same mistake wearing
+# a disguise, which is why the admin check compares against the deployer rather than merely testing that
+# something is set.
+#
+# Set ALLOW_DEPLOYER_AS_ADMIN=1 for a genuinely disposable deploy.
+if [[ "$BROADCAST" -eq 1 && "${ALLOW_DEPLOYER_AS_ADMIN:-0}" != "1" ]]; then
+  norm() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+  if [[ -z "${ADMIN_ADDRESS:-}" ]]; then
+    echo "ADMIN_ADDRESS is not set, so admin would default to the deployer $SENDER." >&2
+    echo "That gives the key that signed this broadcast permanent upgrade authority. Set it." >&2
+    exit 1
+  fi
+  if [[ "$(norm "$ADMIN_ADDRESS")" == "$(norm "$SENDER")" ]]; then
+    echo "ADMIN_ADDRESS equals the deployer ($SENDER)." >&2
+    echo "Admin can upgrade the implementation, i.e. replace all the code. It must not be the deploy key." >&2
+    echo "Re-run with ALLOW_DEPLOYER_AS_ADMIN=1 only if this deployment is disposable." >&2
+    exit 1
+  fi
+  for v in KYC_SIGNER_ADDRESS FEE_SIGNER_ADDRESS SETTLEMENT_SIGNER_ADDRESS; do
+    if [[ -z "${!v:-}" ]]; then
+      echo "⚠️  $v is not set - it will default to the deployer $SENDER."
+    fi
+  done
+  echo "→ admin=$ADMIN_ADDRESS  (confirm this is right for $NETWORK, not another chain's value)"
+fi
+
 ARGS=(script script/Deploy.s.sol:Deploy --rpc-url "$NETWORK" --account "$ACCOUNT" --sender "$SENDER")
 
 if [[ "$BROADCAST" -eq 1 ]]; then
