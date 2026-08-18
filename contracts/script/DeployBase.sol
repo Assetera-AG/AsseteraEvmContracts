@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {CreateXScript} from "createx-forge/script/CreateXScript.sol";
 import {console2} from "forge-std/Script.sol";
+import {DeploymentFile} from "./DeploymentFile.sol";
 
 /// @title DeployBase
 /// @notice Deterministic-deploy bookkeeping (ADR-0026). Contracts are deployed through the **CreateX**
@@ -91,8 +92,9 @@ abstract contract DeployBase is CreateXScript {
 
     function _initPaths() internal {
         chainId = block.chainid;
-        // Written relative to the Foundry root (contracts/); the SDK owns the file.
-        deploymentPath = string.concat("../packages/sdk/src/deployments/", vm.toString(chainId), ".json");
+        // Written relative to the Foundry root (contracts/); the SDK owns the file. The path itself lives in
+        // `DeploymentFile` so the verification and upgrade scripts cannot drift away from it again.
+        deploymentPath = DeploymentFile.pathFor(chainId);
     }
 
     /// @dev CreateX guarded salt: [ deployer (20 bytes) | 0x00 no-cross-chain flag | entropy (11 bytes) ].

@@ -6,6 +6,7 @@ import {stdJson} from "forge-std/StdJson.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {AsseteraECS} from "../src/AsseteraECS.sol";
 import {DeployBase} from "./DeployBase.sol";
+import {DeploymentFile} from "./DeploymentFile.sol";
 
 /// @notice Deploys a new implementation and prints the Safe transaction
 ///         calldata needed to upgrade the proxy. No broadcast of the upgrade
@@ -28,8 +29,8 @@ contract UpgradeCalldata is DeployBase {
         // anything else so the script cannot even deploy the implementation it would then tell you to install.
         require(INPLACE_UPGRADE_ALLOWED, INPLACE_UPGRADE_REFUSAL);
 
-        string memory path = string.concat("deployments/", vm.toString(block.chainid), ".json");
-        require(vm.isFile(path), "no deployment file for this chain");
+        string memory path = DeploymentFile.pathFor(block.chainid);
+        require(vm.isFile(path), string.concat("no deployment file at ", path));
 
         string memory json = vm.readFile(path);
         address proxy = json.readAddress(".contracts.AsseteraECS");
