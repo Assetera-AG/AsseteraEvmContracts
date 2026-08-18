@@ -16,8 +16,10 @@
     "dryrun:sepolia": "bash scripts/deploy.sh sepolia",
     "deploy:amoy": "bash scripts/deploy.sh amoy --broadcast",
     "deploy:sepolia": "bash scripts/deploy.sh sepolia --broadcast",
-    "verify:amoy": "cd contracts && forge script script/Verify.s.sol:Verify --rpc-url amoy -vv",
-    "verify:sepolia": "cd contracts && forge script script/Verify.s.sol:Verify --rpc-url sepolia -vv",
+    "verify:amoy": "bash scripts/forge-script.sh amoy Verify.s.sol:Verify -vv",
+    "verify:sepolia": "bash scripts/forge-script.sh sepolia Verify.s.sol:Verify -vv",
+    "admin-calldata:amoy": "bash scripts/forge-script.sh amoy AdminCalldata.s.sol:AdminCalldata -vv",
+    "admin-calldata:sepolia": "bash scripts/forge-script.sh sepolia AdminCalldata.s.sol:AdminCalldata -vv",
     "prepare": "husky || true"
   },
   "devDependencies": {
