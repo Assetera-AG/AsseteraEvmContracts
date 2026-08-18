@@ -77,29 +77,53 @@ exchange proxy + forwarder use **CREATE3** — so they get the **same address on
 deployer, an address that survives implementation upgrades. The per-network record is written to
 [`../packages/sdk/src/deployments/<chainId>.json`](../packages/sdk/src/deployments) (the SDK's source of
 truth), keyed by numeric `chainId` and carrying the `caip2` id + `namespace` for the indexer/API. Re-running
-is idempotent — it reuses existing contracts and **upgrades the proxy in place** (address unchanged).
-Local-chain records (anvil `31337`) are **git-ignored** — they're deterministic and deployer-specific, so
-just regenerate them with `npm run deploy:local`; only **real-network** deployments (Amoy/mainnet/…) are
-committed.
+is idempotent — it reuses existing contracts and, when the layout allows it, **upgrades the proxy in place**
+(address unchanged). Local-chain records (anvil `31337`) are **git-ignored** — they're deterministic and
+deployer-specific, so just regenerate them with `npm run deploy:local`; only **real-network** deployments
+(Amoy/mainnet/…) are committed.
+
+> ⚠️ **The deployer address is an input to every salt.** "Idempotent" holds only for the SAME deployer key.
+> Run the script with a different key and it computes a different address for every contract, finds no code
+> there, and deploys a second forwarder and a second pair of mock tokens alongside the live ones — it forks
+> the deployment set rather than reporting an error. The deployer is therefore a durable artifact: it has no
+> role and cannot upgrade anything, but losing it means this environment can never be re-deployed into.
+
+**Sign from an encrypted keystore, not from a key in `.env`.** One passphrase prompt per deploy, and no
+plaintext key in a dotfile, in shell history, or in a backup:
+
+```bash
+cast wallet import assetera-deployer --interactive   # once
+```
 
 ```bash
 # Local (anvil) — one command; auto-etches CreateX onto the node, then broadcasts
 npm run anvil          # in another terminal
 npm run deploy:local
 
-# Polygon Amoy testnet (CreateX is already deployed there)
-npm run deploy:amoy    # reads RPC + PRIVATE_KEY from .env / the environment
+# Live networks. DRY RUN FIRST — it prints every address without sending anything
+# and without touching the committed deployment record.
+npm run dryrun:amoy
+npm run deploy:amoy
+
+npm run verify:amoy    # governance invariants of what is now on chain
 ```
 
-Copy [`.env.sample`](.env.sample) → `.env` for testnet RPC URLs, the deployer key, and role addresses
-(`ADMIN_ADDRESS` = the Safe multisig in prod). **Never commit `.env`.** Supported RPC aliases
-(`foundry.toml`): `local`, `sepolia`, `amoy`. Target network is Polygon Amoy (testnet) → Polygon mainnet.
+Compare the dry run's addresses against the ones you expect **before** broadcasting. They are permanent, and
+a wrong deployer or a renamed salt label is invisible in every other way.
+
+Copy [`.env.sample`](.env.sample) → `.env` for RPC URLs, `DEPLOYER_ADDRESS`, and the role addresses.
+**Every role address silently defaults to the deployer when unset**, so setting them is not optional on a
+deploy you intend to keep. `ADMIN_ADDRESS` is the Safe multisig in prod. **Never commit `.env`.** Supported
+RPC aliases (`foundry.toml`): `local`, `sepolia`, `amoy`. Use a **server-side** RPC key: a domain-restricted
+browser key is matched on `Origin` and returns 403 from a terminal.
 
 | Script | Purpose |
 |---|---|
 | [`script/Deploy.s.sol`](script/Deploy.s.sol) | Deterministic deploy of forwarder + tokens + exchange impl + CREATE3 proxy (atomic init), or upgrade the proxy in place. |
 | [`script/UpgradeCalldata.s.sol`](script/UpgradeCalldata.s.sol) | Print the `upgradeToAndCall` calldata for a Safe multisig to propose (prod upgrades). |
-| [`script/Verify.s.sol`](script/Verify.s.sol) | Verify deployed bytecode against a block explorer. |
+| [`script/Verify.s.sol`](script/Verify.s.sol) | Post-deploy **governance** check: proxy wiring, who holds which role, whether the deployer still holds admin, compliance gating, pause state, and whether the router's settlement caps are still closed. Not source verification — that is `forge verify-contract`. |
+| [`script/AdminCalldata.s.sol`](script/AdminCalldata.s.sol) | Print the post-deploy admin transactions (`setSettlementCap`, `setAllowedCollector`) as multisig fields and as `cast send` lines. The router deploys **closed**, so it settles nothing until these are sent. |
+| [`script/DeploymentFile.sol`](script/DeploymentFile.sol) | The single definition of where a chain's deployment record lives, shared by the three scripts above so they cannot drift apart. |
 
 ## Conventions & contributing
 

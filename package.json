@@ -12,8 +12,10 @@
     "typecheck": "npm run typecheck -w @asseteragmbh/evm-contracts",
     "anvil": "anvil",
     "deploy:local": "bash scripts/deploy-local.sh",
-    "deploy:amoy": "cd contracts && forge script script/Deploy.s.sol:Deploy --rpc-url amoy --broadcast --verify",
-    "deploy:sepolia": "cd contracts && forge script script/Deploy.s.sol:Deploy --rpc-url sepolia --broadcast --verify",
+    "dryrun:amoy": "bash scripts/deploy.sh amoy",
+    "dryrun:sepolia": "bash scripts/deploy.sh sepolia",
+    "deploy:amoy": "bash scripts/deploy.sh amoy --broadcast",
+    "deploy:sepolia": "bash scripts/deploy.sh sepolia --broadcast",
     "verify:amoy": "cd contracts && forge script script/Verify.s.sol:Verify --rpc-url amoy -vv",
     "verify:sepolia": "cd contracts && forge script script/Verify.s.sol:Verify --rpc-url sepolia -vv",
     "prepare": "husky || true"
