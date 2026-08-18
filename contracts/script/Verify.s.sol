@@ -10,6 +10,11 @@ import {ExchangeTypes} from "../src/types/ExchangeTypes.sol";
 import {PrimaryTypes} from "../src/primary/types/PrimaryTypes.sol";
 import {DeploymentFile} from "./DeploymentFile.sol";
 
+/// @dev The fee-collector allowlist, which the exchange and the router each carry their own copy of.
+interface IAllowedCollectors {
+    function allowedCollectors(address collector) external view returns (bool);
+}
+
 /// @notice Read-only post-deployment verification. Checks the governance invariants of the deployed stack:
 ///         proxy wiring, role assignments, who is admin, and whether the router is still closed.
 ///
@@ -120,6 +125,8 @@ contract Verify is Script {
         );
 
         _check("contract not paused", !exchange.paused(), "  contract is paused");
+
+        _checkCollectors(proxy, "exchange");
     }
 
     // --------------------------------------------------------------------- //
@@ -210,6 +217,8 @@ contract Verify is Script {
 
         _check("router not paused", !router.paused(), "  router is paused");
 
+        _checkCollectors(proxy, "router");
+
         // The router deploys CLOSED: an unset cap means the currency cannot be settled at all. Report the
         // caps for the settlement tokens this chain knows about rather than asserting a value, because the
         // right answer differs before and after the post-deploy admin steps. Reporting it is the point:
@@ -232,6 +241,36 @@ contract Verify is Script {
     // --------------------------------------------------------------------- //
     //                                Helpers                                 //
     // --------------------------------------------------------------------- //
+
+    /// @dev Check that each address in `EXPECTED_COLLECTORS` is allowlisted on `target`.
+    ///
+    ///      ⚠️ **The exchange and the router keep SEPARATE allowlists**, and the same is true of their role
+    ///      grants. Every post-deploy runbook is therefore a list of calls to two addresses, and sending one
+    ///      contract's half while missing the other's produces a deployment that verifies clean and then
+    ///      refuses every settlement naming a collector, because an unlisted recipient is refused. That is a
+    ///      long way from the mistake to the symptom, so it is checked here.
+    ///
+    ///      The allowlist is a mapping and cannot be enumerated on chain, and the deployment record does not
+    ///      name collectors, so the expected set has to be supplied:
+    ///
+    ///        EXPECTED_COLLECTORS=0xabc...,0xdef... forge script script/Verify.s.sol:Verify --rpc-url amoy
+    ///
+    ///      Unset is reported rather than passed. A check that silently does nothing when its input is
+    ///      missing is worse than no check, because the run still ends in "All checks passed".
+    function _checkCollectors(address target, string memory label) internal {
+        address[] memory expected = vm.envOr("EXPECTED_COLLECTORS", ",", new address[](0));
+        if (expected.length == 0) {
+            console2.log("[INFO] %s: collector allowlist NOT checked (set EXPECTED_COLLECTORS to check it)", label);
+            return;
+        }
+        for (uint256 i = 0; i < expected.length; i++) {
+            _check(
+                string.concat(label, ": collector ", vm.toString(expected[i]), " is allowlisted"),
+                IAllowedCollectors(target).allowedCollectors(expected[i]),
+                "  NOT allowlisted - a fee naming this recipient is refused"
+            );
+        }
+    }
 
     /// @dev Read the ERC-1967 implementation slot of a proxy.
     function _implOf(address proxy) private view returns (address) {
