@@ -2,23 +2,26 @@
   "caip2": "eip155:11155111",
   "chainId": 11155111,
   "contracts": {
-    "AsseteraECS": "0x58c3Fb1B69ca985A5461CcEfFd0Fe590b653F213",
-    "Forwarder": "0x402D2d3e7CdD42cAb656475952961f150f3Cf07f",
-    "MockRWA": "0x7c8d03B4aA9b4A21BAA82266f10174f0961a7A0E",
-    "MockUSDC": "0xf4e1049Ec8b2C8CD2e5a6554acA3f5c267951043"
+    "AsseteraECS": "0xf045d3FE81C14d8c13DbaB0b03a4Ea1505e499ad",
+    "AsseteraPrimarySales": "0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc",
+    "Forwarder": "0x2244B33a97f91284D53d0A12d42F237927C3DBf7",
+    "MockRWA": "0xECe9f75Eb6af58B7c70773BbC5922E49fD65F3E0",
+    "MockUSDC": "0x85D7B2569b3d69320F05A4FFB140Ca4521989A15"
   },
   "implementations": {
-    "AsseteraECS": "0xF27727cf818865f43f4Ca836B86050f3b34F643D"
+    "AsseteraECS": "0xcb2D5e22b2de63bA0958d5D7c39D7216B84803c2",
+    "AsseteraPrimarySales": "0xC0c7F32806a8C99287151B7F4886Ef2CDEFf2C7d"
   },
   "metadata": {
-    "admin": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",
-    "deployBlock": 11264402,
-    "deployTimestamp": 1783952688,
-    "deployer": "0x5Bf64d5d83636fb1773811DA467f8f1c6bE7a283",
-    "feeSigner": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",
-    "kycSigner": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",
-    "operator": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",
-    "relayer": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3"
+    "admin": "0x18be62A39daDCe169e05eA45E956124537214310",
+    "deployBlock": 11514803,
+    "deployTimestamp": 1787052660,
+    "deployer": "0xDEaDFA8BC247c921745a2D4B6216eFaAdece9D27",
+    "feeSigner": "0x7F61F6004E54a41C6BD4a8656A47ABc7Ab27829b",
+    "kycSigner": "0x076ca734BFfF2dbe8cdfc5E760880F87942457D1",
+    "operator": "0xDEaDFA8BC247c921745a2D4B6216eFaAdece9D27",
+    "relayer": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",
+    "settlementSigner": "0xDEaDFA8BC247c921745a2D4B6216eFaAdece9D27"
   },
   "namespace": "eip155"
 }

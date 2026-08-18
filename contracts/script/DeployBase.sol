@@ -2,7 +2,8 @@
 pragma solidity 0.8.28;
 
 import {CreateXScript} from "createx-forge/script/CreateXScript.sol";
-import {console2} from "forge-std/Script.sol";
+import {console2, VmSafe} from "forge-std/Script.sol";
+import {DeploymentFile} from "./DeploymentFile.sol";
 
 /// @title DeployBase
 /// @notice Deterministic-deploy bookkeeping (ADR-0026). Contracts are deployed through the **CreateX**
@@ -35,15 +36,18 @@ abstract contract DeployBase is CreateXScript {
     string internal constant SALT_VERSION = "v1";
 
     /// @dev Salt version of the exchange proxy and implementation ONLY. Separate from `SALT_VERSION` so the
-    ///      planned fresh deploy rotates the exchange address without disturbing the forwarder or the mocks.
-    ///      Bumping this is the intended way to land a storage-layout break: the new address has no code,
-    ///      so `Deploy.s.sol` takes the fresh-deploy branch and the old proxy is never touched.
+    ///      exchange address can be rotated without disturbing the forwarder or the mocks. Bumping this is
+    ///      the intended way to land a storage-layout break: the new address has no code, so `Deploy.s.sol`
+    ///      takes the fresh-deploy branch and the old proxy is never touched.
     ///
-    ///      ⚠️ **"v2" since AO-514's gate extraction.** The exchange address on every chain therefore
-    ///      CHANGES on the next deploy, and nothing at the old address is migrated — the live testnet
-    ///      orders, offers and escrow stay where they are, on a proxy this source no longer describes.
-    ///      Every consumer (SDK, indexer, signer service, fronts) must re-point.
-    string internal constant EXCHANGE_SALT_VERSION = "v2";
+    ///      ⚠️ **This counts rotations of the CURRENT label, and the label was renamed to `AsseteraECS.*`.**
+    ///      It reads "v1" because the `AsseteraECS.*` salt lineage starts here and has been rotated zero
+    ///      times — not because nothing came before. The predecessor lineage was labelled
+    ///      `AsseteraExchange.*` and reached "v2"; that number described a label this source no longer
+    ///      uses, and carrying it over would have made the constant claim a history this address does not
+    ///      have. Nothing at any earlier address is migrated: earlier orders, offers and escrow stay where
+    ///      they are, on proxies this source no longer describes.
+    string internal constant EXCHANGE_SALT_VERSION = "v1";
 
     /// @dev Whether the implementation built from THIS commit may be installed onto an exchange proxy that
     ///      already has code, via `upgradeToAndCall`.
@@ -91,8 +95,9 @@ abstract contract DeployBase is CreateXScript {
 
     function _initPaths() internal {
         chainId = block.chainid;
-        // Written relative to the Foundry root (contracts/); the SDK owns the file.
-        deploymentPath = string.concat("../packages/sdk/src/deployments/", vm.toString(chainId), ".json");
+        // Written relative to the Foundry root (contracts/); the SDK owns the file. The path itself lives in
+        // `DeploymentFile` so the verification and upgrade scripts cannot drift away from it again.
+        deploymentPath = DeploymentFile.pathFor(chainId);
     }
 
     /// @dev CreateX guarded salt: [ deployer (20 bytes) | 0x00 no-cross-chain flag | entropy (11 bytes) ].
@@ -113,7 +118,7 @@ abstract contract DeployBase is CreateXScript {
     ///      first storage-layout break AFTER it is live, not before.
     function _saltVersion(string memory name) internal pure returns (string memory) {
         bytes32 h = keccak256(bytes(name));
-        if (h == keccak256("AsseteraExchange.proxy") || h == keccak256("AsseteraExchange.impl")) {
+        if (h == keccak256("AsseteraECS.proxy") || h == keccak256("AsseteraECS.impl")) {
             return EXCHANGE_SALT_VERSION;
         }
         return SALT_VERSION;
@@ -232,7 +237,24 @@ abstract contract DeployBase is CreateXScript {
         vm.serializeString(root, "implementations", imJson);
         string memory rootJson = vm.serializeString(root, "metadata", mJson);
 
-        vm.writeJson(rootJson, deploymentPath);
-        console2.log("Deployment written to:", deploymentPath);
+        // ⚠️ A DRY RUN MUST NOT TOUCH THE REAL RECORD. `forge script` without `--broadcast` still executes
+        //    this function, so the previous revision overwrote the committed deployment file with the
+        //    addresses of contracts that were never deployed — turning "let me check what this would do"
+        //    into a silent corruption of the SDK's source of truth. The file is what every consumer reads,
+        //    so the damage outlives the terminal it happened in.
+        //
+        //    The dry-run output still goes somewhere, because seeing it is the point of a dry run: `out/` is
+        //    build output and gitignored, so it can be diffed against the real record without any chance of
+        //    being committed.
+        if (vm.isContext(VmSafe.ForgeContext.ScriptDryRun)) {
+            string memory dryPath = string.concat("out/deployment-", vm.toString(chainId), ".dryrun.json");
+            vm.writeJson(rootJson, dryPath);
+            console2.log("DRY RUN - the deployment record was NOT modified.");
+            console2.log("  would have written:", deploymentPath);
+            console2.log("  wrote preview to:  ", dryPath);
+        } else {
+            vm.writeJson(rootJson, deploymentPath);
+            console2.log("Deployment written to:", deploymentPath);
+        }
     }
 }
