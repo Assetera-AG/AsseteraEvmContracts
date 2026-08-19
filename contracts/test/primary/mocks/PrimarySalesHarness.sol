@@ -53,6 +53,22 @@ contract PrimarySalesHarness is AsseteraPrimarySales {
         return _intentStructHash(intent);
     }
 
+    /// @notice Direct read of the ERC-2771 `_msgData()` override, which nothing in `src/` calls.
+    ///
+    /// @dev    🔴 It is an override Solidity forces the contract to declare and no production
+    ///         path exercises, so its behaviour is asserted by reading it rather than by
+    ///         observing something downstream of it. That is not a coverage device: `_msgSender`
+    ///         and `_msgData` must agree about which twenty bytes of the calldata are the
+    ///         forwarder's suffix, and a `_msgData` that disagreed would hand any future caller
+    ///         — a `Multicall`, an error-reporting path, a diagnostic — an address as though it
+    ///         were argument bytes.
+    ///
+    ///         Declares no storage, so this harness stays the one that can be used for the
+    ///         storage-layout and upgrade assertions.
+    function observedCalldata() external view returns (bytes memory) {
+        return _msgData();
+    }
+
     /// @dev The stand-in family's own money path, reached only once the shared preamble has
     ///      passed. It reverts so the test can tell "got here" from "stopped earlier", and it
     ///      reverts with an error declared HERE rather than in `src/`: the router has exactly
