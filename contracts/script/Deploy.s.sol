@@ -64,8 +64,13 @@ contract Deploy is DeployBase {
         settlementSigner = vm.envOr("SETTLEMENT_SIGNER_ADDRESS", deployer);
 
         // The open-mint faucet tokens are testnet-only helpers (Amoy/Sepolia/local anvil). On any other
-        // chain they are skipped so a mainnet deploy can never publish a permissionless-mint token. Set
-        // DEPLOY_MOCKS=true/false to override the per-chain default.
+        // chain the DEFAULT is to skip them.
+        //
+        // ⚠️ This is a safe default, NOT a bar. An earlier version of this comment claimed a mainnet deploy
+        //    "can never publish a permissionless-mint token" — that was false, because `DEPLOY_MOCKS`
+        //    overrides the per-chain default and a stale `DEPLOY_MOCKS=1` in a shell is enough to mint an
+        //    open-mint token onto mainnet. `scripts/deploy.sh` refuses a mainnet broadcast while
+        //    `DEPLOY_MOCKS` is forced on, but that is the wrapper's guard, not this script's.
         bool deployMocks = vm.envOr("DEPLOY_MOCKS", _isTestnet(chainId));
 
         if (pk != 0) vm.startBroadcast(pk);
@@ -163,11 +168,10 @@ contract Deploy is DeployBase {
 
         // 6. Primary-sales proxy — CREATE3 stable address, initialized atomically in the constructor, the
         //    same shape as the exchange proxy above.
-        //    ⚠️ The salt label IS the address (`DeployBase._salt` hashes it), so treat it as frozen from the
-        //    first deploy onwards — the same hazard the exchange labels carry. It is written as
-        //    "AsseteraPrimarySales.*" rather than an "AsseteraExchange"-era name precisely because there is
-        //    no deployed address to stay compatible with yet, and it takes the default `SALT_VERSION` for
-        //    the same reason (see `DeployBase._saltVersion`).
+        //    ⚠️ The salt label IS the address (`DeployBase._salt` hashes it), so treat it as frozen — the
+        //    same hazard the exchange labels carry. The router is now live on Amoy and Sepolia, so this
+        //    label is load-bearing and no longer free to change. It takes `PRIMARY_SALT_VERSION`, which was
+        //    introduced at "v1" precisely so the address did not move (see `DeployBase._saltVersion`).
         bytes32 primarySalt = _salt(deployer, "AsseteraPrimarySales.proxy");
         primarySalesProxy = computeCreate3Address(primarySalt, deployer);
         if (!_hasCode(primarySalesProxy)) {
@@ -179,10 +183,16 @@ contract Deploy is DeployBase {
             require(psDeployed == primarySalesProxy, "primary sales proxy create3 mismatch");
             console2.log("AsseteraPrimarySales proxy deployed:", primarySalesProxy);
         } else if (_currentImpl(primarySalesProxy) != primarySalesImpl) {
-            // ⚠️ Not gated by `INPLACE_UPGRADE_ALLOWED`: that constant records whether THIS commit's
-            //    EXCHANGE layout is compatible with the live exchange proxies (AO-514's gate extraction),
-            //    and says nothing about this contract, which has no deployed proxy at all. Give the primary
-            //    sales router its own guard the first time its layout breaks after it is live.
+            // 🔴 Gated by `PRIMARY_INPLACE_UPGRADE_ALLOWED`, NOT by `INPLACE_UPGRADE_ALLOWED` — the latter
+            //    records whether this commit's EXCHANGE layout is compatible with the live exchange proxies
+            //    (AO-514's gate extraction) and says nothing about this contract.
+            //
+            //    This branch fires whenever the freshly built implementation differs from the deployed one,
+            //    for ANY reason: a dependency bump or a compiler-setting change is enough. Ungated, a
+            //    routine re-run of this script against a chain that already has the router silently replaced
+            //    its logic. On a fresh chain the address has no code, so the branch above runs instead and
+            //    this guard is never reached — a first mainnet deploy is unaffected.
+            require(PRIMARY_INPLACE_UPGRADE_ALLOWED, PRIMARY_INPLACE_UPGRADE_REFUSAL);
             AsseteraPrimarySales(primarySalesProxy).upgradeToAndCall(primarySalesImpl, "");
             console2.log("AsseteraPrimarySales proxy upgraded ->", primarySalesImpl);
         } else {

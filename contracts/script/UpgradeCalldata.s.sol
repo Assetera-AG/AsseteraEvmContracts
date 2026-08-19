@@ -5,6 +5,7 @@ import {console2} from "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {AsseteraECS} from "../src/AsseteraECS.sol";
+import {AsseteraPrimarySales} from "../src/primary/AsseteraPrimarySales.sol";
 import {DeployBase} from "./DeployBase.sol";
 import {DeploymentFile} from "./DeploymentFile.sol";
 
@@ -13,9 +14,15 @@ import {DeploymentFile} from "./DeploymentFile.sol";
 ///         itself - that goes through the Safe multisig.
 ///
 /// Usage:
-///   forge script script/UpgradeCalldata.s.sol:UpgradeCalldata \
-///     --rpc-url <network> --broadcast \
-///     --private-key $DEPLOYER_PK
+///   TARGET=ecs     forge script script/UpgradeCalldata.s.sol:UpgradeCalldata \
+///     --rpc-url <network> --broadcast --private-key $DEPLOYER_PK
+///   TARGET=primary forge script script/UpgradeCalldata.s.sol:UpgradeCalldata \
+///     --rpc-url <network> --broadcast --private-key $DEPLOYER_PK
+///
+/// `TARGET` selects which proxy to upgrade and defaults to `ecs`, which is what this script did before it
+/// learned about the router. There are TWO upgradeable proxies and each has its own guard constant, so an
+/// unrecognised value is refused rather than silently defaulting — picking the wrong proxy here means
+/// proposing a Safe transaction that installs one contract's logic on the other.
 ///
 /// Then paste the printed calldata into app.safe.global, New Transaction,
 /// Contract Interaction, target: proxy address.
@@ -25,16 +32,29 @@ contract UpgradeCalldata is DeployBase {
     using stdJson for string;
 
     function run() external {
+        string memory target = vm.envOr("TARGET", string("ecs"));
+        bytes32 t = keccak256(bytes(target));
+        bool isPrimary = t == keccak256("primary");
+        require(isPrimary || t == keccak256("ecs"), "TARGET must be 'ecs' or 'primary'");
+
         // A commit that breaks the storage layout must not be proposable to the Safe either. Checked before
         // anything else so the script cannot even deploy the implementation it would then tell you to install.
-        require(INPLACE_UPGRADE_ALLOWED, INPLACE_UPGRADE_REFUSAL);
+        // Each proxy has its own guard: the exchange's tracks the AO-514 layout break, the router's defaults
+        // closed so that upgrading a live router is always a deliberate act.
+        if (isPrimary) {
+            require(PRIMARY_INPLACE_UPGRADE_ALLOWED, PRIMARY_INPLACE_UPGRADE_REFUSAL);
+        } else {
+            require(INPLACE_UPGRADE_ALLOWED, INPLACE_UPGRADE_REFUSAL);
+        }
 
         string memory path = DeploymentFile.pathFor(block.chainid);
         require(vm.isFile(path), string.concat("no deployment file at ", path));
 
         string memory json = vm.readFile(path);
-        address proxy = json.readAddress(".contracts.AsseteraECS");
+        address proxy = json.readAddress(isPrimary ? ".contracts.AsseteraPrimarySales" : ".contracts.AsseteraECS");
         address forwarderAddr = json.readAddress(".contracts.Forwarder");
+        console2.log("Target:", target);
+        console2.log("Proxy: ", proxy);
 
         // 1. Read current implementation from the proxy storage slot.
         bytes32 raw = vm.load(proxy, ERC1967Utils.IMPLEMENTATION_SLOT);
@@ -43,7 +63,8 @@ contract UpgradeCalldata is DeployBase {
 
         // 2. Deploy the new implementation (deployer pays gas for this part).
         vm.startBroadcast();
-        address newImpl = address(new AsseteraECS(forwarderAddr));
+        address newImpl =
+            isPrimary ? address(new AsseteraPrimarySales(forwarderAddr)) : address(new AsseteraECS(forwarderAddr));
         vm.stopBroadcast();
         console2.log("New impl deployed:", newImpl);
 
