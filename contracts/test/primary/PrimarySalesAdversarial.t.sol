@@ -13,6 +13,7 @@ import {IKycGate} from "../../src/interfaces/IKycGate.sol";
 import {IFeeGate} from "../../src/interfaces/IFeeGate.sol";
 import {IIntentGate} from "../../src/primary/interfaces/IIntentGate.sol";
 import {ContractWalletBuyer} from "./mocks/ContractWalletBuyer.sol";
+import {PrimarySalesHarness} from "./mocks/PrimarySalesHarness.sol";
 import {
     GarbageWallet,
     PermissiveWallet,
@@ -855,5 +856,63 @@ contract PrimarySalesMetaTxTest is VenueSettlerTestBase {
         forwarder.execute(request);
 
         assertFalse(router.usedIntentNonce(buyer, INTENT_NONCE), "the settlement ran on a forged request");
+    }
+
+    // ── the calldata half of ERC-2771 ─────────────────────────────────────────────────────
+    //
+    // 🔴 `_msgSender()` and `_msgData()` are one decision read twice: which twenty bytes of the
+    //    calldata are the forwarder's appended sender rather than argument bytes. Every test
+    //    above reads the SENDER half, because that is the half `settlePrimary` uses. Nothing in
+    //    `src/` calls `_msgData()` at all, so the two are free to disagree — and the day
+    //    anything downstream reads the calldata (a `Multicall`, a diagnostic, an error path), a
+    //    `_msgData()` that forgot the suffix hands it an address as though it were an argument.
+    //
+    //    Read through `PrimarySalesHarness`, which exposes the override and nothing else. The
+    //    caller is pranked as the forwarder rather than routed through `ERC2771Forwarder.execute`
+    //    because that function returns no data, and `msg.sender` is the only input the override
+    //    has: what the forwarder does is append the address it verified, which is exactly what
+    //    these payloads do by hand.
+
+    /// 🔴 A call FROM the trusted forwarder, with an address appended the way the forwarder
+    /// appends it. The override must hand back the relayed payload and nothing else.
+    function test_MetaTx_TheCalldataOverrideStripsTheForwarderSuffix() public {
+        bytes memory payload = abi.encodeCall(PrimarySalesHarness.observedCalldata, ());
+        bytes memory relayed = abi.encodePacked(payload, buyer);
+
+        vm.prank(address(forwarder));
+        (bool ok, bytes memory ret) = address(harness).call(relayed);
+
+        assertTrue(ok, "the calldata override reverted");
+        bytes memory observed = abi.decode(ret, (bytes));
+        assertEq(observed, payload, "the appended sender was left in the calldata");
+        assertEq(relayed.length - observed.length, 20, "exactly one address must be stripped");
+    }
+
+    /// 🔴 The mirror, and the one that matters for safety: the SAME bytes from anyone else are
+    /// returned whole. A `_msgData()` that trimmed twenty bytes for an untrusted caller would
+    /// silently discard the tail of a real argument.
+    function test_MetaTx_TheCalldataOverrideLeavesAnUntrustedCallersBytesAlone() public {
+        bytes memory payload = abi.encodeCall(PrimarySalesHarness.observedCalldata, ());
+        bytes memory spoofed = abi.encodePacked(payload, buyer);
+
+        vm.prank(stranger);
+        (bool ok, bytes memory ret) = address(harness).call(spoofed);
+
+        assertTrue(ok, "the calldata override reverted");
+        assertEq(abi.decode(ret, (bytes)), spoofed, "bytes were stripped for a caller that is not the forwarder");
+    }
+
+    /// A call from the forwarder with NO room for a suffix. `ERC2771Context` returns the calldata
+    /// untouched rather than subtracting twenty from four, and this is the assertion that the
+    /// length guard is there — an underflow here would be a panic on a path no signature covers.
+    function test_MetaTx_TheCalldataOverrideDoesNotUnderflowOnACallShorterThanASuffix() public {
+        bytes memory bare = abi.encodeCall(PrimarySalesHarness.observedCalldata, ());
+        assertLt(bare.length, 20, "fixture: the payload must be shorter than an appended address");
+
+        vm.prank(address(forwarder));
+        (bool ok, bytes memory ret) = address(harness).call(bare);
+
+        assertTrue(ok, "a call shorter than the suffix reverted");
+        assertEq(abi.decode(ret, (bytes)), bare, "a calldata with no room for a suffix was trimmed anyway");
     }
 }

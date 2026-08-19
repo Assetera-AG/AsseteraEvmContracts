@@ -13,6 +13,7 @@ import {ISettlementLimits} from "../../src/primary/interfaces/ISettlementLimits.
 import {FaucetToken} from "../mocks/FaucetToken.sol";
 import {HostileVenue} from "./mocks/HostileVenue.sol";
 import {
+    ClampingAsset,
     FeeOnTransferCurrency,
     MutableDecimalsToken,
     RebasingAsset,
@@ -553,6 +554,106 @@ contract VenueSettlerSilentTransferTest is HostileSettlementBase {
 
         assertEq(silent.balanceOf(collector), FEE, "the collector was not paid");
         assertEq(silent.balanceOf(address(router)), 0, "the router kept something");
+    }
+}
+
+/// @title VenueSettlerAssetResidueTest
+/// @notice 🔴 The ASSET leg of step 9 — `asset.balanceOf(address(this)) != routerAssetBefore` —
+///         which is the guard that CLOSES step 7's forward.
+///
+///         Step 7 hands the buyer whatever asset the venue put in the router, and step 9 then
+///         says the forward actually moved it. Without the second half, a token that debits the
+///         router for less than it was asked to move leaves a standing asset balance in a
+///         contract with no sweep and no `receive()` — stranded permanently, belonging to a
+///         buyer who has already paid for it.
+///
+///         The currency half of that same pair is pinned by `VenueSettlerSilentTransferTest`.
+///         The asset half needs a different shape, and that is the whole reason `ClampingAsset`
+///         exists: a transfer that moves NOTHING delivers nothing, so
+///         `InsufficientAssetDelivered` fires two lines earlier and the assertion under test is
+///         never reached. Only a PARTIAL transfer clears `minAssetOut` and leaves a residue.
+///
+/// @dev    The venue delivers to the ROUTER rather than to the buyer, which is the misdirected
+///         delivery `VenueSettlerLyingVenueTest` already shows being forwarded on. Here the
+///         forward is the thing that fails, so this suite is that one's failure case rather than
+///         a second copy of it.
+contract VenueSettlerAssetResidueTest is HostileSettlementBase {
+    ClampingAsset internal clamping;
+
+    /// What the venue mints into the router. Above the floor, so the settlement is refused for
+    /// the residue rather than for the delivery.
+    uint256 internal constant MISDIRECTED = 41e18;
+    /// The ceiling the forward is clamped to: exactly `MIN_OUT`, so the buyer is delivered the
+    /// floor and `InsufficientAssetDelivered` cannot be what fires. The residue is the 1e18
+    /// difference.
+    uint256 internal constant CEILING = 40e18;
+
+    function setUp() public virtual override {
+        super.setUp();
+        clamping = new ClampingAsset("Clamping Equity", "cEQ");
+    }
+
+    /// The venue takes the whole quote and mints the asset into the ROUTER, so the forward in
+    /// step 7 is the only thing that can get it to the buyer.
+    function _residueScript() internal view returns (HostileVenue.Script memory) {
+        HostileVenue.Script memory script = _script(QUOTE, MISDIRECTED);
+        script.assetToken = address(clamping);
+        script.recipient = address(router);
+        return script;
+    }
+
+    function _residueIntent(bytes memory data) internal view returns (PrimaryTypes.SettlementIntent memory) {
+        return _intentOver(address(currency), address(clamping), address(hostile), data, QUOTE, FEE);
+    }
+
+    /// 🔴 The buyer is delivered exactly the floor and the router is left holding the rest, so
+    /// every earlier check passes and only the asset leg of step 9 can refuse this. It does, and
+    /// the whole settlement unwinds: no residue, no fee, no delivery, no venue payment.
+    function test_AssetResidue_AForwardThatMovedLessThanItWasAskedToIsRefused() public {
+        clamping.setTransferCeiling(CEILING);
+        bytes memory data = _encode(_residueScript());
+        PrimaryTypes.SettlementIntent memory intent = _residueIntent(data);
+        uint256 buyerCurrencyBefore = currency.balanceOf(buyer);
+
+        _approveDebit(address(router), intent);
+        vm.expectRevert(ISettler.RouterBalanceChanged.selector);
+        _submitFull(data, intent, TAKER_BPS);
+
+        assertEq(clamping.balanceOf(address(router)), 0, "the router stranded asset it cannot sweep");
+        assertEq(clamping.balanceOf(buyer), 0, "the asset was delivered by a settlement that failed");
+        assertEq(currency.balanceOf(buyer), buyerCurrencyBefore, "the buyer paid for a settlement that failed");
+        assertEq(currency.balanceOf(collector), 0, "the collector was paid by a settlement that failed");
+        assertEq(currency.balanceOf(address(hostile)), 0, "the venue kept a pull from a failed settlement");
+    }
+
+    /// The mutation: the SAME token, the SAME misdirected delivery, with the ceiling lifted. The
+    /// forward moves in full, the buyer ends up holding everything the venue minted, and the
+    /// router holds nothing — so the test above fails for the residue and not for the fixture.
+    function test_AssetResidue_TheSameSettlementGoesThroughWhenTheForwardMovesInFull() public {
+        bytes memory data = _encode(_residueScript());
+        PrimaryTypes.SettlementIntent memory intent = _residueIntent(data);
+
+        _approveDebit(address(router), intent);
+        _submitFull(data, intent, TAKER_BPS);
+
+        assertEq(clamping.balanceOf(buyer), MISDIRECTED, "the misdirected delivery did not reach the buyer");
+        assertEq(clamping.balanceOf(address(router)), 0, "the router kept asset after a clean forward");
+        assertEq(currency.balanceOf(collector), FEE, "the collector was not paid");
+    }
+
+    /// 🔴 One wei of residue is enough. The guard is an equality against the PRE-CALL balance,
+    /// not a tolerance, and a router that is allowed to keep dust is a router that accumulates
+    /// it — with no sweep, no event and nobody able to say whose it is.
+    function test_AssetResidue_ASingleWeiLeftBehindIsEnoughToRefuseTheSettlement() public {
+        clamping.setTransferCeiling(MISDIRECTED - 1);
+        bytes memory data = _encode(_residueScript());
+        PrimaryTypes.SettlementIntent memory intent = _residueIntent(data);
+
+        _approveDebit(address(router), intent);
+        vm.expectRevert(ISettler.RouterBalanceChanged.selector);
+        _submitFull(data, intent, TAKER_BPS);
+
+        assertEq(clamping.balanceOf(address(router)), 0, "one wei of asset was stranded in the router");
     }
 }
 
