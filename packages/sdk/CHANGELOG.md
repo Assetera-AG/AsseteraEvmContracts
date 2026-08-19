@@ -1,5 +1,16 @@
 # Changelog
 
+## [6.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v5.0.0...evm-contracts-v6.0.0) (2026-08-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sdk:** export getPrimarySalesAddress, which shipped unreachable in 5.0.0 ([#66](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/66))
+
+### Bug Fixes
+
+* **sdk:** export getPrimarySalesAddress, which shipped unreachable in 5.0.0 ([#66](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/66)) ([279a710](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/279a7103b5d4b632dfec7196b029b95492c5ad1a))
+
 ## [5.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v4.1.0...evm-contracts-v5.0.0) (2026-08-18)
 
 
