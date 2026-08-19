@@ -38,7 +38,45 @@ runs = 64
 depth = 50
 fail_on_revert = false
 
+# The alias on the left is what `scripts/deploy.sh <network>` passes to `--rpc-url`, so these names are
+# the network vocabulary of the whole deploy path. They deliberately match Foundry's own chain aliases
+# (`mainnet`, `polygon`, `base`, `optimism`, `bsc`, `arbitrum`), so `--chain <alias>` in a manual
+# `forge verify-contract` resolves to the same chain without a lookup table.
 [rpc_endpoints]
 local = "http://127.0.0.1:8545"
+# Testnets
 sepolia = "${SEPOLIA_RPC_URL}"
 amoy = "${AMOY_RPC_URL}"
+# Mainnets. Polygon is the production venue; the rest are provisioned ahead of use.
+polygon = "${POLYGON_RPC_URL}"
+mainnet = "${MAINNET_RPC_URL}"
+base = "${BASE_RPC_URL}"
+optimism = "${OPTIMISM_RPC_URL}"
+bsc = "${BSC_RPC_URL}"
+arbitrum = "${ARBITRUM_RPC_URL}"
+
+# Source verification. Etherscan's V2 API serves every chain below from ONE host with a `chainid`
+# query parameter, so a single ETHERSCAN_API_KEY covers all eight networks — there is no
+# per-explorer key (no separate Polygonscan/BscScan/Arbiscan/Basescan key) any more.
+#
+# Verified against the pinned toolchain (forge 1.6.0-v1.7.0), not assumed: this binary already ships
+# `https://api.etherscan.io/v2/api?chainid=<id>` as the built-in verifier URL for chain ids
+# 1, 10, 56, 137, 8453, 42161, 80002 and 11155111. The `url`s below therefore only restate what forge
+# would pick anyway; they are written out so a toolchain bump that changes the default is a visible
+# diff rather than a verification failure discovered after the contracts are already on chain.
+#
+# `chain` is given as an explicit numeric id rather than relying on the table key being parsed as a
+# chain alias — the id is the thing forge matches against `block.chainid` at verify time.
+#
+# ⚠️ No chain here is left uncovered by the shared key. If a future target is NOT on Etherscan V2
+#    (e.g. a Blockscout-only chain), give it its own entry with its own `key`/`url` and say so here —
+#    do not let it silently fall through to the shared key, which will 403 rather than fail loudly.
+[etherscan]
+sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 11155111, url = "https://api.etherscan.io/v2/api?chainid=11155111" }
+amoy = { key = "${ETHERSCAN_API_KEY}", chain = 80002, url = "https://api.etherscan.io/v2/api?chainid=80002" }
+polygon = { key = "${ETHERSCAN_API_KEY}", chain = 137, url = "https://api.etherscan.io/v2/api?chainid=137" }
+mainnet = { key = "${ETHERSCAN_API_KEY}", chain = 1, url = "https://api.etherscan.io/v2/api?chainid=1" }
+base = { key = "${ETHERSCAN_API_KEY}", chain = 8453, url = "https://api.etherscan.io/v2/api?chainid=8453" }
+optimism = { key = "${ETHERSCAN_API_KEY}", chain = 10, url = "https://api.etherscan.io/v2/api?chainid=10" }
+bsc = { key = "${ETHERSCAN_API_KEY}", chain = 56, url = "https://api.etherscan.io/v2/api?chainid=56" }
+arbitrum = { key = "${ETHERSCAN_API_KEY}", chain = 42161, url = "https://api.etherscan.io/v2/api?chainid=42161" }
