@@ -1,0 +1,25 @@
+{
+  "caip2": "eip155:1",
+  "chainId": 1,
+  "contracts": {
+    "AsseteraECS": "0xf045d3FE81C14d8c13DbaB0b03a4Ea1505e499ad",
+    "AsseteraPrimarySales": "0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc",
+    "Forwarder": "0x2244B33a97f91284D53d0A12d42F237927C3DBf7"
+  },
+  "implementations": {
+    "AsseteraECS": "0xcb2D5e22b2de63bA0958d5D7c39D7216B84803c2",
+    "AsseteraPrimarySales": "0xC0c7F32806a8C99287151B7F4886Ef2CDEFf2C7d"
+  },
+  "metadata": {
+    "admin": "0x5c682CFC1ffd09a1CA2c04165C34E14aB8810c0E",
+    "deployBlock": 25795740,
+    "deployTimestamp": 1787221787,
+    "deployer": "0xDEaDFA8BC247c921745a2D4B6216eFaAdece9D27",
+    "feeSigner": "0x291e286F83F16bFafCB92d50Ab1C6028BF87d537",
+    "kycSigner": "0x4D54a843e1ad6929b4Db3B7a3e9Db9f1493e2729",
+    "operator": "0xDEaDFA8BC247c921745a2D4B6216eFaAdece9D27",
+    "relayer": "0xa410D91d7a07c3ebc3984E36B9a9a2D16C4029c3",
+    "settlementSigner": "0x749964a0e112C29fa55448530634BA727c53EFd1"
+  },
+  "namespace": "eip155"
+}
