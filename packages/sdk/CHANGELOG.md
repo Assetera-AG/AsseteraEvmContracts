@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.1.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v6.0.0...evm-contracts-v6.1.0) (2026-08-20)
+
+
+### Features
+
+* **deployments:** go live on Polygon and Ethereum mainnet ([#73](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/73)) ([8a53167](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/8a53167855e9a1dccbed3c1792bb1ab678a27141))
+
 ## [6.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v5.0.0...evm-contracts-v6.0.0) (2026-08-18)
 
 
