@@ -78,6 +78,51 @@ abstract contract PrimaryTypes is GateTypes {
     }
 
     // --------------------------------------------------------------------- //
+    //                        Asset accounting vocabulary                     //
+    // --------------------------------------------------------------------- //
+
+    /// @notice How the router must MEASURE and MOVE `SettlementIntent.assetToken`.
+    ///
+    ///         Some tokenised equities — every Backed/xStocks deployment, and the same family
+    ///         Lido popularised — do not store balances. They store SHARES and expose a
+    ///         `balanceOf` that is `shares × multiplier` under integer division. A nominal
+    ///         ERC-20 transfer of such a token therefore rounds, and rounds again on a second
+    ///         hop, so a router that receives a nominal amount and forwards its own measured
+    ///         `balanceOf` increase cannot return to its baseline. That is not a hypothetical:
+    ///         the 2026-08-24 AAPLx mainnet-fork proof left exactly one raw unit at the router
+    ///         and `VenueSettler` correctly refused the settlement with `RouterBalanceChanged`.
+    ///
+    ///         The answer is to measure and move the asset in ITS OWN unit of account. Shares
+    ///         are also rebase-invariant, which is a second and larger benefit: a multiplier
+    ///         change during the venue call — a stock split, a dividend, a fee accrual — moves
+    ///         every `balanceOf` in the transaction but no share count.
+    ///
+    /// @dev    ⚠️ **This selects one of TWO implementations compiled into the router. It is not
+    ///         an adapter address and never becomes one.** An external adapter cannot move
+    ///         shares the router holds — the token would see the adapter as `msg.sender` — so
+    ///         making one work needs either a standing approval or a `delegatecall` into
+    ///         untrusted code holding this contract's storage, funds and allowances. Supporting
+    ///         a genuinely new accounting family is a reviewed router upgrade, deliberately.
+    ///
+    ///         ⚠️ **Ordinals are append-only, for the same reason `Action`'s are:
+    ///         `AsseteraSignerService` signs the ordinal, so renumbering silently re-points
+    ///         every intent in flight.**
+    ///
+    ///         ⚠️ **The intent carries this as a `uint8`, NOT as this enum, and that is
+    ///         deliberate.** EIP-712 has no enum type, so the typehash string has to say `uint8`
+    ///         whatever the Solidity member says. Declaring the member `uint8` too means the
+    ///         signed type string and the struct field are the same word, and the signer
+    ///         service — which hand-mirrors these types with no shared codegen — has nothing to
+    ///         drift from. It also buys a named `UnsupportedAccountingMode` instead of the bare
+    ///         `Panic(0x21)` that decoding an out-of-range enum produces.
+    enum AssetAccountingMode {
+        Erc20Balance, // 0 — `balanceOf` to measure, `transfer` to move. Every ordinary ERC-20.
+        RebasingShares // 1 — `sharesOf` to measure, `transferShares` to move, and
+        // `getUnderlyingAmountByShares` to report the delivery in the units the buyer signed
+        // for. Backed/xStocks and anything else share-accounted.
+    }
+
+    // --------------------------------------------------------------------- //
     //                          The settlement intent                         //
     // --------------------------------------------------------------------- //
 
@@ -117,9 +162,9 @@ abstract contract PrimaryTypes is GateTypes {
     ///         `paramsHash` IS this struct's EIP-712 struct hash. Three repositories code
     ///         against this shape: the signer service, the marketplace API and the indexer.
     ///
-    ///         ⚠️ All fourteen members are STATIC types, which is what makes
+    ///         ⚠️ All fifteen members are STATIC types, which is what makes
     ///         `keccak256(abi.encode(INTENT_TYPEHASH, intent))` identical to the EIP-712
-    ///         struct hash: `abi.encode` of an all-static struct is exactly its fourteen head
+    ///         struct hash: `abi.encode` of an all-static struct is exactly its fifteen head
     ///         words, and `bytes4` is right-padded in both encodings. Introducing a dynamic
     ///         member (`bytes`, `string`, an array) would silently break that identity — the
     ///         ABI encoding would gain an offset word while EIP-712 would substitute a hash —
@@ -127,7 +172,11 @@ abstract contract PrimaryTypes is GateTypes {
     struct SettlementIntent {
         address buyer; // must equal `_msgSender()` (ERC-2771 aware)
         address assetToken; // what the buyer must end up holding
-        uint256 minAssetOut; // asserted against the MEASURED delivery after the call
+        uint8 accountingMode; // an `AssetAccountingMode` ordinal; see that enum for why uint8
+        uint256 minAssetOut; // asserted against the MEASURED delivery after the call, and always
+        // in the token's VISIBLE units even under `RebasingShares` — a client cannot consent
+        // to a share count, so the router converts the measured share delta back before
+        // comparing
         address settlementToken; // must equal `fee.feeToken`; NOT registered on-chain
         uint256 venueQuoteIn; // approved to the venue; the venue may consume less
         uint256 buyerFee; // our fee, same token, charged ON TOP of `venueQuoteIn`
@@ -141,12 +190,16 @@ abstract contract PrimaryTypes is GateTypes {
         uint256 deadline; // hard TTL cap, as the two attestations have
     }
 
-    /// @notice The EIP-712 typehash of `SettlementIntent` —
-    ///         `0x86c9b91e614acc7421e39417dc43dd7b9bd2e0b2c8ce196c12f8b7391d281a03`, pinned as a
-    ///         hardcoded literal in `test/primary/PrimaryIntentVectors.t.sol` so that editing the
-    ///         struct cannot land quietly.
+    /// @notice The EIP-712 typehash of `SettlementIntent`, pinned as a hardcoded literal in
+    ///         `test/primary/PrimaryIntentVectors.t.sol` so that editing the struct cannot land
+    ///         quietly.
+    ///
+    /// @dev    ⚠️ It moved on 2026-08-24, when `accountingMode` was added (AO-713). The old value
+    ///         was `0x86c9b91e614acc7421e39417dc43dd7b9bd2e0b2c8ce196c12f8b7391d281a03`. Nothing
+    ///         signed against it is valid any more, and that is intended: the primary marketplace
+    ///         is not live, so this is a clean break rather than a versioned entry point.
     bytes32 public constant INTENT_TYPEHASH = keccak256(
-        "SettlementIntent(address buyer,address assetToken,uint256 minAssetOut,address settlementToken,uint256 venueQuoteIn,uint256 buyerFee,uint256 maxSettlementIn,address feeCollector,address venue,bytes4 selector,bytes32 calldataHash,bytes32 supplierReference,uint256 nonce,uint256 deadline)"
+        "SettlementIntent(address buyer,address assetToken,uint8 accountingMode,uint256 minAssetOut,address settlementToken,uint256 venueQuoteIn,uint256 buyerFee,uint256 maxSettlementIn,address feeCollector,address venue,bytes4 selector,bytes32 calldataHash,bytes32 supplierReference,uint256 nonce,uint256 deadline)"
     );
 
     // --------------------------------------------------------------------- //

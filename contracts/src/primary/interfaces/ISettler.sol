@@ -91,6 +91,28 @@ interface ISettler {
     //    it to mark a "not yet built" path — a path that does not exist has no entry point, and
     //    an entry point that reverts unconditionally is a deployed surface nobody gated.
 
+    /// @dev The intent named an `AssetAccountingMode` ordinal this router has no implementation
+    ///      for.
+    ///
+    ///      Checked in step 0 of `VenueSettler._settleVenue`, before anything moves, and named
+    ///      rather than left to the `Panic(0x21)` an out-of-range enum decode would produce.
+    ///      That is why `SettlementIntent.accountingMode` is a `uint8` and not the enum itself
+    ///      — see `PrimaryTypes.AssetAccountingMode`.
+    ///
+    ///      ⚠️ Appending an ordinal to that enum WITHOUT giving it a branch in all three of the
+    ///      settler's accounting helpers lands here rather than settling wrongly. Fail-closed is
+    ///      the intended behaviour of their default arms.
+    error UnsupportedAccountingMode(uint8 mode);
+
+    /// @dev `transferShares` returned false, under `AssetAccountingMode.RebasingShares`.
+    ///
+    ///      🔴 There is no SafeERC20 equivalent for `transferShares`, so nothing in the
+    ///      OpenZeppelin stack normalises a token that returns nothing, and nothing would
+    ///      otherwise stop a `false` return from reading as a successful delivery. The return is
+    ///      checked explicitly at the one call site. A token that reverts instead never reaches
+    ///      this error, which is equally fine: both refuse the settlement.
+    error ShareTransferFailed();
+
     /// @dev The venue delivered less than the buyer signed for. A revert, never a silent bad fill.
     error InsufficientAssetDelivered(uint256 delivered, uint256 minAssetOut);
 

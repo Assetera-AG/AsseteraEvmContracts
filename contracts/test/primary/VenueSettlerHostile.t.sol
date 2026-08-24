@@ -77,6 +77,9 @@ abstract contract HostileSettlementBase is VenueSettlerTestBase {
         return PrimaryTypes.SettlementIntent({
             buyer: buyer,
             assetToken: assetToken,
+            // The default everywhere: an ordinary ERC-20, measured with `balanceOf` and moved
+            // with `transfer`. Share-accounting tests override this to `RebasingShares`.
+            accountingMode: uint8(PrimaryTypes.AssetAccountingMode.Erc20Balance),
             minAssetOut: MIN_OUT,
             settlementToken: settlementToken,
             venueQuoteIn: quote,

@@ -88,7 +88,7 @@ abstract contract PrimarySalesTestBase is Test {
     /// build is derived independently of the contract under test. `PrimaryIntentVectorsTest`
     /// is what proves the two agree, and that both equal the pinned literal.
     string internal constant INTENT_TYPE_STRING =
-        "SettlementIntent(address buyer,address assetToken,uint256 minAssetOut,address settlementToken,uint256 venueQuoteIn,uint256 buyerFee,uint256 maxSettlementIn,address feeCollector,address venue,bytes4 selector,bytes32 calldataHash,bytes32 supplierReference,uint256 nonce,uint256 deadline)";
+        "SettlementIntent(address buyer,address assetToken,uint8 accountingMode,uint256 minAssetOut,address settlementToken,uint256 venueQuoteIn,uint256 buyerFee,uint256 maxSettlementIn,address feeCollector,address venue,bytes4 selector,bytes32 calldataHash,bytes32 supplierReference,uint256 nonce,uint256 deadline)";
     bytes32 internal constant INTENT_TYPEHASH = keccak256(bytes(INTENT_TYPE_STRING));
 
     function setUp() public virtual {
@@ -140,6 +140,9 @@ abstract contract PrimarySalesTestBase is Test {
         return PrimaryTypes.SettlementIntent({
             buyer: buyer,
             assetToken: ASSET,
+            // The default everywhere: an ordinary ERC-20, measured with `balanceOf` and moved
+            // with `transfer`. Share-accounting tests override this to `RebasingShares`.
+            accountingMode: uint8(PrimaryTypes.AssetAccountingMode.Erc20Balance),
             minAssetOut: MIN_ASSET_OUT,
             settlementToken: CURRENCY,
             venueQuoteIn: QUOTE_IN,
