@@ -74,6 +74,25 @@ jobs:
       - run: npm ci
       - name: Generate (ABIs + deployments)
         run: npm run generate -w @asseteragmbh/evm-contracts
+
+      - name: Committed codegen is up to date
+        # 🔴 This step is what makes committing the generated SDK surface safe, and the two changes
+        #    must not be separated. Codegen bakes an address for every `src/deployments/*.json` it
+        #    finds, INCLUDING the gitignored local-chain ones, so a dev who has run
+        #    `npm run deploy:local` and then commits the regenerated file bakes a local anvil address
+        #    into the published package. This runner has no such file, so regenerating here and
+        #    diffing catches exactly that, along with the ordinary case of someone editing a
+        #    contract and forgetting to regenerate.
+        #
+        #    It also closes the release gap the committed files exist for: release-please attributes
+        #    a commit to a package by the paths it touches, so a contracts change that alters the ABI
+        #    now touches `packages/sdk` and gets a version bump that reflects it.
+        run: |
+          if ! git diff --exit-code -- packages/sdk/src/generated packages/sdk/src/deployments/deployments.gen.ts; then
+            echo "::error::Generated SDK code is out of date or carries a local deployment. Run 'npm run generate -w @asseteragmbh/evm-contracts' and commit the result."
+            exit 1
+          fi
+
       - name: Typecheck
         run: npm run typecheck -w @asseteragmbh/evm-contracts
       - name: Build
