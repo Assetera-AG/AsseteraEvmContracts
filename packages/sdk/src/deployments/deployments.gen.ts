@@ -11,7 +11,7 @@ export const deployments = {
     },
     "implementations": {
       "AsseteraECS": "0xcb2D5e22b2de63bA0958d5D7c39D7216B84803c2",
-      "AsseteraPrimarySales": "0xC0c7F32806a8C99287151B7F4886Ef2CDEFf2C7d"
+      "AsseteraPrimarySales": "0xCb0ef38528fd695116B745722d7d03485584175F"
     },
     "metadata": {
       "admin": "0x5c682CFC1ffd09a1CA2c04165C34E14aB8810c0E",
@@ -36,7 +36,7 @@ export const deployments = {
     },
     "implementations": {
       "AsseteraECS": "0xcb2D5e22b2de63bA0958d5D7c39D7216B84803c2",
-      "AsseteraPrimarySales": "0xC0c7F32806a8C99287151B7F4886Ef2CDEFf2C7d"
+      "AsseteraPrimarySales": "0xA96707072A53dDCE9205530C5132aE8EEF0222e0"
     },
     "metadata": {
       "admin": "0x5c682CFC1ffd09a1CA2c04165C34E14aB8810c0E",
