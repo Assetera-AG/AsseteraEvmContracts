@@ -1,5 +1,16 @@
 # Changelog
 
+## [7.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v6.1.0...evm-contracts-v7.0.0) (2026-08-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sdk:** the published ABI now carries AO-713's SettlementIntent, which gained a `uint8 accountingMode` member. INTENT_TYPEHASH is now 0xa24f008693b1ca921f2aca00e79f4bc40748d499f86d54d0d8377dfdc884bf68, the settlePrimary selector has moved, and every EIP-712 digest and paramsHash binding changes with them. Consumers encoding a SettlementIntent must add the member; nothing else in the package is affected, and nothing currently encodes one.
+
+### Features
+
+* **sdk:** publish the AO-713 intent ABI, and commit + guard the generated surface ([#76](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/76)) ([656622c](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/656622c52a924399ca1bdd2ff60f569b6a199ddd))
+
 ## [6.1.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v6.0.0...evm-contracts-v6.1.0) (2026-08-20)
 
 
