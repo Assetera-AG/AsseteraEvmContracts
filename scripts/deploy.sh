@@ -225,7 +225,18 @@ if [[ "$BROADCAST" -eq 1 && ("$IS_MAINNET" -eq 1 || "${ALLOW_DEPLOYER_AS_ADMIN:-
   echo "→ admin=$ADMIN_ADDRESS  (confirm this is right for $NETWORK, not another chain's value)"
 fi
 
-ARGS=(script script/Deploy.s.sol:Deploy --rpc-url "$NETWORK" --account "$ACCOUNT" --sender "$SENDER")
+# The forge script to run. Defaults to the full deploy, which is what every existing caller wants.
+#
+# `UpgradeCalldata.s.sol` is the other one, and it goes through THIS script rather than
+# `scripts/forge-script.sh` on purpose: it broadcasts (it deploys an implementation), and
+# forge-script.sh is read-only and has no keystore handling. Routing it here means an implementation
+# deployed for a live upgrade gets exactly the same treatment as any other mainnet deploy — keystore
+# signing, the CONFIRM_MAINNET_DEPLOY gate, dry-run by default, and Etherscan verification.
+#
+# That last one is not a nicety. An unverified implementation behind a live proxy is bytecode nobody can
+# read, and it is the contract counterparties are actually trusting.
+FORGE_SCRIPT="${FORGE_SCRIPT:-Deploy.s.sol:Deploy}"
+ARGS=(script "script/$FORGE_SCRIPT" --rpc-url "$NETWORK" --account "$ACCOUNT" --sender "$SENDER")
 
 if [[ "$BROADCAST" -eq 1 ]]; then
   ARGS+=(--broadcast)
@@ -251,6 +262,6 @@ if [[ "$IS_MAINNET" -eq 1 && "$BROADCAST" -eq 1 ]]; then
   echo "→ MAINNET BROADCAST: $NETWORK (chain $CHAIN_ID). These addresses are permanent."
 fi
 
-echo "→ network=$NETWORK  chain=$CHAIN_ID  account=$ACCOUNT  sender=$SENDER"
+echo "→ network=$NETWORK  chain=$CHAIN_ID  account=$ACCOUNT  sender=$SENDER  script=$FORGE_SCRIPT"
 cd "$ROOT/contracts"
 exec forge "${ARGS[@]}"
