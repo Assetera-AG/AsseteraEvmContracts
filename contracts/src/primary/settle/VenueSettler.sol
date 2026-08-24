@@ -223,7 +223,10 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         //    the two silently drift apart.
 
         IERC20 currency = IERC20(intent.settlementToken);
-        IERC20 asset = IERC20(intent.assetToken);
+        // ⚠️ There is deliberately no `IERC20 asset` local any more. Every asset read and write
+        //    now goes through `_assetUnitsOf` / `_forwardAssetUnits` / `_assetUnderlyingOf`, which
+        //    dispatch on the signed accounting mode. A bare `IERC20` handle sitting here is an
+        //    invitation to reach past them and reintroduce a `balanceOf` comparison.
 
         // `IntentGate._verifyIntent` already evaluated `venueQuoteIn + buyerFee` under checked
         // arithmetic to compare it against `maxSettlementIn`, so this addition cannot overflow.
