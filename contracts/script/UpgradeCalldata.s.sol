@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {console2} from "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
+import {VmSafe} from "forge-std/Vm.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {AsseteraECS} from "../src/AsseteraECS.sol";
 import {AsseteraPrimarySales} from "../src/primary/AsseteraPrimarySales.sol";
@@ -68,6 +69,37 @@ contract UpgradeCalldata is DeployBase {
         vm.stopBroadcast();
         console2.log("New impl deployed:", newImpl);
 
+        // 🔴 RECORD IT, or the deployment file keeps naming the OLD implementation forever.
+        //
+        //    Nothing else will do this. The Safe executes `upgradeToAndCall` directly on the proxy and
+        //    never runs a script, and `Deploy.s.sol._save` only runs on a deploy. So without this write
+        //    the record goes stale the moment the Safe transaction executes, and it stays stale silently.
+        //
+        //    That became worse once `packages/sdk/src/generated/` started being committed: the stale
+        //    address is now baked into `deployments.gen.ts` and PUBLISHED in the package rather than only
+        //    generated at publish time.
+        //
+        //    ⚠️ A TARGETED key write, not `_save`. `_save` rebuilds the whole file from in-memory state
+        //    that this script never populates — it knows one implementation address and nothing else — so
+        //    calling it here would blank every other field with zeros.
+        //
+        //    ⚠️ DRY RUN MUST NOT TOUCH THE REAL RECORD, the same rule `_save` already documents: `forge
+        //    script` without `--broadcast` still executes every line above, including the `new` that
+        //    produces `newImpl`, but that contract was never actually deployed. Writing its address would
+        //    turn "let me see what this would do" into a silent corruption of the file every consumer
+        //    reads. The preview goes to `out/`, which is gitignored.
+        string memory implKey = isPrimary ? ".implementations.AsseteraPrimarySales" : ".implementations.AsseteraECS";
+        if (vm.isContext(VmSafe.ForgeContext.ScriptDryRun)) {
+            console2.log("DRY RUN - the deployment record was NOT modified.");
+            console2.log("  would have set:", implKey);
+            console2.log("  to:            ", newImpl);
+        } else {
+            vm.writeJson(vm.toString(newImpl), path, implKey);
+            console2.log("Deployment record updated:", path);
+            console2.log("  %s = %s", implKey, vm.toString(newImpl));
+            console2.log("  NOTE: commit this file, and re-run `npm run generate` so the SDK picks it up.");
+        }
+
         if (newImpl == currentImpl) {
             console2.log("Implementation bytecode unchanged - nothing to upgrade.");
             return;
@@ -89,5 +121,7 @@ contract UpgradeCalldata is DeployBase {
         console2.log("3. Paste 'To' address and calldata above");
         console2.log("4. Collect required signatures from signers");
         console2.log("5. Execute - the proxy will point to the new impl");
+        console2.log("6. Verify: `npm run verify:<network>` checks the live impl slot against the record");
+        console2.log("7. Commit the updated deployment file, and regenerate the SDK");
     }
 }

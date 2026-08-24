@@ -70,8 +70,14 @@ if [[ -z "$NETWORKS" ]]; then
 fi
 
 NETWORK="${1:-}"
-TARGET="${2:-}"
-if [[ -z "$NETWORK" || -z "$TARGET" ]]; then
+# 🔴 NAMED `SCRIPT`, NOT `TARGET`, AND THAT MATTERS. `UpgradeCalldata.s.sol` is driven by an
+# environment variable ALSO called TARGET (`TARGET=primary` selects which proxy to upgrade). Bash keeps a
+# variable exported once it has been exported, so `TARGET=primary scripts/forge-script.sh mainnet
+# UpgradeCalldata.s.sol:UpgradeCalldata` used to overwrite the caller's value here and hand forge
+# `TARGET=UpgradeCalldata.s.sol:UpgradeCalldata`. The script then refused with "TARGET must be 'ecs' or
+# 'primary'", naming the variable the caller had set correctly and giving no hint that this file ate it.
+SCRIPT="${2:-}"
+if [[ -z "$NETWORK" || -z "$SCRIPT" ]]; then
   echo "usage: scripts/forge-script.sh <network> <Script.s.sol:Contract> [forge args...]" >&2
   echo "networks: $NETWORKS" >&2
   exit 1
@@ -104,4 +110,4 @@ if [[ -n "$VAR" && -z "${!VAR:-}" ]]; then
 fi
 
 cd "$ROOT/contracts"
-exec forge script "script/$TARGET" --rpc-url "$NETWORK" "$@"
+exec forge script "script/$SCRIPT" --rpc-url "$NETWORK" "$@"
