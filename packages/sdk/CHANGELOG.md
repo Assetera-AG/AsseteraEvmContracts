@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.0.1](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v7.0.0...evm-contracts-v7.0.1) (2026-08-24)
+
+
+### Bug Fixes
+
+* **sdk:** document that implementations is a snapshot, not a live view ([#80](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/80)) ([e5bbf68](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/e5bbf689764e0b4c56d99f91610b8a57bca6c369))
+
 ## [7.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v6.1.0...evm-contracts-v7.0.0) (2026-08-24)
 
 
