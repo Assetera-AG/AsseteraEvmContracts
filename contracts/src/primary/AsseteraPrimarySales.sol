@@ -5,6 +5,7 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import {ERC2771ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
+import {PermitRelay} from "../core/PermitRelay.sol";
 import {VenueSettler} from "./settle/VenueSettler.sol";
 import {PrimaryTypes} from "./types/PrimaryTypes.sol";
 
@@ -82,15 +83,39 @@ import {PrimaryTypes} from "./types/PrimaryTypes.sol";
 ///         Identity is resolved via `_msgSender()` (ERC-2771) with the same trusted forwarder
 ///         as the exchange, so a gasless primary sale works the way a gasless order does.
 ///
+///         **A purchase is ONE transaction, not two** (AO-713). `settlePrimary` pulls the
+///         settlement currency, so it used to need an `approve` sent ahead of it. `permitAndCall`,
+///         inherited from the exchange's `PermitRelay`, carries an ERC-2612 `permit` and the
+///         settlement in a single call. That is worth more than the saved gas: an `approve` takes
+///         15-30 seconds to mine, which does not fit inside the execution buffer a firm venue
+///         quote is good for, whereas a permit is a signature and costs no wall-clock time at
+///         all. No new selector was added for it and `settlePrimary` is untouched —
+///         `permitAndCall` is generic over the call it wraps, so the settlement it delegates into
+///         is the same frozen entry point, reached the same way, with the same guard.
+///
 /// @dev    Assembled as: `PrimaryTypes` → `PrimaryStorage` (is `FeeGate`) → `IntentGate` →
-///         `SettlementLimits` → `VenueSettler` → this file, which adds the three concerns only
-///         the final contract needs (`Initializable`, `UUPSUpgradeable`,
+///         `SettlementLimits` → `VenueSettler` → this file, which adds the four concerns only
+///         the final contract needs (`Initializable`, `UUPSUpgradeable`, `PermitRelay`,
 ///         `ERC2771ContextUpgradeable`) plus the initializer, the admin surface and the frozen
 ///         entry point.
 ///
+///         `PermitRelay` is inherited here rather than deeper because it is a leaf: it declares
+///         no storage and reads none, and its base is `ContextUpgradeable` — the two context
+///         hooks and `IERC20Permit` are all it needs. It is listed AFTER `VenueSettler` and
+///         BEFORE `ERC2771ContextUpgradeable` so the `_msgSender()` its inner-call plumbing
+///         resolves is the ERC-2771 one, which is what makes a relayed permit-and-settle resolve
+///         the buyer rather than the forwarder.
+///
 ///         ⚠️ **This file owns the inheritance list.** The settlement money path is
 ///         `VenueSettler`'s and changes there; nothing here should need to change with it.
-contract AsseteraPrimarySales is PrimaryTypes, Initializable, UUPSUpgradeable, VenueSettler, ERC2771ContextUpgradeable {
+contract AsseteraPrimarySales is
+    PrimaryTypes,
+    Initializable,
+    UUPSUpgradeable,
+    VenueSettler,
+    PermitRelay,
+    ERC2771ContextUpgradeable
+{
     /// @notice The fee-collector allowlist changed.
     event CollectorAllowed(address indexed collector, bool allowed);
     /// @notice The KYC gate for one primary-sale action was toggled.

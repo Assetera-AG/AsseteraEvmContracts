@@ -1726,6 +1726,24 @@ export const asseteraPrimarySalesAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: 'token', internalType: 'address', type: 'address' },
+      { name: 'value', internalType: 'uint256', type: 'uint256' },
+      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
+      { name: 'v', internalType: 'uint8', type: 'uint8' },
+      { name: 'r', internalType: 'bytes32', type: 'bytes32' },
+      { name: 's', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'permitAndCall',
+    outputs: [
+      { name: 'permitAccepted', internalType: 'bool', type: 'bool' },
+      { name: 'result', internalType: 'bytes', type: 'bytes' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     inputs: [],
     name: 'proxiableUUID',
     outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
@@ -4859,6 +4877,21 @@ export const useWriteAsseteraPrimarySalesPause =
   })
 
 /**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link asseteraPrimarySalesAbi}__ and `functionName` set to `"permitAndCall"`
+ *
+ * - [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Polygon Polygon Scan__](https://polygonscan.com/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ */
+export const useWriteAsseteraPrimarySalesPermitAndCall =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: asseteraPrimarySalesAbi,
+    address: asseteraPrimarySalesAddress,
+    functionName: 'permitAndCall',
+  })
+
+/**
  * Wraps __{@link useWriteContract}__ with `abi` set to __{@link asseteraPrimarySalesAbi}__ and `functionName` set to `"renounceRole"`
  *
  * - [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
@@ -5050,6 +5083,21 @@ export const useSimulateAsseteraPrimarySalesPause =
     abi: asseteraPrimarySalesAbi,
     address: asseteraPrimarySalesAddress,
     functionName: 'pause',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link asseteraPrimarySalesAbi}__ and `functionName` set to `"permitAndCall"`
+ *
+ * - [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Polygon Polygon Scan__](https://polygonscan.com/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ */
+export const useSimulateAsseteraPrimarySalesPermitAndCall =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: asseteraPrimarySalesAbi,
+    address: asseteraPrimarySalesAddress,
+    functionName: 'permitAndCall',
   })
 
 /**

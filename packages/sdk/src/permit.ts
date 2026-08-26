@@ -1,7 +1,10 @@
 import { hashDomain, type Address, type Hex, type PublicClient } from "viem";
 
 /**
- * ERC-2612 permit support for `AsseteraECS.permitAndCall` (AO-298).
+ * ERC-2612 permit support for `permitAndCall`, which BOTH deployed contracts expose:
+ * `AsseteraECS` (approve + trade in one transaction, AO-298) and `AsseteraPrimarySales`
+ * (permit + `settlePrimary` in one transaction, AO-713). Nothing here is specific to either —
+ * `spender` is whichever contract you are calling.
  *
  * The contract does not need this — it hands `v`, `r`, `s` straight to the token, which checks them
  * against its own domain. The client does, because **you cannot assume a token's EIP-712 domain name
