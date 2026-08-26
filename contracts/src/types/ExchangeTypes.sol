@@ -115,5 +115,19 @@ abstract contract ExchangeTypes is GateTypes {
         ///      fully refunded — including by `replaceOffer`, which unwinds the
         ///      previous proposer and re-escrows the caller at the new amounts.
         uint256 escrowedFee;
+        // --- appended (AO-746); append-only, `Offer` is stored in a mapping ---
+        /// @dev The order this offer was raised against, or 0 for a standalone offer.
+        ///      An offer and an order are two entries in two independent id spaces, so
+        ///      without this link an accepted offer left its originating order Open and
+        ///      still fillable, and the order maker had to fund BOTH sides of the same
+        ///      trade (AO-746). When it is set and the order's own maker is the party
+        ///      that must escrow a leg, that leg is drawn from the order's escrow
+        ///      instead of from their wallet — one economic commitment, not two.
+        ///
+        ///      ⚠️ Not covered by the KYC/fee attestation's `paramsHash`: the encoding
+        ///      is a frozen cross-repo vector (see `test/ParamsHashVectors.t.sol`). The
+        ///      draw is guarded on chain instead — only the order's OWN maker can draw,
+        ///      and only the token the order already holds.
+        uint256 orderId;
     }
 }

@@ -28,7 +28,8 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         uint16 makerFeeBps,
         uint16 takerFeeBps,
         address feeCollector,
-        address feeToken
+        address feeToken,
+        uint256 orderId
     );
     event OfferReplaced(
         uint256 indexed id, address indexed by, uint256 newMakerAmount, uint256 newTakerAmount, uint64 expireTs
@@ -36,7 +37,27 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
     event OfferCancelled(uint256 indexed id, address indexed by, uint256 makerAmount, uint256 takerAmount);
     /// @dev `amountReturned` includes the proposer's unconsumed escrowed fee (AC-833).
     event OfferExpired(uint256 indexed id, address indexed proposedBy, uint256 amountReturned);
-    event OfferAccepted(uint256 indexed id, address indexed by, uint256 makerAmount, uint256 takerAmount);
+    /// @dev `orderId` is the order this offer was raised against, or 0 for a standalone
+    ///      offer (AO-746). It is carried on the settlement event, not only on `OfferMade`,
+    ///      so a consumer projecting a single log can attribute the trade to its order
+    ///      without holding the whole offer history.
+    event OfferAccepted(
+        uint256 indexed id, address indexed by, uint256 makerAmount, uint256 takerAmount, uint256 orderId
+    );
+
+    /// @notice An offer funded a leg out of the order it was raised against (AO-746).
+    /// @param drawn             Moved OUT of the order's escrow to fund the leg. The tokens never
+    ///                          leave the venue — an order's `remainingQuantity` and an offer's
+    ///                          escrowed leg are two claims on one pooled balance — so this is an
+    ///                          accounting move, not a transfer.
+    /// @param remainingQuantity The order's remaining quantity AFTER the draw.
+    event OrderEscrowDrawn(uint256 indexed orderId, uint256 indexed offerId, uint256 drawn, uint256 remainingQuantity);
+
+    /// @notice An accepted offer consumed the order it was raised against, which is now `Filled`
+    ///         and no longer fillable by anyone else (AO-746).
+    /// @param refunded The order's unconsumed escrowed fee, returned to its maker. No fill ever
+    ///                 earned it, so none of it is owed to the collector.
+    event OrderClosedByOffer(uint256 indexed orderId, uint256 indexed offerId, uint256 refunded);
     /// @dev Amounts are GROSS (AC-833) — the agreed leg amounts, before either fee.
     ///      Both fees are denominated in `feeToken`, so net received is simply
     ///      `makerAmountGross − makerFeeAmount` / `takerAmountGross − takerFeeAmount`
@@ -59,14 +80,35 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
     /// @dev An offer made before the AC-833 upgrade carries no settlement currency, so
     ///      its fees cannot be denominated. Unwind paths still work; accept does not.
     error LegacyOfferMustBeUnwound(uint256 id);
+    /// @dev The named order is not owned by a party to this offer, or does not trade the
+    ///      token either leg of this offer trades. Either way its escrow can never fund
+    ///      this offer, so the link would be a label rather than a linkage (AO-746).
+    error OrderNotLinkable(uint256 orderId);
 
     /// @notice Create a targeted offer. Maker escrows makerToken; only the
     ///         nominated taker can respond. KYC-gated on the maker.
+    /// @param orderId The order this offer is raised against, or 0 for a standalone offer
+    ///                (AO-746). When set, the order must still be `Open`, must be owned by
+    ///                the maker or the taker of this offer, and must sell a token one of the
+    ///                two legs trades — otherwise its escrow could never fund this offer.
+    ///                Whichever party owns the order funds their leg FROM that order's escrow
+    ///                rather than from their wallet, and accepting the offer closes the order
+    ///                once its quantity is consumed.
+    ///
+    ///                ⚠️ `orderId` is deliberately NOT part of the attestation `paramsHash`.
+    ///                That preimage is a frozen cross-repo vector reproduced independently by
+    ///                AsseteraComplianceService and AsseteraMarketplaceAPI (see
+    ///                `test/ParamsHashVectors.t.sol`), and extending it would revert every
+    ///                offer until all three repos ship together. The escrow source is guarded
+    ///                on chain instead: only the order's OWN maker can draw on it, and only
+    ///                for the token it already holds, so a substituted `orderId` can move no
+    ///                funds the caller did not already commit.
     /// @param att    KYC attestation authorising MakeOffer (no fee terms).
     /// @param feeAtt Fee attestation from the fee service, authorising the fee terms
     ///               snapshotted onto the offer. Bound to the same account/action/
     ///               paramsHash as `att` (see `_consumeKycAndFee`).
     function makeOffer(
+        uint256 orderId,
         address taker,
         address makerToken,
         uint256 makerAmount,
@@ -82,6 +124,7 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         if (makerToken == takerToken) revert SameToken();
         if (taker == maker) revert OfferSelfTarget();
         if (expireTs != 0 && expireTs <= block.timestamp) revert InvalidExpiry();
+        _requireLinkableOrder(orderId, maker, taker, makerToken, takerToken);
 
         _bindParamsHash(
             uint8(Action.MakeOffer),
@@ -92,11 +135,19 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         _validateFees(feeAtt, makerToken, takerToken);
         _consumeKycAndFee(maker, uint8(Action.MakeOffer), 0, att, feeAtt);
 
-        id = _storeOffer(maker, taker, makerToken, makerAmount, takerToken, takerAmount, expireTs, feeAtt);
+        id = _storeOffer(orderId, maker, taker, makerToken, makerAmount, takerToken, takerAmount, expireTs, feeAtt);
         // The maker escrows their leg, plus their own fee when that leg is the
-        // settlement currency — they are then the currency payer (AC-833).
-        uint256 escrowedFee = _proposerFee(makerToken, makerAmount, feeAtt.feeToken, feeAtt.makerFeeBps);
-        IERC20(makerToken).safeTransferFrom(maker, address(this), makerAmount + escrowedFee);
+        // settlement currency — they are then the currency payer (AC-833). When the
+        // maker owns the linked order, the leg is already escrowed there (AO-746) and
+        // only the shortfall and the fee come out of their wallet.
+        _escrowLeg(
+            orderId,
+            id,
+            maker,
+            makerToken,
+            makerAmount,
+            _proposerFee(makerToken, makerAmount, feeAtt.feeToken, feeAtt.makerFeeBps)
+        );
         emit OfferMade(
             id,
             maker,
@@ -109,8 +160,91 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
             feeAtt.makerFeeBps,
             feeAtt.takerFeeBps,
             feeAtt.feeCollector,
-            feeAtt.feeToken
+            feeAtt.feeToken,
+            orderId
         );
+    }
+
+    /// @dev Reject a link that could never fund anything (AO-746). An order that no party to
+    ///      the offer owns, or that sells a token neither leg trades, can never satisfy the draw
+    ///      predicate in `_escrowLeg` — so accepting the link would record a relationship the
+    ///      contract will not honour, and leave the named order Open forever.
+    function _requireLinkableOrder(
+        uint256 orderId,
+        address maker,
+        address taker,
+        address makerToken,
+        address takerToken
+    ) private view {
+        if (orderId == 0) return;
+        Order storage ord = _orders[orderId];
+        if (ord.status != OrderStatus.Open) revert OrderNotOpen(orderId);
+        if (ord.maker != maker && ord.maker != taker) revert OrderNotLinkable(orderId);
+        if (ord.sellToken != makerToken && ord.sellToken != takerToken) revert OrderNotLinkable(orderId);
+    }
+
+    /// @dev Escrow `amount` of `proposer`'s leg plus their `fee`, funding as much of the leg as
+    ///      possible out of the linked order's escrow rather than their wallet (AO-746).
+    ///
+    ///      The venue holds ONE pooled balance per token: an order's `remainingQuantity` and an
+    ///      offer's escrowed leg are two claims on it, never two piles. So a draw moves no
+    ///      tokens — it only reassigns the claim, which is exactly why the maker no longer has
+    ///      to fund both sides of their own negotiation.
+    ///
+    ///      Drawing is allowed only for the order's OWN maker and only for the token the order
+    ///      already holds. Every other case escrows from the wallet as before, which covers the
+    ///      counterparty proposing against someone else's listing, a standalone offer, and an
+    ///      order already closed by a fill, a cancel or a sweep.
+    ///
+    ///      A negotiation larger than the listing draws what is there and takes the shortfall
+    ///      from the wallet, so raising your price never becomes un-fundable.
+    ///
+    ///      The move is ONE-WAY: unwinding the offer pays the proposer's wallet rather than
+    ///      restoring the listing. Restoring would have to decide what to do when the order has
+    ///      since been cancelled or swept, and a listing that silently reappears is worse than
+    ///      one the maker re-lists deliberately.
+    function _escrowLeg(
+        uint256 orderId,
+        uint256 offerId,
+        address proposer,
+        address legToken,
+        uint256 amount,
+        uint256 fee
+    ) private {
+        uint256 drawn;
+        if (orderId != 0) {
+            Order storage ord = _orders[orderId];
+            if (ord.status == OrderStatus.Open && ord.maker == proposer && ord.sellToken == legToken) {
+                uint256 remaining = ord.remainingQuantity;
+                drawn = remaining < amount ? remaining : amount;
+                if (drawn != 0) {
+                    unchecked {
+                        remaining -= drawn;
+                    }
+                    ord.remainingQuantity = remaining;
+                    emit OrderEscrowDrawn(orderId, offerId, drawn, remaining);
+                }
+            }
+        }
+        // The single point where a proposer's leg enters escrow. Whatever the order funded is
+        // already inside the venue, so only the shortfall and the fee come out of their wallet.
+        IERC20(legToken).safeTransferFrom(proposer, address(this), amount - drawn + fee);
+    }
+
+    /// @dev Close the linked order once an accepted offer has consumed it (AO-746). Leaves a
+    ///      partially-consumed listing Open — negotiating three of ten does not retire the
+    ///      other seven — and returns the order's unconsumed escrowed fee, which no fill ever
+    ///      earned, to its maker.
+    function _closeConsumedOrder(uint256 orderId, uint256 offerId) private {
+        if (orderId == 0) return;
+        Order storage ord = _orders[orderId];
+        if (ord.status != OrderStatus.Open || ord.remainingQuantity != 0) return;
+
+        uint256 refunded = ord.escrowedFee;
+        ord.status = OrderStatus.Filled;
+        ord.escrowedFee = 0;
+        if (refunded != 0) IERC20(ord.sellToken).safeTransfer(ord.maker, refunded);
+        emit OrderClosedByOffer(orderId, offerId, refunded);
     }
 
     /// @dev The fee a proposer must escrow alongside their leg: non-zero only when the
@@ -126,6 +260,7 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
     }
 
     function _storeOffer(
+        uint256 orderId,
         address maker,
         address taker,
         address makerToken,
@@ -152,7 +287,8 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
             takerFeeBps: feeAtt.takerFeeBps,
             feeCollector: feeAtt.feeCollector,
             feeToken: feeAtt.feeToken,
-            escrowedFee: _proposerFee(makerToken, makerAmount, feeAtt.feeToken, feeAtt.makerFeeBps)
+            escrowedFee: _proposerFee(makerToken, makerAmount, feeAtt.feeToken, feeAtt.makerFeeBps),
+            orderId: orderId
         });
     }
 
@@ -218,11 +354,16 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         }
 
         // Escrow caller's side at the new amounts, plus their own fee if it's the currency.
-        if (callerIsMaker) {
-            IERC20(o.makerToken).safeTransferFrom(o.maker, address(this), newMakerAmount + newEscrowedFee);
-        } else {
-            IERC20(o.takerToken).safeTransferFrom(o.taker, address(this), newTakerAmount + newEscrowedFee);
-        }
+        // A caller who owns the linked order funds their leg from it (AO-746), so countering
+        // your own listing no longer needs a second copy of the asset in your wallet.
+        _escrowLeg(
+            o.orderId,
+            offerId,
+            caller,
+            callerIsMaker ? o.makerToken : o.takerToken,
+            callerIsMaker ? newMakerAmount : newTakerAmount,
+            newEscrowedFee
+        );
 
         emit OfferReplaced(offerId, caller, newMakerAmount, newTakerAmount, expireTs);
     }
@@ -297,7 +438,7 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         }
         _consumeKyc(caller, uint8(Action.AcceptOffer), offerId, att);
 
-        emit OfferAccepted(offerId, caller, o.makerAmount, o.takerAmount);
+        emit OfferAccepted(offerId, caller, o.makerAmount, o.takerAmount, o.orderId);
         _settleOffer(o, offerId, caller);
     }
 
@@ -335,13 +476,16 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
 
         // The accepting party brings in their leg — plus their OWN fee if that leg is
         // the currency. The other side is already escrowed from makeOffer/replaceOffer.
-        if (caller == taker) {
-            IERC20(takerToken)
-                .safeTransferFrom(taker, address(this), takerAmount + (makerLegIsCurrency ? 0 : takerFeeAmount));
-        } else {
-            IERC20(makerToken)
-                .safeTransferFrom(maker, address(this), makerAmount + (makerLegIsCurrency ? makerFeeAmount : 0));
-        }
+        // An acceptor who owns the linked order brings their leg from it (AO-746).
+        bool acceptorIsTaker = (caller == taker);
+        _escrowLeg(
+            o.orderId,
+            offerId,
+            caller,
+            acceptorIsTaker ? takerToken : makerToken,
+            acceptorIsTaker ? takerAmount : makerAmount,
+            acceptorIsTaker ? (makerLegIsCurrency ? 0 : takerFeeAmount) : (makerLegIsCurrency ? makerFeeAmount : 0)
+        );
 
         // Release: currency net to its receiver, both fees to the collector, asset gross.
         if (makerLegIsCurrency) {
@@ -357,6 +501,11 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         emit OfferSettled(
             offerId, caller, makerAmount, takerAmount, makerFeeAmount, takerFeeAmount, collector, o.feeToken
         );
+
+        // The trade the order was listed for has now happened through the offer, so the order
+        // must not stay Open and fillable by a third party (AO-746). Last, after every transfer
+        // above, so a hostile token in the settlement path cannot re-enter a half-closed order.
+        _closeConsumedOrder(o.orderId, offerId);
     }
 
     /// @notice Anyone can sweep a batch of expired offers, returning the current

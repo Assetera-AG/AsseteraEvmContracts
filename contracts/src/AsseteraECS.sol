@@ -136,13 +136,20 @@ contract AsseteraECS is ExchangeTypes, Initializable, UUPSUpgradeable, OrderBook
 
     function _authorizeUpgrade(address) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
-    /// @dev Bumped to 4.0.0 by AO-514, which moved the gate mappings into ERC-7201 namespaced storage
+    /// @dev 4.0.0 came from AO-514, which moved the gate mappings into ERC-7201 namespaced storage
     ///      and shifted `_offers` 5 → 2, `totalOffers` 6 → 3, `__gap` 8 → 4. The MAJOR digit is the
-    ///      signal: this implementation is NOT installable over a proxy running 3.x, and reporting 3.2.0
+    ///      signal: that implementation is NOT installable over a proxy running 3.x, and reporting 3.2.0
     ///      from it would make the one string ops uses to identify an implementation say the opposite of
     ///      the truth. Previous: 3.2.0 (AO-298, `permitAndCall`). Nothing on chain reads it.
+    ///
+    ///      MINOR bumped to 4.1.0 by AO-746 (an offer now draws on, and closes, the order it was raised
+    ///      against). The ABI breaks — `makeOffer` gains a leading `orderId`, and `OfferMade`/
+    ///      `OfferAccepted` change topic0 — but the STORAGE does not: `orderId` is appended to `Offer`,
+    ///      which lives in a mapping, so every existing entry keeps its slots and reads back with
+    ///      `orderId == 0`. This IS installable over a live 4.0.0 proxy with a plain `upgradeToAndCall`,
+    ///      and the MAJOR digit is what says so. Off-chain consumers move in lockstep regardless.
     function version() external pure virtual returns (string memory) {
-        return "4.0.0";
+        return "4.1.0";
     }
 
     function _msgSender() internal view override(ContextUpgradeable, ERC2771ContextUpgradeable) returns (address) {

@@ -398,7 +398,7 @@ contract ParamsHashVectorsOnChainTest is Test {
         vm.startPrank(maker);
         FaucetToken(TOKEN_A).approve(address(exchange), AMOUNT_A);
         vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
-        exchange.makeOffer(TAKER, TOKEN_A, AMOUNT_A, TOKEN_B, AMOUNT_B, 0, att, feeAtt);
+        exchange.makeOffer(0, TAKER, TOKEN_A, AMOUNT_A, TOKEN_B, AMOUNT_B, 0, att, feeAtt);
         vm.stopPrank();
     }
 
@@ -426,7 +426,7 @@ contract ParamsHashVectorsOnChainTest is Test {
 
         vm.startPrank(maker);
         FaucetToken(TOKEN_A).approve(address(exchange), makerAmount);
-        id = exchange.makeOffer(TAKER, TOKEN_A, makerAmount, TOKEN_B, takerAmount, 0, att, feeAtt);
+        id = exchange.makeOffer(0, TAKER, TOKEN_A, makerAmount, TOKEN_B, takerAmount, 0, att, feeAtt);
         vm.stopPrank();
     }
 
