@@ -67,9 +67,24 @@ contract EscrowConservationInvariantTest is Test {
     ///      fee-attested entry points genuinely land.
     function test_HandlerCanDriveFeeAttestedEntryPoints() public {
         handler.placeOrder(0, true, 100e18, 200e18, false, 0);
-        handler.makeOffer(0, 1, true, 100e18, 200e18, false, 0);
+        handler.makeOffer(0, 1, true, 100e18, 200e18, false, 0, 0);
         assertEq(exchange.totalOrders(), 1, "handler failed to place an order");
         assertEq(exchange.totalOffers(), 1, "handler failed to make an offer");
+    }
+
+    /// @dev AO-746 vacuity guard, in the same spirit as the one above. Escrow conservation
+    ///      already held before an offer could draw on an order, so the two invariants passing
+    ///      say nothing about the draw unless the handler genuinely reaches it. An invariant
+    ///      function cannot assert this — invariants are evaluated once before any call is made,
+    ///      when a cumulative counter is still zero — so pin it as an ordinary test that drives
+    ///      the handler through the whole linked path by hand.
+    function test_HandlerReachesTheLinkedOfferPath() public {
+        handler.placeOrder(0, true, 100e18, 200e18, false, 0); // actors[0] lists 100 tokenA
+        handler.makeOffer(0, 1, true, 100e18, 200e18, false, 0, 0); // same actor, same token, linked
+        assertGt(handler.offersLinkedToAnOrder(), 0, "handler never raised an offer against an order");
+
+        handler.acceptOffer(0);
+        assertGt(handler.ordersClosedByAnOffer(), 0, "handler never closed an order through an offer");
     }
 
     /// @dev Sum of ground-truth escrowed tokenA (recomputed fresh from every

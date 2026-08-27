@@ -243,6 +243,7 @@ export const asseteraEcsAbi = [
           { name: 'feeCollector', internalType: 'address', type: 'address' },
           { name: 'feeToken', internalType: 'address', type: 'address' },
           { name: 'escrowedFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'orderId', internalType: 'uint256', type: 'uint256' },
         ],
       },
     ],
@@ -281,6 +282,7 @@ export const asseteraEcsAbi = [
           { name: 'feeCollector', internalType: 'address', type: 'address' },
           { name: 'feeToken', internalType: 'address', type: 'address' },
           { name: 'escrowedFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'boughtQuantity', internalType: 'uint256', type: 'uint256' },
         ],
       },
     ],
@@ -334,6 +336,7 @@ export const asseteraEcsAbi = [
   {
     type: 'function',
     inputs: [
+      { name: 'orderId', internalType: 'uint256', type: 'uint256' },
       { name: 'taker', internalType: 'address', type: 'address' },
       { name: 'makerToken', internalType: 'address', type: 'address' },
       { name: 'makerAmount', internalType: 'uint256', type: 'uint256' },
@@ -769,6 +772,12 @@ export const asseteraEcsAbi = [
         type: 'uint256',
         indexed: false,
       },
+      {
+        name: 'orderId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
     ],
     name: 'OfferAccepted',
   },
@@ -916,6 +925,12 @@ export const asseteraEcsAbi = [
         type: 'address',
         indexed: false,
       },
+      {
+        name: 'orderId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
     ],
     name: 'OfferMade',
   },
@@ -1010,6 +1025,62 @@ export const asseteraEcsAbi = [
       },
     ],
     name: 'OrderCancelled',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'orderId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: true,
+      },
+      {
+        name: 'offerId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: true,
+      },
+      {
+        name: 'refunded',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'OrderClosedByOffer',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'orderId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: true,
+      },
+      {
+        name: 'offerId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: true,
+      },
+      {
+        name: 'drawn',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'remainingQuantity',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'OrderEscrowDrawn',
   },
   {
     type: 'event',
@@ -1459,6 +1530,11 @@ export const asseteraEcsAbi = [
     type: 'error',
     inputs: [{ name: 'id', internalType: 'uint256', type: 'uint256' }],
     name: 'OrderIsExpired',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'orderId', internalType: 'uint256', type: 'uint256' }],
+    name: 'OrderNotLinkable',
   },
   {
     type: 'error',
@@ -4202,6 +4278,36 @@ export const useWatchAsseteraEcsOrderCancelledEvent =
     abi: asseteraEcsAbi,
     address: asseteraEcsAddress,
     eventName: 'OrderCancelled',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link asseteraEcsAbi}__ and `eventName` set to `"OrderClosedByOffer"`
+ *
+ * - [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0xf045d3FE81C14d8c13DbaB0b03a4Ea1505e499ad)
+ * - [__View Contract on Polygon Polygon Scan__](https://polygonscan.com/address/0xf045d3FE81C14d8c13DbaB0b03a4Ea1505e499ad)
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0xf045d3FE81C14d8c13DbaB0b03a4Ea1505e499ad)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0xf045d3FE81C14d8c13DbaB0b03a4Ea1505e499ad)
+ */
+export const useWatchAsseteraEcsOrderClosedByOfferEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: asseteraEcsAbi,
+    address: asseteraEcsAddress,
+    eventName: 'OrderClosedByOffer',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link asseteraEcsAbi}__ and `eventName` set to `"OrderEscrowDrawn"`
+ *
+ * - [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0xf045d3FE81C14d8c13DbaB0b03a4Ea1505e499ad)
+ * - [__View Contract on Polygon Polygon Scan__](https://polygonscan.com/address/0xf045d3FE81C14d8c13DbaB0b03a4Ea1505e499ad)
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0xf045d3FE81C14d8c13DbaB0b03a4Ea1505e499ad)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0xf045d3FE81C14d8c13DbaB0b03a4Ea1505e499ad)
+ */
+export const useWatchAsseteraEcsOrderEscrowDrawnEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: asseteraEcsAbi,
+    address: asseteraEcsAddress,
+    eventName: 'OrderEscrowDrawn',
   })
 
 /**

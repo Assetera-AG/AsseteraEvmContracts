@@ -23,7 +23,7 @@ contract AsseteraECSV2 is AsseteraECS {
     constructor(address trustedForwarder) AsseteraECS(trustedForwarder) {}
 
     function version() external pure override returns (string memory) {
-        return "4.0.0";
+        return "4.1.0";
     }
 
     function isUpgraded() external pure returns (bool) {

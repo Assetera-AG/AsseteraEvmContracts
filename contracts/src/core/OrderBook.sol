@@ -198,7 +198,8 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
             takerFeeBps: feeAtt.takerFeeBps,
             feeCollector: feeAtt.feeCollector,
             feeToken: feeAtt.feeToken,
-            escrowedFee: escrowedFee
+            escrowedFee: escrowedFee,
+            boughtQuantity: 0
         });
 
         IERC20(sellToken).safeTransferFrom(maker, address(this), sellAmount + escrowedFee);
@@ -300,6 +301,9 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
 
         // ---- Effects (CEI) --------------------------------------------------- //
         o.remainingQuantity -= fillSellAmount;
+        // Counted here too, not only on the offer path, so the buy side stays truthful for an
+        // order that is part filled at the listed price and part negotiated away (AO-746).
+        o.boughtQuantity += buyAmountDue;
         bool fullFill = (o.remainingQuantity == 0);
         if (fullFill) o.status = OrderStatus.Filled;
 

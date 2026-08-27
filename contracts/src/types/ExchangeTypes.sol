@@ -89,6 +89,15 @@ abstract contract ExchangeTypes is GateTypes {
         ///      It is the MAKER'S MONEY until a fill earns it, so every unwind path —
         ///      and the final fill — must return whatever remains.
         uint256 escrowedFee;
+        // --- appended (AO-746); append-only, `Order` is stored in a mapping ---
+        /// @dev How much `buyToken` this order has actually received, across fills AND
+        ///      linked-offer settlements. It cannot be derived from `remainingQuantity`:
+        ///      that counts the token the order SELLS, and a fill holds the listed price
+        ///      while a negotiated offer does not, so the two stop tracking each other the
+        ///      moment an offer settles at anything other than the listed price. Without
+        ///      this, a buy-side order whose whole intent was met by a cheaper offer keeps
+        ///      its unspent change listed as a live bid (AO-746).
+        uint256 boughtQuantity;
     }
 
     struct Offer {
@@ -115,5 +124,19 @@ abstract contract ExchangeTypes is GateTypes {
         ///      fully refunded — including by `replaceOffer`, which unwinds the
         ///      previous proposer and re-escrows the caller at the new amounts.
         uint256 escrowedFee;
+        // --- appended (AO-746); append-only, `Offer` is stored in a mapping ---
+        /// @dev The order this offer was raised against, or 0 for a standalone offer.
+        ///      An offer and an order are two entries in two independent id spaces, so
+        ///      without this link an accepted offer left its originating order Open and
+        ///      still fillable, and the order maker had to fund BOTH sides of the same
+        ///      trade (AO-746). When it is set and the order's own maker is the party
+        ///      that must escrow a leg, that leg is drawn from the order's escrow
+        ///      instead of from their wallet — one economic commitment, not two.
+        ///
+        ///      ⚠️ Not covered by the KYC/fee attestation's `paramsHash`: the encoding
+        ///      is a frozen cross-repo vector (see `test/ParamsHashVectors.t.sol`). The
+        ///      draw is guarded on chain instead — only the order's OWN maker can draw,
+        ///      and only the token the order already holds.
+        uint256 orderId;
     }
 }
