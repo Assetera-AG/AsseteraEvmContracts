@@ -66,24 +66,37 @@ abstract contract DeployBase is CreateXScript {
     /// @dev Whether the implementation built from THIS commit may be installed onto an exchange proxy that
     ///      already has code, via `upgradeToAndCall`.
     ///
-    ///      ⚠️ Keep this `false` whenever the commit changes the linear storage layout. It is `false` today
-    ///      because AO-514 moved the gate mappings into ERC-7201 namespaced storage, shifting `_offers`
-    ///      5 → 2, `totalOffers` 6 → 3 and `__gap` 8 → 4. Installing that over the live Amoy/Sepolia proxies
-    ///      would reinterpret the existing order book as offers and corrupt every escrow balance.
+    ///      ⚠️ Keep this `false` whenever the commit changes the linear storage layout. Set it back to
+    ///      `true` only in its own commit, and only once the layout of the proxy that is actually deployed
+    ///      is the one this source tree describes.
     ///
     ///      This is a compile-time constant rather than an env flag on purpose: the answer is a property of
     ///      the source tree, not of the operator running the script, so it belongs in the commit that makes
     ///      the layout incompatible. `Deploy.s.sol` and `UpgradeCalldata.s.sol` both refuse to produce an
     ///      in-place upgrade while it is `false`.
     ///
-    ///      ⚠️ **Bumping `EXCHANGE_SALT_VERSION` to "v2" is NOT the moment to flip this back to `true`, and
-    ///      that bump is already made above.** After the bump the new exchange address has no code, so
-    ///      `Deploy.s.sol` takes the fresh-deploy branch and never reaches this guard — leaving it `false`
-    ///      costs the fresh deploy nothing. Flipping it belongs in a FOLLOW-UP commit made after that fresh
-    ///      deploy exists, because only then is the layout of the proxy sitting at the v2 address the one
-    ///      this source tree describes. Flip it earlier and the guard is open for a proxy nobody has
-    ///      deployed yet, against a layout nobody has checked.
-    bool internal constant INPLACE_UPGRADE_ALLOWED = false;
+    ///      It was `false` from AO-514, which moved the gate mappings into ERC-7201 namespaced storage and
+    ///      shifted `_offers` 5 → 2, `totalOffers` 6 → 3 and `__gap` 8 → 4. Installing that over the proxies
+    ///      live AT THE TIME would have reinterpreted the order book as offers and corrupted every escrow.
+    ///
+    ///      That break is now deployed rather than pending, which is what makes it safe to reopen (AO-746):
+    ///
+    ///        · AO-514 introduced the version string `"4.0.0"` in the same commit as the break, and Amoy,
+    ///          Sepolia and Polygon all report `4.0.0` at implementation `0xcb2D5e22…03c2`, which is what
+    ///          `packages/sdk/src/deployments/*.json` records. So every live proxy already runs the
+    ///          post-AO-514 layout.
+    ///        · `contracts/storage/AsseteraECS.txt` has been touched by exactly two commits since: AO-514
+    ///          itself, and AO-746. AO-746 is append-only — one added word, `Order.boughtQuantity` at slot
+    ///          11 — with every pre-existing slot AND offset byte-identical, and each `Order` lives in a
+    ///          mapping so the appended word lands on previously-unused ground.
+    ///
+    ///      So the deployed layout and this source tree differ by one appended struct member and nothing
+    ///      else. Re-verify all of that, not just the flag, before the next layout-touching change.
+    ///
+    ///      ⚠️ Note `EXCHANGE_SALT_VERSION` is still `"v1"`: the fresh-deploy-at-a-new-address route the
+    ///      earlier version of this comment described was never taken. The break was resolved by deploying
+    ///      it to the v1 address, not by rotating away from it.
+    bool internal constant INPLACE_UPGRADE_ALLOWED = true;
 
     /// @dev Human-readable refusal reason, shared by both scripts so the two never drift.
     string internal constant INPLACE_UPGRADE_REFUSAL =
