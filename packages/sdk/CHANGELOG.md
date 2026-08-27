@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.0.1](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v8.0.0...evm-contracts-v8.0.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **deployments:** record the implementations now live on all four chains ([#86](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/86)) ([22d1a96](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/22d1a9660fa32dc54fe3f88af6832b101436c7dd))
+
 ## [8.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v7.0.1...evm-contracts-v8.0.0) (2026-08-27)
 
 
