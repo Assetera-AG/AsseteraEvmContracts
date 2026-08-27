@@ -55,8 +55,10 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
 
     /// @notice An accepted offer consumed the order it was raised against, which is now `Filled`
     ///         and no longer fillable by anyone else (AO-746).
-    /// @param refunded The order's unconsumed escrowed fee, returned to its maker. No fill ever
-    ///                 earned it, so none of it is owed to the collector.
+    /// @param refunded Everything the order still held, returned to its maker, in `sellToken`:
+    ///                 the unspent quantity plus the escrowed fee no fill ever earned. The
+    ///                 quantity is non-zero when the offer met the order's whole buy side at a
+    ///                 better price than it listed, which leaves change (AO-746).
     event OrderClosedByOffer(uint256 indexed orderId, uint256 indexed offerId, uint256 refunded);
     /// @dev Amounts are GROSS (AC-833) — the agreed leg amounts, before either fee.
     ///      Both fees are denominated in `feeToken`, so net received is simply
@@ -233,15 +235,36 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
 
     /// @dev Close the linked order once an accepted offer has consumed it (AO-746). Leaves a
     ///      partially-consumed listing Open — negotiating three of ten does not retire the
-    ///      other seven — and returns the order's unconsumed escrowed fee, which no fill ever
-    ///      earned, to its maker.
-    function _closeConsumedOrder(uint256 orderId, uint256 offerId) private {
+    ///      other seven.
+    ///
+    ///      An order is consumed when EITHER side is exhausted, and both have to be checked:
+    ///
+    ///      * its BUY side is satisfied — it received everything it asked for. A negotiated
+    ///        price is not the listed price, so an order that got its whole `buyAmount` more
+    ///        cheaply still holds unspent `sellToken`. That leftover is CHANGE, not an unfilled
+    ///        order, and leaving it listed puts the maker into a further trade they never
+    ///        agreed to when they accepted the offer.
+    ///      * or its SELL side is exhausted — nothing is left to pay with, whatever it bought.
+    ///
+    ///      `recvAmount` is the GROSS leg the order's maker receives from this settlement, in
+    ///      `recvToken`; gross, because `buyAmount` is gross and `fillOrder` compares gross too.
+    ///      A leg in some other token buys nothing for this order and is counted as zero.
+    ///
+    ///      Everything still escrowed goes back to the maker: the unspent quantity, plus the
+    ///      escrowed fee no fill ever earned. The trade that happened ran under the OFFER's fee
+    ///      terms, so none of it is owed to the collector.
+    function _closeConsumedOrder(uint256 orderId, uint256 offerId, address recvToken, uint256 recvAmount) private {
         if (orderId == 0) return;
         Order storage ord = _orders[orderId];
-        if (ord.status != OrderStatus.Open || ord.remainingQuantity != 0) return;
+        if (ord.status != OrderStatus.Open) return;
 
-        uint256 refunded = ord.escrowedFee;
+        uint256 bought = ord.boughtQuantity + (recvToken == ord.buyToken ? recvAmount : 0);
+        ord.boughtQuantity = bought;
+        if (bought < ord.buyAmount && ord.remainingQuantity != 0) return;
+
+        uint256 refunded = ord.remainingQuantity + ord.escrowedFee;
         ord.status = OrderStatus.Filled;
+        ord.remainingQuantity = 0;
         ord.escrowedFee = 0;
         if (refunded != 0) IERC20(ord.sellToken).safeTransfer(ord.maker, refunded);
         emit OrderClosedByOffer(orderId, offerId, refunded);
@@ -505,7 +528,14 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         // The trade the order was listed for has now happened through the offer, so the order
         // must not stay Open and fillable by a third party (AO-746). Last, after every transfer
         // above, so a hostile token in the settlement path cannot re-enter a half-closed order.
-        _closeConsumedOrder(o.orderId, offerId);
+        // The order's maker takes the OTHER party's leg, whichever side of the offer they are on.
+        bool orderMakerIsOfferMaker = (_orders[o.orderId].maker == maker);
+        _closeConsumedOrder(
+            o.orderId,
+            offerId,
+            orderMakerIsOfferMaker ? takerToken : makerToken,
+            orderMakerIsOfferMaker ? takerAmount : makerAmount
+        );
     }
 
     /// @notice Anyone can sweep a batch of expired offers, returning the current

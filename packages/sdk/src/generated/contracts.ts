@@ -275,6 +275,7 @@ export const asseteraEcsAbi = [
           { name: 'feeCollector', internalType: 'address', type: 'address' },
           { name: 'feeToken', internalType: 'address', type: 'address' },
           { name: 'escrowedFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'boughtQuantity', internalType: 'uint256', type: 'uint256' },
         ],
       },
     ],

@@ -4887,4 +4887,495 @@ contract AsseteraECSTest is Test {
             "settlement overwrote an admin decision"
         );
     }
+
+    // ===================================================================== //
+    //     AO-746 — order/offer interaction matrix (buy-side accounting)      //
+    // ===================================================================== //
+
+    /// Place a buy-side order that expires, so the sweep path can be exercised against a
+    /// live linked offer.
+    function _placeUsdcForRwaExpiring(address maker, uint256 usdcAmt, uint256 rwaWant, uint64 expireTs)
+        internal
+        returns (uint256 id)
+    {
+        AsseteraECS.KycAttestation memory att = _attestPlace(maker, address(usdc), usdcAmt, address(rwa), rwaWant);
+        AsseteraECS.FeeAttestation memory feeAtt = _feePlace(maker, address(usdc), usdcAmt, address(rwa), rwaWant);
+        vm.startPrank(maker);
+        usdc.approve(address(exchange), usdcAmt);
+        id = exchange.placeOrder(address(usdc), usdcAmt, address(rwa), rwaWant, expireTs, att, feeAtt);
+        vm.stopPrank();
+    }
+
+    /// THE DEFECT this section exists for. "Buy 1 RWA for 10 USDC", settled through an offer at
+    /// 8. The buyer got everything they asked for, so the 2 they did not spend is CHANGE. Before
+    /// the buy side was counted, `remainingQuantity` (which counts the token the order SELLS)
+    /// was still 2 and the order stayed Open, leaving the buyer bidding for another 0.2 RWA
+    /// they never agreed to.
+    function test_AO746_ABetterPricedOfferClosesTheOrderAndReturnsTheChange() public {
+        uint256 orderId = _placeUsdcForRwa(alice, 10e6, 1e18);
+        uint256 offerId = _makeOfferOn(orderId, bob, alice, address(rwa), 1e18, address(usdc), 8e6, 1e18);
+
+        uint256 aliceUsdcBefore = usdc.balanceOf(alice);
+        uint256 aliceRwaBefore = rwa.balanceOf(alice);
+        uint256 bobUsdcBefore = usdc.balanceOf(bob);
+
+        AsseteraECS.KycAttestation memory aAtt = _attestAcceptOffer(alice, offerId, 1e18, 8e6);
+        vm.expectEmit(true, true, false, true);
+        emit OfferBook.OrderClosedByOffer(orderId, offerId, 2e6);
+        vm.prank(alice);
+        exchange.acceptOffer(offerId, aAtt);
+
+        AsseteraECS.Order memory o = exchange.getOrder(orderId);
+        assertEq(uint8(o.status), uint8(ExchangeTypes.OrderStatus.Filled), "a satisfied order must not stay Open");
+        assertEq(o.remainingQuantity, 0, "change left listed as a live bid");
+        assertEq(o.boughtQuantity, 1e18, "buy side not counted");
+        assertEq(usdc.balanceOf(alice), aliceUsdcBefore + 2e6, "change not returned to the buyer");
+        assertEq(rwa.balanceOf(alice), aliceRwaBefore + 1e18, "buyer did not receive the asset");
+        assertEq(usdc.balanceOf(bob), bobUsdcBefore + 8e6, "seller was not paid the negotiated price");
+        assertEq(usdc.balanceOf(address(exchange)), 0, "venue retained the change");
+    }
+
+    /// The consequence, pinned separately: before the fix a stranger could take the change and
+    /// push the buyer to 1.2 RWA against a 1 RWA order. An unintended execution, not just untidy.
+    function test_AO746_TheChangeIsNeverLeftFillableByAStranger() public {
+        uint256 orderId = _placeUsdcForRwa(alice, 10e6, 1e18);
+        uint256 offerId = _makeOfferOn(orderId, bob, alice, address(rwa), 1e18, address(usdc), 8e6, 1e18);
+        _acceptOfferWithApproval(alice, offerId, 1e18, 8e6, address(usdc), 0);
+
+        AsseteraECS.KycAttestation memory att = _attest(carol, ExchangeTypes.Action.Fill, orderId);
+        vm.startPrank(carol);
+        rwa.approve(address(exchange), type(uint256).max);
+        vm.expectRevert(abi.encodeWithSelector(ExchangeStorage.OrderNotOpen.selector, orderId));
+        exchange.fillOrder(orderId, 2e6, att);
+        vm.stopPrank();
+    }
+
+    /// The buy side is counted across MECHANISMS, not just across offers: half taken by an
+    /// ordinary fill at the listed price, half negotiated away more cheaply. Neither half alone
+    /// closes the order; together they do, and the unspent remainder comes back.
+    function test_AO746_APartialFillThenACheaperOfferClosesOnTheBuySide() public {
+        uint256 orderId = _placeUsdcForRwa(alice, 10e6, 1e18);
+
+        // carol fills half at the LISTED price: 5 USDC buys 0.5 RWA.
+        AsseteraECS.KycAttestation memory fAtt = _attest(carol, ExchangeTypes.Action.Fill, orderId);
+        vm.startPrank(carol);
+        rwa.approve(address(exchange), type(uint256).max);
+        exchange.fillOrder(orderId, 5e6, fAtt);
+        vm.stopPrank();
+
+        AsseteraECS.Order memory mid = exchange.getOrder(orderId);
+        assertEq(uint8(mid.status), uint8(ExchangeTypes.OrderStatus.Open), "half-filled order must stay open");
+        assertEq(mid.boughtQuantity, 0.5e18, "fill did not count towards the buy side");
+
+        // bob negotiates the OTHER half cheaper: 0.5 RWA for 4 USDC, not the 5 it was listed at.
+        uint256 offerId = _makeOfferOn(orderId, bob, alice, address(rwa), 0.5e18, address(usdc), 4e6, 0.5e18);
+        uint256 aliceUsdcBefore = usdc.balanceOf(alice);
+        _acceptOfferWithApproval(alice, offerId, 0.5e18, 4e6, address(usdc), 0);
+
+        AsseteraECS.Order memory o = exchange.getOrder(orderId);
+        assertEq(uint8(o.status), uint8(ExchangeTypes.OrderStatus.Filled), "whole buy side met but order still open");
+        assertEq(o.boughtQuantity, 1e18, "buy side miscounted across fill and offer");
+        assertEq(usdc.balanceOf(alice), aliceUsdcBefore + 1e6, "the 1 USDC she saved was not returned");
+    }
+
+    /// A genuinely partial negotiation must NOT be closed by the buy-side rule — the buyer has
+    /// not had what they asked for, so the rest of their bid stays live.
+    function test_AO746_APartialOfferLeavesTheBuySideOpen() public {
+        uint256 orderId = _placeUsdcForRwa(alice, 10e6, 1e18);
+        uint256 offerId = _makeOfferOn(orderId, bob, alice, address(rwa), 0.4e18, address(usdc), 4e6, 0.4e18);
+        _acceptOfferWithApproval(alice, offerId, 0.4e18, 4e6, address(usdc), 0);
+
+        AsseteraECS.Order memory o = exchange.getOrder(orderId);
+        assertEq(uint8(o.status), uint8(ExchangeTypes.OrderStatus.Open), "a half-met bid must stay open");
+        assertEq(o.remainingQuantity, 6e6, "wrong quantity left after a partial negotiation");
+        assertEq(o.boughtQuantity, 0.4e18, "partial buy side miscounted");
+    }
+
+    // --------------------------------------------------------------------- //
+    //  Counter-offer sequences over a linked order                           //
+    // --------------------------------------------------------------------- //
+
+    /// Counter, then the counterparty declines. The draw is ONE WAY by design: the money comes
+    /// back to the wallet, not to the listing. The maker is whole to the wei; what they lose is
+    /// the listing, which they must place again.
+    function test_AO746_CounterThenDeclineReturnsTheDrawToTheWalletNotTheListing() public {
+        uint256 orderId = _placeUsdcForRwa(alice, 10e6, 1e18);
+        uint256 offerId = _makeOfferOn(orderId, bob, alice, address(rwa), 1e18, address(usdc), 11e6, 1e18);
+
+        uint256 aliceUsdcStart = usdc.balanceOf(alice);
+        uint256 bobRwaAfterEscrow = rwa.balanceOf(bob);
+
+        // Alice counters at 10.5. Her leg is the currency: 10 is drawn from her own order and
+        // only the 0.5 shortfall leaves her wallet.
+        _replaceOfferWithApproval(alice, offerId, 1e18, 10.5e6, address(usdc), 0.5e6);
+        assertEq(usdc.balanceOf(alice), aliceUsdcStart - 0.5e6, "counter cost the maker more than the shortfall");
+        assertEq(exchange.getOrder(orderId).remainingQuantity, 0, "counter did not draw on the order");
+        assertEq(rwa.balanceOf(bob), bobRwaAfterEscrow + 1e18, "the outgoing proposer's asset was not returned");
+
+        // Bob declines.
+        AsseteraECS.KycAttestation memory att = _attestCancelOffer(bob, offerId, 1e18, 10.5e6);
+        vm.prank(bob);
+        exchange.cancelOffer(offerId, att);
+
+        assertEq(usdc.balanceOf(alice), aliceUsdcStart + 10e6, "declining did not make the maker whole");
+        assertEq(usdc.balanceOf(address(exchange)), 0, "venue retained funds after a decline");
+        // Documented, deliberate: the listing does not come back. Restoring it would have to
+        // decide what to do when the order was cancelled or swept meanwhile, and needs the drawn
+        // amount recorded per offer. Tracked as the next iteration of AO-746.
+        AsseteraECS.Order memory o = exchange.getOrder(orderId);
+        assertEq(uint8(o.status), uint8(ExchangeTypes.OrderStatus.Open), "a decline must not close the order");
+        assertEq(o.remainingQuantity, 0, "a decline silently re-listed the asset");
+    }
+
+    /// Ping-pong. The order can only ever be drawn ONCE, because `remainingQuantity` never goes
+    /// up. Every later counter by the same maker is funded from their wallet in full.
+    function test_AO746_DoubleCounterDrawsOnceThenPaysFromTheWallet() public {
+        uint256 orderId = _placeUsdcForRwa(alice, 10e6, 1e18);
+        uint256 offerId = _makeOfferOn(orderId, bob, alice, address(rwa), 1e18, address(usdc), 11e6, 1e18);
+
+        // Round 1 — alice counters at 10.5: 10 drawn, 0.5 from the wallet.
+        uint256 before1 = usdc.balanceOf(alice);
+        _replaceOfferWithApproval(alice, offerId, 1e18, 10.5e6, address(usdc), 0.5e6);
+        assertEq(before1 - usdc.balanceOf(alice), 0.5e6, "round 1 did not draw on the order");
+        assertEq(exchange.getOrder(orderId).remainingQuantity, 0, "order not drawn to zero");
+
+        // Round 2 — bob counters back at 10.8. Alice's escrow returns to her WALLET.
+        uint256 before2 = usdc.balanceOf(alice);
+        _replaceOfferWithApproval(bob, offerId, 1e18, 10.8e6, address(rwa), 1e18);
+        assertEq(usdc.balanceOf(alice) - before2, 10.5e6, "the outgoing proposer was not refunded in full");
+
+        // Round 3 — alice counters again at 10.6. The order is empty, so the WHOLE leg is hers
+        // to fund. If a second draw were possible she would pay less than this.
+        uint256 before3 = usdc.balanceOf(alice);
+        _replaceOfferWithApproval(alice, offerId, 1e18, 10.6e6, address(usdc), 10.6e6);
+        assertEq(before3 - usdc.balanceOf(alice), 10.6e6, "a second counter drew on an already-empty order");
+        assertEq(exchange.getOrder(orderId).remainingQuantity, 0, "quantity moved after being drawn to zero");
+    }
+
+    /// Two live offers against one order. The second cannot draw what the first already took,
+    /// and unwinding both returns exactly what went in — never more.
+    function test_AO746_TwoOffersOnOneOrderCannotDrawTheSameEscrowTwice() public {
+        uint256 aliceStart = usdc.balanceOf(alice);
+        uint256 orderId = _placeUsdcForRwa(alice, 10e6, 1e18);
+
+        uint256 a = _makeOfferOn(orderId, alice, bob, address(usdc), 10e6, address(rwa), 1e18, 0);
+        assertEq(exchange.getOrder(orderId).remainingQuantity, 0, "offer A did not draw the order");
+
+        uint256 walletBeforeB = usdc.balanceOf(alice);
+        uint256 b = _makeOfferOn(orderId, alice, carol, address(usdc), 10e6, address(rwa), 1e18, 10e6);
+        assertEq(walletBeforeB - usdc.balanceOf(alice), 10e6, "offer B drew the same escrow a second time");
+
+        // Unwind everything and check the venue drains to exactly nothing.
+        AsseteraECS.KycAttestation memory ca = _attestCancelOffer(alice, a, 10e6, 1e18);
+        vm.prank(alice);
+        exchange.cancelOffer(a, ca);
+        AsseteraECS.KycAttestation memory cb = _attestCancelOffer(alice, b, 10e6, 1e18);
+        vm.prank(alice);
+        exchange.cancelOffer(b, cb);
+        vm.prank(alice);
+        exchange.cancelOrder(orderId);
+
+        assertEq(usdc.balanceOf(alice), aliceStart, "full unwind did not return the maker to their start");
+        assertEq(usdc.balanceOf(address(exchange)), 0, "venue conjured or retained funds");
+    }
+
+    // --------------------------------------------------------------------- //
+    //  The order changes state underneath a live offer                       //
+    // --------------------------------------------------------------------- //
+
+    /// Cancelling the order does not kill the negotiation raised over it — the offer still
+    /// settles, funded from the wallet, and the closed order is never relabelled.
+    function test_AO746_CancellingTheOrderUnderALiveOfferStillSettlesFromTheWallet() public {
+        uint256 orderId = _placeUsdcForRwa(alice, 10e6, 1e18);
+        uint256 offerId = _makeOfferOn(orderId, bob, alice, address(rwa), 1e18, address(usdc), 8e6, 1e18);
+
+        vm.prank(alice);
+        exchange.cancelOrder(orderId);
+
+        uint256 aliceUsdcBefore = usdc.balanceOf(alice);
+        _acceptOfferWithApproval(alice, offerId, 1e18, 8e6, address(usdc), 8e6);
+
+        assertEq(aliceUsdcBefore - usdc.balanceOf(alice), 8e6, "acceptor drew on a cancelled order");
+        assertEq(
+            uint8(exchange.getOrder(orderId).status),
+            uint8(ExchangeTypes.OrderStatus.Cancelled),
+            "a settlement relabelled an order that was no longer Open"
+        );
+        assertEq(uint8(exchange.getOffer(offerId).status), uint8(ExchangeTypes.OfferStatus.Settled), "offer unsettled");
+    }
+
+    /// Same, for the permissionless expiry sweep.
+    function test_AO746_SweepingTheOrderUnderALiveOfferStillSettlesFromTheWallet() public {
+        uint64 expiry = uint64(block.timestamp + 1 days);
+        uint256 orderId = _placeUsdcForRwaExpiring(alice, 10e6, 1e18, expiry);
+        uint256 offerId = _makeOfferOn(orderId, bob, alice, address(rwa), 1e18, address(usdc), 8e6, 1e18);
+
+        vm.warp(expiry + 1);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = orderId;
+        exchange.sweepExpired(ids);
+        assertEq(uint8(exchange.getOrder(orderId).status), uint8(ExchangeTypes.OrderStatus.Expired), "sweep failed");
+
+        uint256 aliceUsdcBefore = usdc.balanceOf(alice);
+        _acceptOfferWithApproval(alice, offerId, 1e18, 8e6, address(usdc), 8e6);
+
+        assertEq(aliceUsdcBefore - usdc.balanceOf(alice), 8e6, "acceptor drew on a swept order");
+        assertEq(
+            uint8(exchange.getOrder(orderId).status),
+            uint8(ExchangeTypes.OrderStatus.Expired),
+            "a settlement relabelled a swept order"
+        );
+    }
+
+    /// Same, for the admin force-cancel.
+    function test_AO746_AdminForceCancellingTheOrderUnderALiveOfferStillSettles() public {
+        uint256 orderId = _placeUsdcForRwa(alice, 10e6, 1e18);
+        uint256 offerId = _makeOfferOn(orderId, bob, alice, address(rwa), 1e18, address(usdc), 8e6, 1e18);
+
+        vm.prank(admin);
+        exchange.cancelOrderForUser(orderId, alice);
+
+        uint256 aliceUsdcBefore = usdc.balanceOf(alice);
+        _acceptOfferWithApproval(alice, offerId, 1e18, 8e6, address(usdc), 8e6);
+
+        assertEq(aliceUsdcBefore - usdc.balanceOf(alice), 8e6, "acceptor drew on a force-cancelled order");
+        assertEq(
+            uint8(exchange.getOrder(orderId).status),
+            uint8(ExchangeTypes.OrderStatus.ForceCancelled),
+            "a settlement relabelled a force-cancelled order"
+        );
+    }
+
+    /// A stranger takes the whole order at the listed price before the negotiation closes. The
+    /// offer is still a valid bilateral trade and must settle, from the wallet.
+    function test_AO746_AStrangerFillingTheOrderFirstStillLetsTheOfferSettle() public {
+        uint256 orderId = _placeUsdcForRwa(alice, 10e6, 1e18);
+        uint256 offerId = _makeOfferOn(orderId, bob, alice, address(rwa), 1e18, address(usdc), 8e6, 1e18);
+
+        AsseteraECS.KycAttestation memory fAtt = _attest(carol, ExchangeTypes.Action.Fill, orderId);
+        vm.startPrank(carol);
+        rwa.approve(address(exchange), type(uint256).max);
+        exchange.fillOrder(orderId, 10e6, fAtt);
+        vm.stopPrank();
+        assertEq(uint8(exchange.getOrder(orderId).status), uint8(ExchangeTypes.OrderStatus.Filled), "fill failed");
+
+        uint256 aliceUsdcBefore = usdc.balanceOf(alice);
+        _acceptOfferWithApproval(alice, offerId, 1e18, 8e6, address(usdc), 8e6);
+        assertEq(aliceUsdcBefore - usdc.balanceOf(alice), 8e6, "acceptor drew on an already-filled order");
+    }
+
+    /// The first accepted offer closes the order. A second offer naming the same order must then
+    /// fund itself entirely from the wallet.
+    function test_AO746_ASecondOfferAfterTheOrderClosedFundsItselfFromTheWallet() public {
+        uint256 orderId = _placeUsdcForRwa(alice, 10e6, 1e18);
+        uint256 first = _makeOfferOn(orderId, bob, alice, address(rwa), 1e18, address(usdc), 8e6, 1e18);
+        uint256 second = _makeOfferOn(orderId, carol, alice, address(rwa), 1e18, address(usdc), 7e6, 1e18);
+
+        _acceptOfferWithApproval(alice, first, 1e18, 8e6, address(usdc), 0);
+        assertEq(uint8(exchange.getOrder(orderId).status), uint8(ExchangeTypes.OrderStatus.Filled), "not closed");
+
+        uint256 aliceUsdcBefore = usdc.balanceOf(alice);
+        _acceptOfferWithApproval(alice, second, 1e18, 7e6, address(usdc), 7e6);
+        assertEq(aliceUsdcBefore - usdc.balanceOf(alice), 7e6, "second offer drew on a closed order");
+    }
+
+    // --------------------------------------------------------------------- //
+    //  Every unwind path on a DRAWN offer pays the wallet                    //
+    // --------------------------------------------------------------------- //
+
+    function test_AO746_SweepingADrawnOfferPaysTheWallet() public {
+        uint64 expiry = uint64(block.timestamp + 1 days);
+        uint256 orderId = _placeUsdcForRwa(alice, 10e6, 1e18);
+        AsseteraECS.KycAttestation memory att = _attestMakeOffer(alice, bob, address(usdc), 10e6, address(rwa), 1e18);
+        AsseteraECS.FeeAttestation memory feeAtt = _feeMakeOffer(alice, bob, address(usdc), 10e6, address(rwa), 1e18);
+        vm.prank(alice);
+        uint256 offerId = exchange.makeOffer(orderId, bob, address(usdc), 10e6, address(rwa), 1e18, expiry, att, feeAtt);
+        assertEq(exchange.getOrder(orderId).remainingQuantity, 0, "offer did not draw");
+
+        uint256 aliceUsdcBefore = usdc.balanceOf(alice);
+        vm.warp(expiry + 1);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = offerId;
+        exchange.sweepExpiredOffers(ids);
+
+        assertEq(usdc.balanceOf(alice) - aliceUsdcBefore, 10e6, "sweep did not pay the drawn leg to the wallet");
+        assertEq(exchange.getOrder(orderId).remainingQuantity, 0, "sweep silently re-listed the order");
+    }
+
+    function test_AO746_AdminCancellingADrawnOfferPaysTheWallet() public {
+        uint256 orderId = _placeUsdcForRwa(alice, 10e6, 1e18);
+        uint256 offerId = _makeOfferOn(orderId, alice, bob, address(usdc), 10e6, address(rwa), 1e18, 0);
+        assertEq(exchange.getOrder(orderId).remainingQuantity, 0, "offer did not draw");
+
+        uint256 aliceUsdcBefore = usdc.balanceOf(alice);
+        vm.prank(admin);
+        exchange.cancelOfferForUser(offerId, alice, bob);
+
+        assertEq(usdc.balanceOf(alice) - aliceUsdcBefore, 10e6, "admin cancel did not pay the drawn leg back");
+        assertEq(usdc.balanceOf(address(exchange)), 0, "venue retained the drawn leg");
+    }
+
+    /// The other way an order is consumed: its SELL side runs out whatever it bought. Alice bids
+    /// 10 USDC for 1 RWA and accepts an offer giving her only 0.5 for the whole 10. Her buy side
+    /// is NOT satisfied, but she has nothing left to pay with, so the order must still close
+    /// rather than sit Open at zero.
+    function test_AO746_AnExhaustedOrderClosesEvenWhenTheBuySideIsUnmet() public {
+        uint256 orderId = _placeUsdcForRwa(alice, 10e6, 1e18);
+        uint256 offerId = _makeOfferOn(orderId, bob, alice, address(rwa), 0.5e18, address(usdc), 10e6, 0.5e18);
+        _acceptOfferWithApproval(alice, offerId, 0.5e18, 10e6, address(usdc), 0);
+
+        AsseteraECS.Order memory o = exchange.getOrder(orderId);
+        assertEq(uint8(o.status), uint8(ExchangeTypes.OrderStatus.Filled), "an exhausted order was left Open at zero");
+        assertEq(o.boughtQuantity, 0.5e18, "buy side miscounted");
+        assertLt(o.boughtQuantity, o.buyAmount, "fixture no longer exercises the unmet buy side");
+    }
+
+    /// `boughtQuantity` is appended to `Order`, which lives in a mapping, so each entry is
+    /// hashed independently and the new word must land on previously-unused ground. Write an
+    /// order exactly as the PRE-upgrade implementation laid it out, then read it back through
+    /// the new one.
+    function test_AO746_PreUpgradeOrderReadsBackIntactWithNoBoughtQuantity() public {
+        uint256 id = 9;
+        bytes32 base = keccak256(abi.encode(id, uint256(0))); // `_orders` is top-level slot 0
+
+        uint64 createdAt = uint64(block.timestamp);
+        uint64 expireTs = uint64(block.timestamp + 2 days);
+
+        vm.store(address(exchange), bytes32(uint256(base) + 0), bytes32(id));
+        vm.store(address(exchange), bytes32(uint256(base) + 1), bytes32(uint256(uint160(alice))));
+        vm.store(address(exchange), bytes32(uint256(base) + 2), bytes32(uint256(uint160(address(usdc)))));
+        vm.store(address(exchange), bytes32(uint256(base) + 3), bytes32(uint256(10e6)));
+        vm.store(address(exchange), bytes32(uint256(base) + 4), bytes32(uint256(uint160(address(rwa)))));
+        vm.store(address(exchange), bytes32(uint256(base) + 5), bytes32(uint256(1e18)));
+        // Word 6 packs status (uint8) + createdAt (uint64), exactly as before.
+        vm.store(
+            address(exchange),
+            bytes32(uint256(base) + 6),
+            bytes32(uint256(uint8(ExchangeTypes.OrderStatus.Open)) | (uint256(createdAt) << 8))
+        );
+        vm.store(address(exchange), bytes32(uint256(base) + 7), bytes32(uint256(4e6))); // remainingQuantity
+        // Word 8 packs expireTs + makerFeeBps + takerFeeBps + feeCollector, as before.
+        vm.store(
+            address(exchange),
+            bytes32(uint256(base) + 8),
+            bytes32(uint256(expireTs) | (uint256(100) << 64) | (uint256(50) << 80) | (uint256(uint160(carol)) << 96))
+        );
+        vm.store(address(exchange), bytes32(uint256(base) + 9), bytes32(uint256(uint160(address(usdc)))));
+        vm.store(address(exchange), bytes32(uint256(base) + 10), bytes32(uint256(1e5))); // escrowedFee
+        // Word 11 (`boughtQuantity`) is deliberately NOT written — that is the whole point.
+
+        AsseteraECS.Order memory o = exchange.getOrder(id);
+        assertEq(o.id, id, "id moved");
+        assertEq(o.maker, alice, "maker moved");
+        assertEq(o.sellToken, address(usdc), "sellToken moved");
+        assertEq(o.sellAmount, 10e6, "sellAmount moved");
+        assertEq(o.buyToken, address(rwa), "buyToken moved");
+        assertEq(o.buyAmount, 1e18, "buyAmount moved");
+        assertEq(uint8(o.status), uint8(ExchangeTypes.OrderStatus.Open), "status moved");
+        assertEq(o.createdAt, createdAt, "createdAt moved");
+        assertEq(o.remainingQuantity, 4e6, "remainingQuantity moved");
+        assertEq(o.expireTs, expireTs, "expireTs moved");
+        assertEq(o.makerFeeBps, 100, "makerFeeBps moved");
+        assertEq(o.takerFeeBps, 50, "takerFeeBps moved");
+        assertEq(o.feeCollector, carol, "feeCollector moved");
+        assertEq(o.feeToken, address(usdc), "feeToken moved");
+        assertEq(o.escrowedFee, 1e5, "escrowedFee moved");
+        assertEq(o.boughtQuantity, 0, "the appended word was not previously free");
+
+        assertEq(exchange.getOrder(id + 1).id, 0, "the next order entry was clobbered");
+        assertEq(exchange.getOrder(id - 1).id, 0, "the previous order entry was clobbered");
+    }
+
+    /// The link check only requires the order's SELL token to be one of the offer's legs, so the
+    /// other leg can be a token this order does not buy at all. Alice bids USDC for RWA but
+    /// negotiates her USDC away for a third token: that leg buys her nothing she asked for, so it
+    /// must not advance her buy side and must not close her order.
+    function test_AO746_ALegInATokenTheOrderDoesNotBuyNeverAdvancesTheBuySide() public {
+        FaucetToken other = _thirdToken();
+        uint256 orderId = _placeUsdcForRwa(alice, 10e6, 1e18);
+
+        // Alice's leg is her order's USDC, so 4 is drawn and 6 stays listed. The counter-leg she
+        // receives is `other`, which her order does not buy.
+        AsseteraECS.KycAttestation memory att = _attestMakeOffer(alice, bob, address(usdc), 4e6, address(other), 4e18);
+        AsseteraECS.FeeAttestation memory feeAtt = _feeMakeOffer(alice, bob, address(usdc), 4e6, address(other), 4e18);
+        vm.prank(alice);
+        uint256 offerId = exchange.makeOffer(orderId, bob, address(usdc), 4e6, address(other), 4e18, 0, att, feeAtt);
+        assertEq(exchange.getOrder(orderId).remainingQuantity, 6e6, "the USDC leg was not drawn from the order");
+
+        uint256 aliceUsdcBefore = usdc.balanceOf(alice);
+        AsseteraECS.KycAttestation memory aAtt = _attestAcceptOffer(bob, offerId, 4e6, 4e18);
+        vm.startPrank(bob);
+        other.approve(address(exchange), 4e18);
+        exchange.acceptOffer(offerId, aAtt);
+        vm.stopPrank();
+
+        assertEq(other.balanceOf(alice), 1_000e18 + 4e18, "alice did not receive the third token");
+        AsseteraECS.Order memory o = exchange.getOrder(orderId);
+        assertEq(o.boughtQuantity, 0, "a token the order does not buy was counted towards its buy side");
+        assertEq(uint8(o.status), uint8(ExchangeTypes.OrderStatus.Open), "the order was closed by an unrelated token");
+        assertEq(o.remainingQuantity, 6e6, "the rest of the bid was not left listed");
+        assertEq(usdc.balanceOf(alice), aliceUsdcBefore, "the listed remainder was refunded as if it were change");
+    }
+
+    /// Person A lists, persons B, C and D all offer against it, and A counters two of them.
+    /// Offers are BILATERAL and independent: nothing links siblings to each other, and closing
+    /// the order does not retire the ones still live. This test exists to pin exactly what a
+    /// maker is exposed to when they negotiate with several counterparties at once.
+    function test_AO746_SiblingOffersOnOneOrderAreIndependentOfEachOther() public {
+        address dave = makeAddr("dave-ao746");
+        rwa.mint(dave, 1_000e18);
+        uint256 orderId = _placeUsdcForRwa(alice, 10e6, 1e18); // alice bids 10 USDC for 1 RWA
+
+        // Three counterparties each escrow their OWN asset leg — none of them can draw on
+        // alice's listing, so all three escrows are their own money.
+        uint256 fromB = _makeOfferOn(orderId, bob, alice, address(rwa), 1e18, address(usdc), 11e6, 1e18);
+        uint256 fromC = _makeOfferOn(orderId, carol, alice, address(rwa), 1e18, address(usdc), 12e6, 1e18);
+        uint256 fromD = _makeOfferOn(orderId, dave, alice, address(rwa), 1e18, address(usdc), 13e6, 1e18);
+        assertEq(exchange.getOrder(orderId).remainingQuantity, 10e6, "a counterparty drew on the maker's listing");
+
+        // Alice counters B: her currency leg is drawn from her own listing, so it costs her
+        // nothing from the wallet and empties the order.
+        uint256 walletBeforeB = usdc.balanceOf(alice);
+        _replaceOfferWithApproval(alice, fromB, 1e18, 10e6, address(usdc), 0);
+        assertEq(usdc.balanceOf(alice), walletBeforeB, "countering B did not come from the listing");
+        assertEq(exchange.getOrder(orderId).remainingQuantity, 0, "the listing was not drawn");
+
+        // Alice counters C too. The listing is already spent, so THIS one comes out of her
+        // wallet in full. She is now committed twice over, for one intended purchase.
+        uint256 walletBeforeC = usdc.balanceOf(alice);
+        _replaceOfferWithApproval(alice, fromC, 1e18, 10e6, address(usdc), 10e6);
+        assertEq(walletBeforeC - usdc.balanceOf(alice), 10e6, "countering C drew on an already-spent listing");
+
+        // C accepts. The order closes on the buy side.
+        _acceptOfferWithApproval(carol, fromC, 1e18, 10e6, address(rwa), 1e18);
+        assertEq(uint8(exchange.getOrder(orderId).status), uint8(ExchangeTypes.OrderStatus.Filled), "order not closed");
+
+        // Closing the order retires NEITHER sibling. B still holds alice's drawn escrow and D
+        // still holds D's own.
+        assertEq(
+            uint8(exchange.getOffer(fromB).status),
+            uint8(ExchangeTypes.OfferStatus.Countered),
+            "closing the order silently retired the counter to B"
+        );
+        assertEq(
+            uint8(exchange.getOffer(fromD).status),
+            uint8(ExchangeTypes.OfferStatus.Open),
+            "closing the order silently retired D's offer"
+        );
+
+        // And B can still accept, so alice buys a SECOND time. Not a leak — she signed that
+        // counter — but it is the exposure a maker takes on by negotiating in parallel.
+        uint256 aliceRwaBefore = rwa.balanceOf(alice);
+        _acceptOfferWithApproval(bob, fromB, 1e18, 10e6, address(rwa), 1e18);
+        assertEq(rwa.balanceOf(alice), aliceRwaBefore + 1e18, "the live counter did not settle");
+
+        // Alice can always get the drawn money back out of an unaccepted sibling by cancelling
+        // it — D's offer is D's own escrow and is returned to D.
+        AsseteraECS.KycAttestation memory att = _attestCancelOffer(alice, fromD, 1e18, 13e6);
+        uint256 daveRwaBefore = rwa.balanceOf(dave);
+        vm.prank(alice);
+        exchange.cancelOffer(fromD, att);
+        assertEq(rwa.balanceOf(dave), daveRwaBefore + 1e18, "D's own escrow was not returned to D");
+        assertEq(usdc.balanceOf(address(exchange)), 0, "venue retained funds after every offer resolved");
+    }
 }

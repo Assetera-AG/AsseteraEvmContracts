@@ -89,6 +89,15 @@ abstract contract ExchangeTypes is GateTypes {
         ///      It is the MAKER'S MONEY until a fill earns it, so every unwind path —
         ///      and the final fill — must return whatever remains.
         uint256 escrowedFee;
+        // --- appended (AO-746); append-only, `Order` is stored in a mapping ---
+        /// @dev How much `buyToken` this order has actually received, across fills AND
+        ///      linked-offer settlements. It cannot be derived from `remainingQuantity`:
+        ///      that counts the token the order SELLS, and a fill holds the listed price
+        ///      while a negotiated offer does not, so the two stop tracking each other the
+        ///      moment an offer settles at anything other than the listed price. Without
+        ///      this, a buy-side order whose whole intent was met by a cheaper offer keeps
+        ///      its unspent change listed as a live bid (AO-746).
+        uint256 boughtQuantity;
     }
 
     struct Offer {
