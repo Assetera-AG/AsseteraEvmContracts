@@ -1,5 +1,17 @@
 # Changelog
 
+## [8.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v7.0.1...evm-contracts-v8.0.0) (2026-08-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **exchange:** `makeOffer` gains a leading `uint256 orderId`, so its selector becomes 0x03269a4a. `OfferMade` and `OfferAccepted` each gain a trailing `uint256 orderId`, so their topic0 changes and an indexer on the old topics stops matching them. Storage is NOT broken: `orderId` is appended to a struct held in a mapping, so this installs over a live 4.0.0 proxy with a plain `upgradeToAndCall` and every existing offer reads back with `orderId == 0`.
+
+### Features
+
+* **exchange:** an offer draws on, and closes, the order it was raised against (AO-746) ([#83](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/83)) ([c0ad52d](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/c0ad52d2c7332a687c898980e64e84a2db319808))
+* **primary:** buy in one transaction, by inheriting the permit relay (AO-716) ([#82](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/82)) ([1cf635a](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/1cf635ab83a36c0d644f6ccd03a0b6af67fdf4a1))
+
 ## [7.0.1](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v7.0.0...evm-contracts-v7.0.1) (2026-08-24)
 
 
