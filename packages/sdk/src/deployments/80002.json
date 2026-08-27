@@ -9,7 +9,7 @@
     "MockUSDC": "0x85D7B2569b3d69320F05A4FFB140Ca4521989A15"
   },
   "implementations": {
-    "AsseteraECS": "0xcb2D5e22b2de63bA0958d5D7c39D7216B84803c2",
+    "AsseteraECS": "0xB6De6C29f039ed53e993f916961A758D32C13c11",
     "AsseteraPrimarySales": "0xC0c7F32806a8C99287151B7F4886Ef2CDEFf2C7d"
   },
   "metadata": {
