@@ -51,7 +51,10 @@ The contract **is already deployed** on Polygon Amoy and Ethereum Sepolia
 ### The shape of one settlement
 
 `settlePrimary(venueCalldata, intent, intentSignature, buyerSignature, kyc, fee)` is the **only**
-state-changing entry point that moves money. It:
+state-changing entry point that moves money. Since AO-713 it can be reached two ways — called directly, or
+wrapped by `permitAndCall` so that the buyer's ERC-2612 `permit` and the settlement are one transaction —
+but there is one implementation, one selector and one guard either way; the second route is a
+self-`delegatecall` into this same function. It:
 
 1. verifies **four signatures from four signers** before burning any nonce — the settlement operator's
    intent signature, the **buyer's own** signature over the same digest (EOA or ERC-1271), the KYC
@@ -98,7 +101,7 @@ find src/primary -name '*.sol' | xargs wc -l
 
 | File | LoC | Role |
 |---|---:|---|
-| `src/primary/AsseteraPrimarySales.sol` | 457 | UUPS proxy entrypoint; assembles the modules; `initialize`; the frozen `settlePrimary` entry point; the fail-CLOSED `complianceRequired` override; admin surface (collector allowlist, compliance toggle, pause, `whitelistHandshake`) |
+| `src/primary/AsseteraPrimarySales.sol` | 482 | UUPS proxy entrypoint; assembles the modules; `initialize`; the frozen `settlePrimary` entry point; the fail-CLOSED `complianceRequired` override; admin surface (collector allowlist, compliance toggle, pause, `whitelistHandshake`) |
 | `src/primary/settle/VenueSettler.sol` | 415 | **The money path.** Snapshot / pull / measure / approve / call venue / revoke / measure / refund / forward / assert delivery / pay fee / assert zero standing balance |
 | `src/primary/admin/SettlementLimits.sol` | 239 | Per-token per-transaction value cap in whole units; `_authorizeSettlement`, the shared preamble every settlement path must run; defensive `decimals()` probing |
 | `src/primary/IntentGate.sol` | 228 | The third gate: EIP-712 settlement-intent verification (operator + buyer), TTL, single-use nonce, calldata/selector binding, attestation binding |
@@ -108,27 +111,44 @@ find src/primary -name '*.sol' | xargs wc -l
 | `src/primary/interfaces/ISettlementLimits.sol` | 105 | Interface |
 | `src/primary/interfaces/IIntentGate.sol` | 104 | Interface |
 
+One more **external entry point** on this proxy does not live under `src/primary/` at all, because it is
+shared with the exchange. It is in scope for this engagement and must be read with the table above:
+
+| File | LoC | Role |
+|---|---:|---|
+| `src/core/PermitRelay.sol` | 138 | `permitAndCall`: ERC-2612 `permit` + one self-`delegatecall`, so a primary purchase is one transaction rather than approve-then-settle (AO-298 on the exchange, extended to this router by AO-713). One implementation, inherited by both proxies. Sectioned below. |
+
 LoC is raw `wc -l` (including licence header, NatSpec and blank lines). NatSpec is a large share of it on
 this surface: the design rationale is deliberately in the files rather than in a separate spec.
 
-### ⚠️ Five files this contract compiles in are listed under the OTHER document
+### ⚠️ Six files this contract compiles in are listed under the OTHER document
 
-The router inherits the exchange's gate stack and calls its fee library. The inheritance chain is:
+The router inherits the exchange's gate stack and its permit relay, and calls its fee library. The
+inheritance chain is:
 
 ```
 GateTypes
   └─ PrimaryTypes                                        (src/primary/types/)
 GateStorage  ─ KycGate ─ FeeGate
-  └─ PrimaryStorage  ─ IntentGate ─ SettlementLimits ─ VenueSettler ─ AsseteraPrimarySales
+  └─ PrimaryStorage  ─ IntentGate ─ SettlementLimits ─ VenueSettler ─┐
+ContextUpgradeable                                                   ├─ AsseteraPrimarySales
+  └─ PermitRelay                                    (src/core/)     ─┘
 ```
 
 So `src/types/GateTypes.sol`, `src/gates/GateStorage.sol`, `src/gates/KycGate.sol`,
-`src/gates/FeeGate.sol` and `src/libs/FeeMath.sol` (**432 LoC together**) are **inside this proxy's
-deployed bytecode** even though they are enumerated in
+`src/gates/FeeGate.sol`, `src/libs/FeeMath.sol` and `src/core/PermitRelay.sol` (**570 LoC together**) are
+**inside this proxy's deployed bytecode** even though they are enumerated in
 [`AUDIT-SCOPE-SECONDARY.md`](AUDIT-SCOPE-SECONDARY.md). An engagement scoped to this document should read
 them, and any finding in them lands on **both** deployed proxies.
 
-Two shared-code behaviours that matter specifically here:
+`PermitRelay` joins that list under AO-713 and is the only one of the six that adds an **external
+function** to this proxy rather than internal machinery, which is why it also has a section of its own
+below. Its base was `ExchangeStorage` until AO-713 and is now `ContextUpgradeable`: the file touches no
+storage on either proxy, so the exchange's storage root was incidental, and the rebase is what lets one
+implementation serve both routers instead of a copy under `src/primary/` drifting away from it.
+`bash script/storage-layout.sh` reports **both** snapshots unchanged across that rebase, byte for byte.
+
+Three shared-code behaviours that matter specifically here:
 
 1. **`FeeGate._validateFees` is called with the settlement token in BOTH leg positions.** Its leg test is
    `feeToken != legA && feeToken != legB`, so one token in both positions collapses it into the strict
@@ -138,6 +158,9 @@ Two shared-code behaviours that matter specifically here:
    would let the next tightening apply to the exchange only.
 2. **`GateStorage.complianceRequired` is a fail-OPEN mapping — and this router inverts it.** See the next
    section; it is the single most important shared-code interaction on this surface.
+3. **`PermitRelay.permitAndCall` can delegate into ANY function on this proxy**, admin surface included,
+   with the caller's own `_msgSender()`. It reaches nothing the caller could not already reach directly;
+   the argument, and where each half of it is pinned, is in its own section below.
 
 ## The fail-closed compliance gate (read carefully)
 
@@ -175,7 +198,7 @@ ordinal is only safe because of the fail-closed override above; the NatSpec says
 
 | Path | Why |
 |---|---|
-| `src/` outside `src/primary/` (15 files, 2,124 LoC) | The **other** audit surface, `AsseteraECS`. Scoped in [`AUDIT-SCOPE-SECONDARY.md`](AUDIT-SCOPE-SECONDARY.md). Note the five-file exception above: `GateTypes`, `GateStorage`, `KycGate`, `FeeGate` and `FeeMath` are compiled into **this** proxy and should be read. |
+| `src/` outside `src/primary/` (15 files, 2,146 LoC) | The **other** audit surface, `AsseteraECS`. Scoped in [`AUDIT-SCOPE-SECONDARY.md`](AUDIT-SCOPE-SECONDARY.md). Note the six-file exception above: `GateTypes`, `GateStorage`, `KycGate`, `FeeGate`, `FeeMath` and `PermitRelay` are compiled into **this** proxy and should be read. `PermitRelay` is the one that also puts an external function on this proxy. |
 | The per-token **sale contract** that fronts our own issuance | **AO-137, outside this repository and not yet built.** To this router it is an address in a signed intent, indistinguishable from Backed or Dinari. Nothing here changes when it lands. It is, however, the only control that bounds a compromised settlement signer for our own issuance — see the argument at the top of `AsseteraPrimarySales.sol`. |
 | `test/primary/**` — the suites and mocks (`CappedPrimarySalesHarness.sol`, `ContractWalletBuyer.sol`, `HostileVenue.sol`, `HostileWallets.sol`, `PrimarySalesHarness.sol`, `PrimaryWeirdTokens.sol`) | Tests and mocks, not deployed bytecode. |
 | `test/**` (exchange suites and mocks) | Tests and mocks. |
@@ -396,6 +419,83 @@ signer would have had to sign both that padded selector and the hash of those sh
 
 The signed payload is typed fields; the opaque bytes ride along bound by hash. ADR-0020 D5 rejected a blind
 signing oracle by name.
+
+## The one-transaction purchase (`permitAndCall`, AO-713)
+
+`src/core/PermitRelay.sol` adds one external function to this proxy, `permitAndCall`, which runs an
+ERC-2612 `permit` for the caller and then `delegatecall`s one function on this same contract. On this
+surface the function it is meant to wrap is `settlePrimary`, and the win is not mainly gas: an `approve`
+takes 15-30 seconds to mine, a firm venue quote is not good for that long, and the storefront therefore had
+to keep the approval off the quote's clock and confirm a purchase in two phases. A permit is a signature,
+so the constraint disappears rather than shrinking.
+
+**No new selector, and `settlePrimary` is unchanged.** `permitAndCall` is already generic over the call it
+wraps, so extending it to this router was an inheritance-list change and nothing else. The struct, the
+typehash, the digests, every attestation in flight and the `PrimarySettled` event are exactly what they
+were, which matters because the signer service, the marketplace API and the indexer all consume them.
+
+**One implementation, two proxies.** The same file is compiled into `AsseteraECS`, where it has been live
+since AO-298. Its base was rebased from `ExchangeStorage` to `ContextUpgradeable` to make that possible;
+the file declares and reads no storage, so nothing moved. `bash script/storage-layout.sh` reports both
+snapshots unchanged.
+
+It is a **self-`delegatecall` with caller-supplied calldata**, which we expect a reviewer to want to look at
+closely. The claims we make about it on THIS surface, and where each is pinned
+(`test/primary/PermitAndSettle.t.sol`, 14 tests):
+
+1. **No privilege escalation.** Authorisation on this router is `_msgSender()` throughout — the role checks
+   included — and `permitAndCall` re-appends the ERC-2771 sender suffix to `data` before delegating (the
+   same detection OpenZeppelin's `Multicall` uses: `msg.sender != _msgSender()` means the call arrived
+   through the trusted forwarder). The inner function therefore resolves the same actor it would have
+   resolved on a direct call, relayed or not. Pinned by
+   `test_PermitAndSettle_Relayed_IdentityIsTheBuyerNotTheRelayer` and
+   `test_PermitAndSettle_CannotReachAdminFunctionsWithoutTheRole`.
+2. **`IntentGate` is unchanged and still binding.** `intent.buyer == _msgSender()` holds through the
+   `delegatecall`, so the permit `owner`, the caller and the party debited are structurally one address.
+   A third party cannot carry somebody else's permit into a settlement: `_tryPermit` names `_msgSender()`
+   as the owner, so their call presents their own permit, and the settlement is then refused outright with
+   `IntentBuyerMismatch`. Pinned by `test_PermitAndSettle_AStrangerCannotCarryTheBuyersPermit`.
+3. **The reentrancy guard still holds.** `permitAndCall` is deliberately NOT `nonReentrant` — taking the
+   guard here would make `settlePrimary`'s own guard revert the inner call — and the one external call it
+   makes before delegating is `token.permit` on a caller-chosen address, at which point it holds no state
+   and has moved no funds. The guard that must hold is the inner one, including when the permit token is
+   the one re-entering. Pinned by `test_PermitAndSettle_ReentrantTokenCannotReenterSettlePrimary`, and the
+   happy-path tests are the mutation check: a guard on the wrapper would take all of them red.
+4. **The pause lever is not routed around.** `whenNotPaused` sits on `settlePrimary`, which is what the
+   relay delegates into. Pinned by `test_PermitAndSettle_IsStoppedByThePauseLever`.
+5. **No `msg.value` to double-spend.** The classic multicall bug does not apply: `permitAndCall` is not
+   payable, so `msg.value` is zero on every path through it and a `delegatecall` cannot conjure one. This
+   router does have one payable function, `whitelistHandshake`, unlike the exchange — it is
+   `DEFAULT_ADMIN_ROLE`-only and would forward the same zero.
+6. **Permit failure stays swallowed**, exactly as on the exchange, so adding the relay cannot take a
+   settlement currency away from this router. The first return value, `permitAccepted`, makes the failure
+   observable on simulation instead of silent. Three real cases need the swallow and each is tested here
+   against a real settlement: a token with no ERC-2612 at all
+   (`test_PermitAndSettle_TokenWithoutErc2612_FallsBackToAllowance`), a signature that does not recover
+   (`test_PermitAndSettle_SignatureThatDoesNotRecover_DoesNotRevertTheSettlement`), and a token whose
+   EIP-712 domain name is not its `name()` — EUROP's shape, `DivergentDomainToken`, two tests. The faucet
+   tokens on playground pass their own `name()` to `ERC20Permit`, so playground cannot reproduce the
+   divergence; the mock exists for exactly that reason. The one failure that is NOT swallowed is a `token`
+   address with no code, because Solidity's `extcodesize` check happens outside the `try`
+   (`test_PermitAndSettle_CodelessTokenAddressReverts`).
+7. **The buyer's allowance stays exact and short-lived.** The permit grants one settlement's worth and the
+   settlement spends it to zero, so the ceiling on a compromised settlement signer is unchanged — a permit
+   must not quietly turn an exact grant into a standing one. Pinned by
+   `test_PermitAndSettle_LeavesNoStandingAllowance`.
+
+`controlled-delegatecall` does not fire in Slither because the delegatecall target is `address(this)`, not
+caller-supplied.
+
+⚠️ **This route is EOA-only, and the two-transaction route has to stay.** ERC-2612 `permit` takes a
+`(v, r, s)` and OpenZeppelin's `ERC20Permit` recovers it with `ECDSA.recover`, so a contract wallet cannot
+present one. This router does accept an ERC-1271 buyer signature on the intent itself
+(`test/primary/mocks/ContractWalletBuyer.sol`), so a smart-account buyer can settle — but only after a
+separate `approve`. Removing the plain-allowance path would silently exclude them.
+
+⚠️ **The client obligation is real and is not on this contract.** A permit signed against a domain the
+token does not verify against is silently rejected, and the settlement then fails on the allowance. The
+domain must be resolved from the token rather than assumed to be its `name()`; the package ships
+`resolvePermitDomain` for that.
 
 ## Storage & upgrade safety
 

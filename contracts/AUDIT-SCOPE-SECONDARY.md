@@ -62,7 +62,7 @@ find src -name '*.sol' -not -path 'src/primary/*' | xargs wc -l
 | `src/AsseteraECS.sol` | 164 | UUPS proxy entrypoint; assembles the modules; `initialize`; `version()` (`4.0.0`); the exchange's `_paramsHashAllowed` action policy |
 | `src/core/OrderBook.sol` | 391 | Order lifecycle: place / cancel / fill / sweep; pooled escrow + escrowed maker fee |
 | `src/core/OfferBook.sol` | 403 | Offer lifecycle: make / replace / accept (atomic settle) / cancel / sweep |
-| `src/core/PermitRelay.sol` | 116 | `permitAndCall`: ERC-2612 permit + one self-`delegatecall`, so approve-then-trade is one transaction (AO-298) |
+| `src/core/PermitRelay.sol` | 138 | `permitAndCall`: ERC-2612 permit + one self-`delegatecall`, so approve-then-trade is one transaction (AO-298). ⚠️ Since AO-713 this file is compiled into the **primary-sales proxy too**; a finding here lands on both |
 | `src/gates/KycGate.sol` | 75 | EIP-712 KYC attestation verification + nonce burn |
 | `src/gates/FeeGate.sol` | 141 | EIP-712 fee attestation verification + fee bounds / denomination / collector allowlist |
 | `src/gates/GateStorage.sol` | 130 | Gate state in ERC-7201 namespaced storage (`assetera.storage.Gate`) + the OZ bases the gates need (AO-514) |
@@ -493,8 +493,10 @@ closely. The claims we make about it, and where each is pinned:
    The one external call it makes before delegating is `token.permit` on a caller-chosen address, at which
    point it holds no state and has moved no funds. Pinned by
    `test_PermitAndCall_ReentrantTokenCannotReenterGuardedCall`.
-3. **No `msg.value` to double-spend.** The classic multicall bug does not apply: the venue has no payable
-   functions and `permitAndCall` is not payable.
+3. **No `msg.value` to double-spend.** The classic multicall bug does not apply: `permitAndCall` is not
+   payable, so `msg.value` is zero on every path through it and a `delegatecall` cannot conjure one. The
+   venue has no payable function at all. (The primary-sales proxy, which shares this file, has exactly one
+   — `whitelistHandshake`, `DEFAULT_ADMIN_ROLE`-only — and it would forward the same zero.)
 4. **Permit failure stays swallowed**, as in `placeOrderWithPermit`. The first return value,
    `permitAccepted`, makes the failure observable on simulation instead of silent. Three real cases need
    the swallow, and all three are tested against mocks: a token with no ERC-2612 at all
@@ -512,6 +514,28 @@ The **storage layout is unchanged**: `PermitRelay` declares no state. The commit
 node ids in type names (`t_struct(Order)11439_storage` → `…11533_storage`) and adding a source file shifts
 them. Every slot, offset and member is byte-identical either side of that diff. That the guard produces a
 diff on a change it is not meant to detect is a real weakness worth fixing separately.
+
+### AO-713: the same file now serves both proxies
+
+`PermitRelay`'s base was `ExchangeStorage` until AO-713. That was incidental rather than required — the
+file reads and writes no storage, and the only things it needs are `_msgSender()`, `_contextSuffixLength()`
+and `IERC20Permit` — so the base was rebased to `ContextUpgradeable` and `AsseteraPrimarySales` now
+inherits the same implementation to give a primary purchase the same one-transaction shape. The
+alternative, a copy under `src/primary/`, was rejected: the swallow-the-permit-failure rule and the
+no-reentrancy-guard rule are the kind of reasoning that comes to mean two different things once there are
+two copies of it.
+
+What a reviewer should check, and what we measured:
+
+- **This surface is byte-identical.** `AsseteraECS` runtime size is **22,829 bytes** either side of the
+  rebase, and `bash script/storage-layout.sh` reports **both** snapshots unchanged — no re-baseline was
+  needed this time, because no source file was added.
+- **The exchange's behaviour is untouched.** Ignoring comments, the entire source diff is one import and
+  one base-contract name: `abstract contract PermitRelay is ExchangeStorage` became
+  `… is ContextUpgradeable`. No function body, modifier or storage access changed.
+- The primary-side argument, and the second set of tests that pins it, is in
+  [`AUDIT-SCOPE-PRIMARY.md`](AUDIT-SCOPE-PRIMARY.md) under "The one-transaction purchase". Its claims are
+  the same claims as the four above, re-proved against `settlePrimary` rather than against a fill.
 
 ## Static analysis (Slither)
 
