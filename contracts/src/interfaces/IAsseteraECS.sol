@@ -91,28 +91,36 @@ interface IAsseteraECS is IKycGate, IFeeGate {
         uint64 expireTs,
         uint16 makerFeeBps,
         uint16 takerFeeBps,
-        address feeCollector
+        address feeCollector,
+        address feeToken,
+        uint256 orderId
     );
     event OfferReplaced(
         uint256 indexed id, address indexed by, uint256 newMakerAmount, uint256 newTakerAmount, uint64 expireTs
     );
     event OfferCancelled(uint256 indexed id, address indexed by, uint256 makerAmount, uint256 takerAmount);
     event OfferExpired(uint256 indexed id, address indexed proposedBy, uint256 amountReturned);
-    event OfferAccepted(uint256 indexed id, address indexed by, uint256 makerAmount, uint256 takerAmount);
+    event OfferAccepted(
+        uint256 indexed id, address indexed by, uint256 makerAmount, uint256 takerAmount, uint256 orderId
+    );
     event OfferSettled(
         uint256 indexed id,
         address indexed by,
-        uint256 makerReceived,
-        uint256 takerReceived,
+        uint256 makerAmountGross,
+        uint256 takerAmountGross,
         uint256 makerFeeAmount,
         uint256 takerFeeAmount,
-        address feeCollector
+        address feeCollector,
+        address feeToken
     );
+    event OrderEscrowDrawn(uint256 indexed orderId, uint256 indexed offerId, uint256 drawn, uint256 remainingQuantity);
+    event OrderClosedByOffer(uint256 indexed orderId, uint256 indexed offerId, uint256 refunded);
 
     error NotOfferParty(uint256 id);
     error OfferSelfTarget();
     error AcceptorIsProposer(uint256 id);
     error OfferIsExpired(uint256 id);
+    error OrderNotLinkable(uint256 orderId);
 
     // --------------------------------------------------------------------- //
     //                  ExchangeAdmin-level errors/events                     //
@@ -204,6 +212,7 @@ interface IAsseteraECS is IKycGate, IFeeGate {
     // --------------------------------------------------------------------- //
 
     function makeOffer(
+        uint256 orderId,
         address taker,
         address makerToken,
         uint256 makerAmount,
