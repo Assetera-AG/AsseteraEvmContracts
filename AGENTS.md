@@ -30,6 +30,9 @@ src/primary/AsseteraPrimarySales.sol   the primary-sales proxy's implementation 
 src/primary/IntentGate.sol             settlement-intent verification + nonces
 src/primary/admin/                     per-currency settlement caps, collector allowlist
 src/primary/settle/                    VenueSettler — the ONE settlement family (our own issuance is a venue too)
+src/primary/sale/                      AsseteraIssuanceVenue — the per-offering sale contract our own
+                                       issuance is a venue THROUGH. One deployment per token, NOT
+                                       upgradeable, NOT part of the platform stack or its deploy script
 src/primary/interfaces/                primary-sales interfaces (frozen by the skeleton packet)
 src/primary/storage/, src/primary/types/   primary ERC-7201 storage + structs/enums
 ```
