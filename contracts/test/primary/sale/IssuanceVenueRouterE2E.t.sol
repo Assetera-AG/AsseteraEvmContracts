@@ -116,6 +116,7 @@ contract IssuanceVenueRouterE2ETest is PrimarySalesTestBase {
         return PrimaryTypes.SettlementIntent({
             buyer: buyer,
             assetToken: address(rwa),
+            accountingMode: uint8(PrimaryTypes.AssetAccountingMode.Erc20Balance),
             minAssetOut: minOut,
             settlementToken: address(usdc),
             venueQuoteIn: quote,
