@@ -16,7 +16,7 @@ import {PrimarySalesTestBase} from "./PrimarySalesTestBase.sol";
 contract PrimaryIntentVectorsTest is PrimarySalesTestBase {
     /// The literal an off-chain signer can hardcode instead of hashing the type string.
     bytes32 internal constant EXPECTED_INTENT_TYPEHASH =
-        0x86c9b91e614acc7421e39417dc43dd7b9bd2e0b2c8ce196c12f8b7391d281a03;
+        0xa24f008693b1ca921f2aca00e79f4bc40748d499f86d54d0d8377dfdc884bf68;
 
     function test_IntentTypehash_IsPinned() public view {
         assertEq(INTENT_TYPEHASH, EXPECTED_INTENT_TYPEHASH, "typehash moved: the struct changed");
@@ -27,7 +27,8 @@ contract PrimaryIntentVectorsTest is PrimarySalesTestBase {
     /// 🔴 `paramsHash` is computed on-chain as `keccak256(abi.encode(INTENT_TYPEHASH, intent))`,
     /// which is a shortcut. It is only equal to the canonical EIP-712 `hashStruct` because
     /// every member of `SettlementIntent` is a STATIC type — `abi.encode` of an all-static
-    /// struct is exactly its fourteen head words, with `bytes4` right-padded in both encodings.
+    /// struct is exactly its fifteen head words, with `bytes4` right-padded and `uint8`
+    /// left-padded in both encodings.
     ///
     /// Adding a dynamic member (`bytes`, `string`, an array) would break that silently: the
     /// ABI encoding would gain an offset word while EIP-712 would substitute a hash, and the
@@ -40,6 +41,13 @@ contract PrimaryIntentVectorsTest is PrimarySalesTestBase {
             EXPECTED_INTENT_TYPEHASH,
             bytes32(uint256(uint160(intent.buyer))),
             bytes32(uint256(uint160(intent.assetToken))),
+            // ⚠️ `uint8` is encoded LEFT-padded to a full word, in both `abi.encode` and EIP-712,
+            //    which is what keeps the shortcut equal to the canonical hash. It is also why the
+            //    type string must say `uint8` and not the enum's name: no EIP-712 library has a
+            //    notion of `AssetAccountingMode`, so a signer that wrote the Solidity type name
+            //    into its own copy of this string would produce a different, silently wrong
+            //    digest. See `PrimaryTypes.AssetAccountingMode`.
+            bytes32(uint256(intent.accountingMode)),
             bytes32(intent.minAssetOut),
             bytes32(uint256(uint160(intent.settlementToken))),
             bytes32(intent.venueQuoteIn),
@@ -57,7 +65,7 @@ contract PrimaryIntentVectorsTest is PrimarySalesTestBase {
             bytes32(intent.deadline)
         );
 
-        assertEq(canonical.length, 32 * 15, "typehash plus fourteen single-word members");
+        assertEq(canonical.length, 32 * 16, "typehash plus fifteen single-word members");
         assertEq(_paramsHash(intent), keccak256(canonical), "the abi.encode shortcut diverged from EIP-712");
         assertEq(harness.intentStructHash(intent), keccak256(canonical), "the contract disagrees");
     }

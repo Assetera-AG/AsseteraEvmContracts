@@ -49,6 +49,20 @@ abstract contract DeployBase is CreateXScript {
     ///      they are, on proxies this source no longer describes.
     string internal constant EXCHANGE_SALT_VERSION = "v1";
 
+    /// @dev Salt version of the primary-sales proxy and implementation ONLY, mirroring
+    ///      `EXCHANGE_SALT_VERSION`. Its purpose is to make the router's address rotatable ALONE.
+    ///
+    ///      ⚠️ **Introducing this constant did not move the address, and that is the whole point.** Before
+    ///      it existed `_saltVersion` fell through to the default `SALT_VERSION`, which is also "v1", so the
+    ///      string fed to `keccak256` in `_salt` is byte-identical either way and the CREATE3 address is
+    ///      unchanged on every chain. `test_Salt_PrimaryVersionIntroductionIsAddressNeutral` pins that.
+    ///
+    ///      Why it was needed: without it the only way to rotate the router was to bump the global
+    ///      `SALT_VERSION`, which would also move the forwarder and the faucet mocks — the exact failure the
+    ///      AO-514 review called out for the exchange. The router is live on Amoy and Sepolia, so it now has
+    ///      an address to rotate away from and the earlier "give it one once it is live" note is satisfied.
+    string internal constant PRIMARY_SALT_VERSION = "v1";
+
     /// @dev Whether the implementation built from THIS commit may be installed onto an exchange proxy that
     ///      already has code, via `upgradeToAndCall`.
     ///
@@ -74,6 +88,33 @@ abstract contract DeployBase is CreateXScript {
     /// @dev Human-readable refusal reason, shared by both scripts so the two never drift.
     string internal constant INPLACE_UPGRADE_REFUSAL =
         "refusing in-place upgrade: this commit's storage layout is not compatible with the deployed proxy. Land it by bumping EXCHANGE_SALT_VERSION for a fresh deploy, or set INPLACE_UPGRADE_ALLOWED once the layout is compatible again.";
+
+    /// @dev The primary-sales twin of `INPLACE_UPGRADE_ALLOWED`. Whether the implementation built from THIS
+    ///      commit may be installed onto a primary-sales proxy that already has code.
+    ///
+    ///      🔴 It is `false` by DEFAULT, and that is a deliberate difference from the exchange constant,
+    ///      whose value tracks a known layout break. No layout break is known here. This is `false` because
+    ///      an in-place upgrade of the router must be a decision somebody made, not a side effect.
+    ///
+    ///      Before this existed, `Deploy.s.sol` upgraded the router in place whenever the freshly built
+    ///      implementation bytecode differed from the deployed one, for ANY reason — a dependency bump or a
+    ///      compiler-setting change is enough. So a routine re-run of the deploy script against a chain that
+    ///      already had the router silently replaced its logic, with no layout check and nothing to approve.
+    ///      The exchange's equivalent path was guarded; this one was not.
+    ///
+    ///      Costs a fresh deploy nothing: on a chain where the address has no code, `Deploy.s.sol` takes the
+    ///      fresh-deploy branch and never reaches the guard. So Polygon mainnet is unaffected by this being
+    ///      `false`. Flip it, in its own commit, when you intend to upgrade a live router and have checked
+    ///      the layout — or route the upgrade through `UpgradeCalldata.s.sol` for a Safe to execute.
+    ///
+    ///      ⚠️ `AsseteraPrimarySales` has NO linear storage today, every region being ERC-7201 namespaced
+    ///      (see `script/storage-layout.sh`), so a slot-shift break is less likely here than on the
+    ///      exchange. Less likely is not the same as guarded.
+    bool internal constant PRIMARY_INPLACE_UPGRADE_ALLOWED = false;
+
+    /// @dev Human-readable refusal reason for the primary-sales router, shared by both scripts.
+    string internal constant PRIMARY_INPLACE_UPGRADE_REFUSAL =
+        "refusing in-place upgrade of AsseteraPrimarySales: an in-place upgrade of a live router must be deliberate. Check the storage layout, then either set PRIMARY_INPLACE_UPGRADE_ALLOWED in its own commit, or bump PRIMARY_SALT_VERSION for a fresh deploy at a new address.";
 
     uint256 internal chainId;
     string internal deploymentPath;
@@ -113,13 +154,17 @@ abstract contract DeployBase is CreateXScript {
     ///      see `EXCHANGE_SALT_VERSION`. Matching on the exact labels rather than a prefix keeps a typo in a
     ///      label from silently inheriting the default version and computing an unrelated address.
     ///
-    ///      `AsseteraPrimarySales.*` deliberately has NO version of its own: it has never been deployed, so
-    ///      there is no address to rotate away from and nothing a bump could rescue. Give it one at the
-    ///      first storage-layout break AFTER it is live, not before.
+    ///      ⚠️ An earlier version of this comment said `AsseteraPrimarySales.*` deliberately had no version
+    ///      of its own because it had never been deployed. That was true when written and is no longer:
+    ///      the router is live on Amoy and Sepolia, so it now has an address to rotate away from, and it has
+    ///      `PRIMARY_SALT_VERSION`. Introducing that constant did not move the address — see its NatSpec.
     function _saltVersion(string memory name) internal pure returns (string memory) {
         bytes32 h = keccak256(bytes(name));
         if (h == keccak256("AsseteraECS.proxy") || h == keccak256("AsseteraECS.impl")) {
             return EXCHANGE_SALT_VERSION;
+        }
+        if (h == keccak256("AsseteraPrimarySales.proxy") || h == keccak256("AsseteraPrimarySales.impl")) {
+            return PRIMARY_SALT_VERSION;
         }
         return SALT_VERSION;
     }

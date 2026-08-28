@@ -1,5 +1,49 @@
 # Changelog
 
+## [8.0.1](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v8.0.0...evm-contracts-v8.0.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **deployments:** record the implementations now live on all four chains ([#86](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/86)) ([22d1a96](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/22d1a9660fa32dc54fe3f88af6832b101436c7dd))
+
+## [8.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v7.0.1...evm-contracts-v8.0.0) (2026-08-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **exchange:** `makeOffer` gains a leading `uint256 orderId`, so its selector becomes 0x03269a4a. `OfferMade` and `OfferAccepted` each gain a trailing `uint256 orderId`, so their topic0 changes and an indexer on the old topics stops matching them. Storage is NOT broken: `orderId` is appended to a struct held in a mapping, so this installs over a live 4.0.0 proxy with a plain `upgradeToAndCall` and every existing offer reads back with `orderId == 0`.
+
+### Features
+
+* **exchange:** an offer draws on, and closes, the order it was raised against (AO-746) ([#83](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/83)) ([c0ad52d](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/c0ad52d2c7332a687c898980e64e84a2db319808))
+* **primary:** buy in one transaction, by inheriting the permit relay (AO-716) ([#82](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/82)) ([1cf635a](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/1cf635ab83a36c0d644f6ccd03a0b6af67fdf4a1))
+
+## [7.0.1](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v7.0.0...evm-contracts-v7.0.1) (2026-08-24)
+
+
+### Bug Fixes
+
+* **sdk:** document that implementations is a snapshot, not a live view ([#80](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/80)) ([e5bbf68](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/e5bbf689764e0b4c56d99f91610b8a57bca6c369))
+
+## [7.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v6.1.0...evm-contracts-v7.0.0) (2026-08-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sdk:** the published ABI now carries AO-713's SettlementIntent, which gained a `uint8 accountingMode` member. INTENT_TYPEHASH is now 0xa24f008693b1ca921f2aca00e79f4bc40748d499f86d54d0d8377dfdc884bf68, the settlePrimary selector has moved, and every EIP-712 digest and paramsHash binding changes with them. Consumers encoding a SettlementIntent must add the member; nothing else in the package is affected, and nothing currently encodes one.
+
+### Features
+
+* **sdk:** publish the AO-713 intent ABI, and commit + guard the generated surface ([#76](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/76)) ([656622c](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/656622c52a924399ca1bdd2ff60f569b6a199ddd))
+
+## [6.1.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v6.0.0...evm-contracts-v6.1.0) (2026-08-20)
+
+
+### Features
+
+* **deployments:** go live on Polygon and Ethereum mainnet ([#73](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/73)) ([8a53167](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/8a53167855e9a1dccbed3c1792bb1ab678a27141))
+
 ## [6.0.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v5.0.0...evm-contracts-v6.0.0) (2026-08-18)
 
 

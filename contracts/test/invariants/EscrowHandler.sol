@@ -32,6 +32,11 @@ contract EscrowHandler is Test {
     uint256[] public orderIds;
     uint256[] public offerIds;
 
+    /// @dev AO-746 vacuity guards: an invariant that never reaches the draw or the cross-close
+    ///      proves nothing about them. `EscrowConservation.t.sol` asserts both are non-zero.
+    uint256 public offersLinkedToAnOrder;
+    uint256 public ordersClosedByAnOffer;
+
     ExchangeTypes.KycAttestation internal EMPTY_KYC;
 
     /// @dev AC-833: tokenB is the settlement currency for every order/offer this handler
@@ -196,6 +201,25 @@ contract EscrowHandler is Test {
         try exchange.sweepExpired(ids) {} catch {}
     }
 
+    /// @dev AO-746: pick an order this offer may legitimately be raised against, or 0. The
+    ///      contract rejects a link it could never honour, so choosing blindly would turn
+    ///      almost every `makeOffer` into a revert and quietly stop exercising the offer book
+    ///      at all. Selecting a *linkable* order instead means the draw path — the one that
+    ///      lets an order's escrow fund an offer leg — is genuinely reached.
+    function _linkableOrder(uint256 seed, address maker, address taker, address makerToken, address takerToken)
+        internal
+        view
+        returns (uint256)
+    {
+        if (orderIds.length == 0) return 0;
+        uint256 id = orderIds[seed % orderIds.length];
+        ExchangeTypes.Order memory o = exchange.getOrder(id);
+        if (o.status != ExchangeTypes.OrderStatus.Open) return 0;
+        if (o.maker != maker && o.maker != taker) return 0;
+        if (o.sellToken != makerToken && o.sellToken != takerToken) return 0;
+        return id;
+    }
+
     function makeOffer(
         uint256 makerSeed,
         uint256 takerSeed,
@@ -203,7 +227,8 @@ contract EscrowHandler is Test {
         uint256 makerAmount,
         uint256 takerAmount,
         bool withExpiry,
-        uint256 expiryOffsetSeed
+        uint256 expiryOffsetSeed,
+        uint256 orderSeed
     ) external {
         address maker = actors[makerSeed % 3];
         address taker = actors[takerSeed % 3];
@@ -222,15 +247,25 @@ contract EscrowHandler is Test {
             ExchangeTypes.Action.MakeOffer,
             keccak256(abi.encodePacked(taker, address(makerToken), makerAmount, address(takerToken), takerAmount))
         );
+        uint256 orderId = _linkableOrder(orderSeed, maker, taker, address(makerToken), address(takerToken));
         vm.startPrank(maker);
         makerToken.mint(maker, offerEscrow);
         makerToken.approve(address(exchange), offerEscrow);
         try exchange.makeOffer(
-            taker, address(makerToken), makerAmount, address(takerToken), takerAmount, expireTs, EMPTY_KYC, feeAtt
+            orderId,
+            taker,
+            address(makerToken),
+            makerAmount,
+            address(takerToken),
+            takerAmount,
+            expireTs,
+            EMPTY_KYC,
+            feeAtt
         ) returns (
             uint256 id
         ) {
             offerIds.push(id);
+            if (orderId != 0) offersLinkedToAnOrder++;
         } catch {}
         vm.stopPrank();
     }
@@ -285,7 +320,11 @@ contract EscrowHandler is Test {
         vm.startPrank(caller);
         callerToken.mint(caller, acceptorOutlay);
         callerToken.approve(address(exchange), acceptorOutlay);
-        try exchange.acceptOffer(o.id, EMPTY_KYC) {} catch {}
+        try exchange.acceptOffer(o.id, EMPTY_KYC) {
+            if (o.orderId != 0 && exchange.getOrder(o.orderId).status == ExchangeTypes.OrderStatus.Filled) {
+                ordersClosedByAnOffer++;
+            }
+        } catch {}
         vm.stopPrank();
     }
 

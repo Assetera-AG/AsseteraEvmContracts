@@ -12,10 +12,25 @@ dist/
 packages/sdk/src/deployments/31337.json
 packages/sdk/src/deployments/1337.json
 
-# Generated SDK code — regenerated from the contracts + committed deployment JSON via `npm run generate`
-# (never committed, so a dev's local deployment can't leak a baked address into the package).
-packages/sdk/src/generated/
-packages/sdk/src/deployments/deployments.gen.ts
+# ⚠️ The generated SDK surface — `packages/sdk/src/generated/` and
+# `packages/sdk/src/deployments/deployments.gen.ts` — is COMMITTED, and used not to be.
+#
+# It was ignored so that a dev's local anvil deployment could not leak a baked address into the
+# package, which is a real risk: codegen reads every `src/deployments/*.json`, including the
+# 31337/1337 files ignored just above, and bakes the addresses into `react.ts`.
+#
+# That risk is now handled by the `Committed codegen is up to date` step in `.github/workflows/ci.yml`,
+# which regenerates on a clean checkout (no local deployment files) and fails on any diff. A leaked
+# local address cannot be merged; before, it simply could not be seen.
+#
+# Two things were bought by committing it, and neither was reachable while it was ignored:
+#   1. 🔴 release-please attributes a commit to a package by the PATHS IT TOUCHES, and the only
+#      package is rooted at `packages/sdk`. A contracts-only change therefore cut NO release, while
+#      still changing the ABI that the next unrelated release would publish. AO-713 landed a
+#      breaking `settlePrimary` selector and `INTENT_TYPEHASH` this way: had a `fix(sdk):` commit
+#      followed it, the breaking ABI would have shipped as a PATCH to consumers on carets.
+#   2. An ABI change is now REVIEWABLE. The typehash and selector change in AO-713 was invisible in
+#      its own pull request, because the only artefact carrying it was generated at publish time.
 
 # Editor directories
 .vscode/

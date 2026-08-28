@@ -10,7 +10,29 @@ export interface Deployment {
   namespace: string;
   /** Consumer-facing addresses (the exchange is the proxy). */
   contracts: Record<string, Address>;
-  /** UUPS implementation addresses, for upgrade diffing. */
+  /**
+   * UUPS implementation addresses, for upgrade diffing.
+   *
+   * ⚠️ This is a SNAPSHOT, not a live view of the chain, exactly as `metadata` below is. A proxy's
+   * implementation changes whenever the admin multisig executes an upgrade, and that happens without
+   * this package being rebuilt: the record is only as fresh as the last release that followed an
+   * upgrade. Version 7.0.0 shipped with pre-upgrade addresses for this reason.
+   *
+   * The staleness window matters most for the field's own stated purpose. If you are diffing to answer
+   * "is this proxy running the code I expect", read the ERC-1967 implementation slot from the chain and
+   * compare it to this, rather than trusting this alone:
+   *
+   * ```ts
+   * const recorded = getDeployment(chainId).implementations.AsseteraPrimarySales;
+   * const live = await client.getStorageAt({
+   *   address: getDeployment(chainId).contracts.AsseteraPrimarySales,
+   *   slot: "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+   * });
+   * ```
+   *
+   * `contracts` above has no such caveat: those are proxy addresses and they do NOT move on an upgrade,
+   * which is why nothing that merely transacts needs to care about any of this.
+   */
   implementations: Record<string, Address>;
   /**
    * Who held which role **at initialization**.

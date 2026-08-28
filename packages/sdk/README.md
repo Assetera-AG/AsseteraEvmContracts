@@ -65,9 +65,12 @@ const version = await exchange.read.version();
 
 ## Approve and trade in one transaction (`permitAndCall`)
 
-`AsseteraECS.permitAndCall` runs an ERC-2612 `permit` for the caller and then makes one call on the
-exchange with the allowance it granted, so a taker filling an order or a party accepting an offer no
-longer sends a separate `approve` transaction first (AO-298).
+`permitAndCall` runs an ERC-2612 `permit` for the caller and then makes one call on the same contract
+with the allowance it granted, so nobody sends a separate `approve` transaction first. **Both contracts
+expose it**: `AsseteraECS`, for a taker filling an order or a party accepting an offer (AO-298), and
+`AsseteraPrimarySales`, for a primary purchase (AO-713). The example below is the exchange; the
+primary-sales variant is at the end of this section and differs only in which address and which inner
+call you pass.
 
 ```ts
 import { encodeFunctionData } from "viem";
@@ -124,6 +127,45 @@ see: the contract swallows it, `permitAndCall` returns `permitAccepted: false`, 
 on the allowance. `resolvePermitDomain` reads `eip712Domain()` where available and otherwise matches
 candidate names against the token's `DOMAIN_SEPARATOR()`, throwing rather than returning a guess. The
 faucet tokens on playground agree with their `name()`, so playground will not catch this for you.
+
+### The same call on `AsseteraPrimarySales`
+
+A primary purchase pulls the settlement currency, so it had the same two-transaction problem — and a
+worse version of it, because an `approve` takes 15-30 seconds to mine and a firm venue quote is not good
+for that long. Swap the address and the inner call; everything else, including `resolvePermitDomain`, is
+identical.
+
+```ts
+import { asseteraPrimarySalesAbi, getPrimarySalesAddress } from "@asseteragmbh/evm-contracts";
+
+const router = getPrimarySalesAddress(chainId)!;
+// `spender` in the permit message must be `router`, and `value` must be
+// `intent.venueQuoteIn + intent.buyerFee` — exactly what the settlement will pull.
+
+await walletClient.writeContract({
+  address: router,
+  abi: asseteraPrimarySalesAbi,
+  functionName: "permitAndCall",
+  args: [
+    settlementToken,
+    intent.venueQuoteIn + intent.buyerFee,
+    deadline,
+    v,
+    r,
+    s,
+    encodeFunctionData({
+      abi: asseteraPrimarySalesAbi,
+      functionName: "settlePrimary",
+      args: [venueCalldata, intent, intentSignature, buyerSignature, kyc, fee],
+    }),
+  ],
+});
+```
+
+⚠️ **The caller must be the buyer.** The permit `owner` is the caller, and `settlePrimary` requires
+`intent.buyer` to be the caller too, so a third party cannot submit this on somebody else's behalf. A
+relayed (ERC-2771) call still resolves the buyer correctly — wrap `permitAndCall`, not `settlePrimary`,
+in the forwarder request.
 
 ## Indexer / non-viem consumers (pure data)
 

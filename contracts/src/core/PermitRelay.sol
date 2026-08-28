@@ -2,47 +2,63 @@
 pragma solidity 0.8.28;
 
 import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
+import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
-import {ExchangeStorage} from "../storage/ExchangeStorage.sol";
 
 /// @title PermitRelay
-/// @notice Lets a caller submit an ERC-2612 `permit` and the venue call it wants to make in one
+/// @notice Lets a caller submit an ERC-2612 `permit` and the call it wants to make in one
 ///         transaction, so nobody has to send a separate `approve` first (AO-298).
 ///
-///         Until now `placeOrderWithPermit` was the only permit-carrying function here, which
-///         covered the maker placing an order and nobody else. The taker filling an order, and
-///         both parties on `makeOffer` / `replaceOffer` / `acceptOffer`, all had to approve in
-///         one transaction and trade in a second.
+///         Until now `placeOrderWithPermit` was the only permit-carrying function on the
+///         exchange, which covered the maker placing an order and nobody else. The taker
+///         filling an order, and both parties on `makeOffer` / `replaceOffer` / `acceptOffer`,
+///         all had to approve in one transaction and trade in a second.
 ///
-///         The alternative was a `…WithPermit` twin for each of those four functions. We measured
-///         both: four twins cost 513 bytes of runtime code, this costs 373, and the venue has
-///         about 2.6 kB of EIP-170 headroom, so neither is forced by size. We took this one
-///         because it is one selector rather than four, and because it covers any token-pulling
-///         function added later — including the parked operator `settle`/`refund` — without
-///         another twin each time.
+///         The alternative was a `…WithPermit` twin for each of those four functions. We
+///         measured both: four twins cost 513 bytes of runtime code, this costs 373, and the
+///         venue has about 2.6 kB of EIP-170 headroom, so neither is forced by size. We took
+///         this one because it is one selector rather than four, and because it covers any
+///         token-pulling function added later — including the parked operator `settle`/`refund`
+///         — without another twin each time.
+///
+///         **Both routers inherit this module, and that is the whole reason its base is
+///         `ContextUpgradeable` rather than the exchange's storage root (AO-713).** It began on
+///         `ExchangeStorage`, which was incidental: a grep for storage access in this file
+///         returns nothing, and the only things it needs from anywhere are `_msgSender()`,
+///         `_contextSuffixLength()` and `IERC20Permit`. `AsseteraPrimarySales` gets one-signature
+///         primary settlement — `permitAndCall(currency, …, abi.encodeCall(settlePrimary, …))`
+///         — from THIS implementation rather than from a second copy under `src/primary/`, so
+///         the swallow-the-permit-failure rule and the no-guard rule below cannot come to mean
+///         two different things on the two proxies.
 ///
 /// @dev    The mechanism is a self-`delegatecall`, the same one OpenZeppelin's `Multicall` uses.
 ///         (We do not inherit `Multicall` itself: it costs 1,012 bytes here, mostly the `bytes[]`
 ///         decode and the `bytes[]` results array, and we only ever need one inner call.)
 ///
-///         Why a self-`delegatecall` is not a privilege escalation: authorisation everywhere in
-///         this contract is `_msgSender()`, and `permitAndCall` re-appends the ERC-2771 sender
-///         suffix to the inner calldata before delegating. So the inner function resolves the
-///         same actor it would have resolved had the user called it directly, whether the
-///         transaction came from the user or from the trusted forwarder. `data` can therefore
-///         reach nothing the caller could not already reach — admin functions included, since
-///         those check roles against that same `_msgSender()`.
+///         Why a self-`delegatecall` is not a privilege escalation: authorisation on both
+///         routers is `_msgSender()` — the role checks included — and `permitAndCall`
+///         re-appends the ERC-2771 sender suffix to the inner calldata before delegating. So the
+///         inner function resolves the same actor it would have resolved had the user called it
+///         directly, whether the transaction came from the user or from the trusted forwarder.
+///         `data` can therefore reach nothing the caller could not already reach — admin
+///         functions included, since those check roles against that same `_msgSender()`.
 ///
 ///         Two more properties that matter to a reviewer:
 ///           * `permitAndCall` is deliberately NOT `nonReentrant`. Every function it can delegate
-///             into carries its own guard, and taking the guard here would make the inner call
-///             revert. The one external call it makes before delegating is `token.permit` on a
-///             caller-chosen address; at that point this function holds no state and has moved no
-///             funds, so re-entering is equivalent to the caller making the call themselves.
-///             `test_PermitAndCall_ReentrantTokenCannotReenterGuardedCall` pins that.
+///             into carries its own guard — `fillOrder` and friends on the exchange,
+///             `settlePrimary` on the primary router — and taking the guard here would make the
+///             inner call revert. The one external call it makes before delegating is
+///             `token.permit` on a caller-chosen address; at that point this function holds no
+///             state and has moved no funds, so re-entering is equivalent to the caller making
+///             the call themselves. `test_PermitAndCall_ReentrantTokenCannotReenterGuardedCall`
+///             pins that on the exchange and
+///             `test_PermitAndSettle_ReentrantTokenCannotReenterSettlePrimary` on the router.
 ///           * There is no `msg.value` to double-spend across sub-calls (the classic multicall
-///             bug) because the venue has no payable functions and this one is not payable.
-abstract contract PermitRelay is ExchangeStorage {
+///             bug). This function is not payable, so `msg.value` is zero on every path through
+///             it, and a `delegatecall` cannot conjure one. The exchange has no payable function
+///             at all; the primary router has exactly one, `whitelistHandshake`, which is
+///             `DEFAULT_ADMIN_ROLE`-only and would forward the same zero.
+abstract contract PermitRelay is ContextUpgradeable {
     /// @notice Submit an ERC-2612 `permit` for the caller, then make one call on this contract
     ///         with the allowance it granted.
     ///
@@ -75,6 +91,10 @@ abstract contract PermitRelay is ExchangeStorage {
     ///         tells the client its permit did not land, and why the fill is about to fail,
     ///         before the user pays for anything.
     ///
+    ///         The spender is always `address(this)`, and the self-`delegatecall` is what keeps
+    ///         it the right address: the allowance is granted to the contract that goes on to
+    ///         pull the funds, in the same execution context, with no intermediary to approve.
+    ///
     /// @param token    ERC-20 to permit. Only the caller's own balance is ever at stake.
     /// @param value    Allowance to grant. Must be exactly the value the caller signed.
     /// @param deadline Permit expiry, as signed.
@@ -82,7 +102,9 @@ abstract contract PermitRelay is ExchangeStorage {
     /// @param r        Permit signature.
     /// @param s        Permit signature.
     /// @param data     ABI-encoded call to make on this contract afterwards, e.g.
-    ///                 `abi.encodeCall(OrderBook.fillOrder, (id, amount, att))`.
+    ///                 `abi.encodeCall(OrderBook.fillOrder, (id, amount, att))` on the exchange
+    ///                 or `abi.encodeCall(AsseteraPrimarySales.settlePrimary, (…))` on the
+    ///                 primary router.
     /// @return permitAccepted Whether the token accepted the permit.
     /// @return result         The inner call's return data.
     function permitAndCall(

@@ -193,3 +193,42 @@ contract SenderSurchargeCurrency is ERC20 {
         if (surcharge != 0) super._update(from, address(0), surcharge);
     }
 }
+
+/// @title ClampingAsset
+/// @notice An 18-decimal ASSET whose `transfer` silently moves at most `transferCeiling` and
+///         reports success for the full amount. The sender keeps the remainder.
+///
+///         🔴 It is the asset-leg counterpart of `SilentTransferToken`, which is the same
+///         non-conformance at 100 %: the call succeeds, the return value is truthy, and
+///         `SafeERC20` therefore has nothing to object to. What differs is where the shortfall
+///         lands. A silent transfer moves nothing, so the buyer is delivered nothing and
+///         `InsufficientAssetDelivered` fires first; a CLAMPED one delivers enough to clear
+///         `minAssetOut` and still leaves a residue behind in the router. That residue is the
+///         only way to reach `VenueSettler`'s asset-leg assertion at step 9, which is the guard
+///         that closes step 7's forward.
+///
+/// @dev    Not a contrivance: a per-transaction transfer ceiling is a real anti-whale pattern,
+///         and the tokens that implement it by clamping rather than by reverting are exactly the
+///         ones a router cannot detect from the return value. `transferCeiling` starts at
+///         `type(uint256).max`, so the token is a plain ERC-20 until a test says otherwise —
+///         which is what lets the same fixture serve as its own mutation.
+contract ClampingAsset is ERC20 {
+    /// @notice The most any single `transfer` will actually move. Defaults to no ceiling.
+    uint256 public transferCeiling = type(uint256).max;
+
+    constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
+
+    /// @notice Set the per-transfer ceiling. `type(uint256).max` restores conformant behaviour.
+    /// @param ceiling The new ceiling.
+    function setTransferCeiling(uint256 ceiling) external {
+        transferCeiling = ceiling;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function transfer(address to, uint256 value) public override returns (bool) {
+        return super.transfer(to, value > transferCeiling ? transferCeiling : value);
+    }
+}

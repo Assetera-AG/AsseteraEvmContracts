@@ -16,7 +16,7 @@
 
 === struct members (slot/offset within each struct) ===
 
-t_struct(Offer)11772_storage
+t_struct(Offer)12099_storage
   slot    0  offset  0  id: t_uint256
   slot    1  offset  0  maker: t_address
   slot    2  offset  0  taker: t_address
@@ -24,7 +24,7 @@ t_struct(Offer)11772_storage
   slot    4  offset  0  makerAmount: t_uint256
   slot    5  offset  0  takerToken: t_address
   slot    6  offset  0  takerAmount: t_uint256
-  slot    7  offset  0  status: t_enum(OfferStatus)11693
+  slot    7  offset  0  status: t_enum(OfferStatus)12014
   slot    7  offset  1  createdAt: t_uint64
   slot    7  offset  9  expireTs: t_uint64
   slot    8  offset  0  proposedBy: t_address
@@ -33,15 +33,16 @@ t_struct(Offer)11772_storage
   slot    9  offset  0  feeCollector: t_address
   slot   10  offset  0  feeToken: t_address
   slot   11  offset  0  escrowedFee: t_uint256
+  slot   12  offset  0  orderId: t_uint256
 
-t_struct(Order)11737_storage
+t_struct(Order)12061_storage
   slot    0  offset  0  id: t_uint256
   slot    1  offset  0  maker: t_address
   slot    2  offset  0  sellToken: t_address
   slot    3  offset  0  sellAmount: t_uint256
   slot    4  offset  0  buyToken: t_address
   slot    5  offset  0  buyAmount: t_uint256
-  slot    6  offset  0  status: t_enum(OrderStatus)11684
+  slot    6  offset  0  status: t_enum(OrderStatus)12005
   slot    6  offset  1  createdAt: t_uint64
   slot    7  offset  0  remainingQuantity: t_uint256
   slot    8  offset  0  expireTs: t_uint64
@@ -50,3 +51,4 @@ t_struct(Order)11737_storage
   slot    8  offset 12  feeCollector: t_address
   slot    9  offset  0  feeToken: t_address
   slot   10  offset  0  escrowedFee: t_uint256
+  slot   11  offset  0  boughtQuantity: t_uint256
