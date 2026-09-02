@@ -15,6 +15,7 @@
 //    would be an accident of which import they happened to write.
 export {
   asseteraEcsAbi,
+  asseteraIssuanceVenueAbi,
   asseteraPrimarySalesAbi,
   erc2771ForwarderAbi,
   faucetTokenAbi,

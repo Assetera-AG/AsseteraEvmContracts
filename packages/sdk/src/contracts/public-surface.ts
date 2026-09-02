@@ -25,6 +25,7 @@ import * as contracts from "./index.js";
 /** Every name the `/contracts` entry is contracted to expose. */
 type RequiredExports =
   | "asseteraEcsAbi"
+  | "asseteraIssuanceVenueAbi"
   | "asseteraPrimarySalesAbi"
   | "erc2771ForwarderAbi"
   | "faucetTokenAbi"
