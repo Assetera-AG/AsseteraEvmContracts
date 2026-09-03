@@ -167,6 +167,37 @@ await walletClient.writeContract({
 relayed (ERC-2771) call still resolves the buyer correctly — wrap `permitAndCall`, not `settlePrimary`,
 in the forwarder request.
 
+### `AsseteraIssuanceVenue` — the per-offering primary sale venue (8.1.0+)
+
+`asseteraIssuanceVenueAbi` is exported from all three entry points, and `/react` carries the generated
+`useReadAsseteraIssuanceVenue*` / `useWriteAsseteraIssuanceVenue*` / `useSimulateAsseteraIssuanceVenue*` /
+`useWatchAsseteraIssuanceVenue*` hooks.
+
+There is **no** `getIssuanceVenueAddress(chainId)` and no `AsseteraIssuanceVenue` key in the deployment
+records, on purpose. The venue is deployed **once per offering**, not once per chain, so its address is
+not a property of the chain. It comes from the offering's own catalogue column (AO-804), and the consumer
+passes it in:
+
+```ts
+import { asseteraIssuanceVenueAbi } from "@asseteragmbh/evm-contracts/contracts";
+
+const venue = offering.issuanceVenueAddress; // from the catalogue, never from this package
+
+const [unitPrice, settlementIn] = await Promise.all([
+  publicClient.readContract({ address: venue, abi: asseteraIssuanceVenueAbi, functionName: "unitPrice" }),
+  publicClient.readContract({
+    address: venue,
+    abi: asseteraIssuanceVenueAbi,
+    functionName: "quoteSettlementIn",
+    args: [assetOut],
+  }),
+]);
+```
+
+A purchase goes through `AsseteraPrimarySales.settlePrimary` (see above), which calls the venue on the
+buyer's behalf. The venue's own `purchase` reverts with `CallerNotRouter` for any other caller, so consumers
+never call it directly.
+
 ## Indexer / non-viem consumers (pure data)
 
 ```ts
