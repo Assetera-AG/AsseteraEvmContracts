@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.1.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v8.0.1...evm-contracts-v8.1.0) (2026-09-03)
+
+
+### Features
+
+* **sdk:** publish the AsseteraIssuanceVenue ABI in a released version (AO-803) ([#89](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/89)) ([7a9181d](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/7a9181d5a8a24da61932f80a3fec0bf315e8dee7))
+
 ## [8.0.1](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v8.0.0...evm-contracts-v8.0.1) (2026-08-27)
 
 
