@@ -7,6 +7,11 @@ Conventional Commits → a release PR → tag → publish, with **no stored npm 
 ## Steady state (after bootstrap)
 
 1. Land `feat:` / `fix:` commits on `main` (SDK scope: `packages/sdk/**`).
+   ⚠️ **The PR title must be a Conventional Commit too.** The repo squashes with `COMMIT_OR_PR_TITLE`, so a
+   PR with more than one commit gets the PR title as its squash title. A title like `Feat/AO-123 thing` is
+   not parseable, release-please drops the commit with the workflow still green, and the change never
+   reaches a release (this happened to #88). The `Commit message` check on every PR rebuilds the squash
+   message and fails if release-please could not parse it; it re-runs when you edit the title.
 2. release-please opens/updates a **release PR** (version bump + `CHANGELOG.md`). Review + merge it.
 3. Merging tags the release; the `publish` job builds and `npm publish`es via OIDC. Nothing to configure.
 
