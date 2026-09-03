@@ -14,7 +14,16 @@ import { foundry, react } from "@wagmi/cli/plugins";
 // caller to pass an address explicitly, which is the right failure for a not-yet-deployed contract.
 const here = dirname(fileURLToPath(import.meta.url));
 const deploymentsDir = join(here, "src/deployments");
-const include = ["AsseteraECS.json", "AsseteraPrimarySales.json", "FaucetToken.json", "ERC2771Forwarder.json"];
+const include = [
+  "AsseteraECS.json",
+  "AsseteraPrimarySales.json",
+  // AsseteraIssuanceVenue is deployed once PER OFFERING, not once per chain, so it has no entry in
+  // `deployments` below (that map assumes exactly one address per chain id). Callers resolve a specific
+  // offering's address from the per-offering deployment manifest, not from this package.
+  "AsseteraIssuanceVenue.json",
+  "FaucetToken.json",
+  "ERC2771Forwarder.json",
+];
 
 function addressesByChain(contract: string): Record<number, `0x${string}`> {
   if (!existsSync(deploymentsDir)) return {};

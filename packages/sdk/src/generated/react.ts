@@ -1589,6 +1589,604 @@ export const asseteraEcsConfig = {
 } as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// AsseteraIssuanceVenue
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const asseteraIssuanceVenueAbi = [
+  {
+    type: 'constructor',
+    inputs: [
+      {
+        name: 'config',
+        internalType: 'struct IAsseteraIssuanceVenue.SaleConfig',
+        type: 'tuple',
+        components: [
+          { name: 'admin', internalType: 'address', type: 'address' },
+          { name: 'rateSetter', internalType: 'address', type: 'address' },
+          { name: 'pauser', internalType: 'address', type: 'address' },
+          { name: 'treasurer', internalType: 'address', type: 'address' },
+          { name: 'router', internalType: 'address', type: 'address' },
+          { name: 'settlementToken', internalType: 'address', type: 'address' },
+          { name: 'assetToken', internalType: 'address', type: 'address' },
+          { name: 'unitPrice', internalType: 'uint256', type: 'uint256' },
+          { name: 'minUnitPrice', internalType: 'uint256', type: 'uint256' },
+          { name: 'maxUnitPrice', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'maxSettlementPerPurchaseWholeUnits',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+        ],
+      },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'ASSET_DECIMALS',
+    outputs: [{ name: '', internalType: 'uint8', type: 'uint8' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'ASSET_TOKEN',
+    outputs: [{ name: '', internalType: 'contract IERC20', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'ASSET_UNIT',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'DEFAULT_ADMIN_ROLE',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'MAX_TOKEN_DECIMALS',
+    outputs: [{ name: '', internalType: 'uint8', type: 'uint8' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'MAX_UNIT_PRICE',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'MIN_UNIT_PRICE',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'PAUSER_ROLE',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'RATE_SETTER_ROLE',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'ROUTER',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'SETTLEMENT_DECIMALS',
+    outputs: [{ name: '', internalType: 'uint8', type: 'uint8' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'SETTLEMENT_TOKEN',
+    outputs: [{ name: '', internalType: 'contract IERC20', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'TREASURY_ROLE',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'role', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'getRoleAdmin',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'role', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'account', internalType: 'address', type: 'address' },
+    ],
+    name: 'grantRole',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'role', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'account', internalType: 'address', type: 'address' },
+    ],
+    name: 'hasRole',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'maxSettlementPerPurchase',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'maxSettlementPerPurchaseWholeUnits',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'pause',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'paused',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'buyer', internalType: 'address', type: 'address' },
+      { name: 'settlementIn', internalType: 'uint256', type: 'uint256' },
+      { name: 'minAssetOut', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'purchase',
+    outputs: [
+      { name: 'assetMinted', internalType: 'uint256', type: 'uint256' },
+      { name: 'settlementCharged', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'settlementIn', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'quoteAssetOut',
+    outputs: [
+      { name: 'assetOut', internalType: 'uint256', type: 'uint256' },
+      { name: 'settlementCharged', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'assetOut', internalType: 'uint256', type: 'uint256' }],
+    name: 'quoteSettlementIn',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'role', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'callerConfirmation', internalType: 'address', type: 'address' },
+    ],
+    name: 'renounceRole',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'token', internalType: 'address', type: 'address' },
+      { name: 'to', internalType: 'address', type: 'address' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'rescue',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'role', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'account', internalType: 'address', type: 'address' },
+    ],
+    name: 'revokeRole',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'wholeUnits', internalType: 'uint256', type: 'uint256' }],
+    name: 'setMaxSettlementPerPurchase',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'newUnitPrice', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'setUnitPrice',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'interfaceId', internalType: 'bytes4', type: 'bytes4' }],
+    name: 'supportsInterface',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'unitPrice',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'unpause',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'to', internalType: 'address', type: 'address' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'withdraw',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'buyer',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'assetToken',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'assetMinted',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'settlementToken',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'settlementIn',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'unitPrice',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'IssuanceMinted',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'account',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'Paused',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'to', internalType: 'address', type: 'address', indexed: true },
+      {
+        name: 'amount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'ProceedsWithdrawn',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'wholeUnits',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'rawCap',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'decimals',
+        internalType: 'uint8',
+        type: 'uint8',
+        indexed: false,
+      },
+    ],
+    name: 'PurchaseCapSet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'role', internalType: 'bytes32', type: 'bytes32', indexed: true },
+      {
+        name: 'previousAdminRole',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+      {
+        name: 'newAdminRole',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+    ],
+    name: 'RoleAdminChanged',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'role', internalType: 'bytes32', type: 'bytes32', indexed: true },
+      {
+        name: 'account',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'sender',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'RoleGranted',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'role', internalType: 'bytes32', type: 'bytes32', indexed: true },
+      {
+        name: 'account',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'sender',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'RoleRevoked',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'token',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      { name: 'to', internalType: 'address', type: 'address', indexed: true },
+      {
+        name: 'amount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'TokensRescued',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'previousUnitPrice',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'newUnitPrice',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'UnitPriceSet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'account',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'Unpaused',
+  },
+  { type: 'error', inputs: [], name: 'AccessControlBadConfirmation' },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'account', internalType: 'address', type: 'address' },
+      { name: 'neededRole', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'AccessControlUnauthorizedAccount',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'delivered', internalType: 'uint256', type: 'uint256' },
+      { name: 'expected', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'AssetDeliveryShortfall',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'caller', internalType: 'address', type: 'address' }],
+    name: 'CallerNotRouter',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'charged', internalType: 'uint256', type: 'uint256' },
+      { name: 'authorised', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'ChargeExceedsAuthorised',
+  },
+  { type: 'error', inputs: [], name: 'EnforcedPause' },
+  { type: 'error', inputs: [], name: 'ExpectedPause' },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'assetOut', internalType: 'uint256', type: 'uint256' },
+      { name: 'minAssetOut', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'InsufficientAssetOut',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'settlementIn', internalType: 'uint256', type: 'uint256' },
+      { name: 'unitPrice', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'NothingToMint',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'minUnitPrice', internalType: 'uint256', type: 'uint256' },
+      { name: 'maxUnitPrice', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'PriceBoundsInvalid',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'settlementIn', internalType: 'uint256', type: 'uint256' },
+      { name: 'cap', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'PurchaseCapExceeded',
+  },
+  { type: 'error', inputs: [], name: 'ReentrancyGuardReentrantCall' },
+  { type: 'error', inputs: [], name: 'RescueOfSettlementToken' },
+  {
+    type: 'error',
+    inputs: [{ name: 'token', internalType: 'address', type: 'address' }],
+    name: 'SafeERC20FailedOperation',
+  },
+  { type: 'error', inputs: [], name: 'SameToken' },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'requested', internalType: 'uint256', type: 'uint256' },
+      { name: 'received', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'SettlementPullMismatch',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'token', internalType: 'address', type: 'address' },
+      { name: 'decimals', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'TokenDecimalsImplausible',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'unitPrice', internalType: 'uint256', type: 'uint256' },
+      { name: 'minUnitPrice', internalType: 'uint256', type: 'uint256' },
+      { name: 'maxUnitPrice', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'UnitPriceOutOfBounds',
+  },
+  { type: 'error', inputs: [], name: 'ZeroAddress' },
+  { type: 'error', inputs: [], name: 'ZeroAmount' },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // AsseteraPrimarySales
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -4473,6 +5071,499 @@ export const useWatchAsseteraEcsUpgradedEvent =
     abi: asseteraEcsAbi,
     address: asseteraEcsAddress,
     eventName: 'Upgraded',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__
+ */
+export const useReadAsseteraIssuanceVenue = /*#__PURE__*/ createUseReadContract(
+  { abi: asseteraIssuanceVenueAbi },
+)
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"ASSET_DECIMALS"`
+ */
+export const useReadAsseteraIssuanceVenueAssetDecimals =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'ASSET_DECIMALS',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"ASSET_TOKEN"`
+ */
+export const useReadAsseteraIssuanceVenueAssetToken =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'ASSET_TOKEN',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"ASSET_UNIT"`
+ */
+export const useReadAsseteraIssuanceVenueAssetUnit =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'ASSET_UNIT',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"DEFAULT_ADMIN_ROLE"`
+ */
+export const useReadAsseteraIssuanceVenueDefaultAdminRole =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'DEFAULT_ADMIN_ROLE',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"MAX_TOKEN_DECIMALS"`
+ */
+export const useReadAsseteraIssuanceVenueMaxTokenDecimals =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'MAX_TOKEN_DECIMALS',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"MAX_UNIT_PRICE"`
+ */
+export const useReadAsseteraIssuanceVenueMaxUnitPrice =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'MAX_UNIT_PRICE',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"MIN_UNIT_PRICE"`
+ */
+export const useReadAsseteraIssuanceVenueMinUnitPrice =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'MIN_UNIT_PRICE',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"PAUSER_ROLE"`
+ */
+export const useReadAsseteraIssuanceVenuePauserRole =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'PAUSER_ROLE',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"RATE_SETTER_ROLE"`
+ */
+export const useReadAsseteraIssuanceVenueRateSetterRole =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'RATE_SETTER_ROLE',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"ROUTER"`
+ */
+export const useReadAsseteraIssuanceVenueRouter =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'ROUTER',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"SETTLEMENT_DECIMALS"`
+ */
+export const useReadAsseteraIssuanceVenueSettlementDecimals =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'SETTLEMENT_DECIMALS',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"SETTLEMENT_TOKEN"`
+ */
+export const useReadAsseteraIssuanceVenueSettlementToken =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'SETTLEMENT_TOKEN',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"TREASURY_ROLE"`
+ */
+export const useReadAsseteraIssuanceVenueTreasuryRole =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'TREASURY_ROLE',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"getRoleAdmin"`
+ */
+export const useReadAsseteraIssuanceVenueGetRoleAdmin =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'getRoleAdmin',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"hasRole"`
+ */
+export const useReadAsseteraIssuanceVenueHasRole =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'hasRole',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"maxSettlementPerPurchase"`
+ */
+export const useReadAsseteraIssuanceVenueMaxSettlementPerPurchase =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'maxSettlementPerPurchase',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"maxSettlementPerPurchaseWholeUnits"`
+ */
+export const useReadAsseteraIssuanceVenueMaxSettlementPerPurchaseWholeUnits =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'maxSettlementPerPurchaseWholeUnits',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"paused"`
+ */
+export const useReadAsseteraIssuanceVenuePaused =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'paused',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"quoteAssetOut"`
+ */
+export const useReadAsseteraIssuanceVenueQuoteAssetOut =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'quoteAssetOut',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"quoteSettlementIn"`
+ */
+export const useReadAsseteraIssuanceVenueQuoteSettlementIn =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'quoteSettlementIn',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"supportsInterface"`
+ */
+export const useReadAsseteraIssuanceVenueSupportsInterface =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'supportsInterface',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"unitPrice"`
+ */
+export const useReadAsseteraIssuanceVenueUnitPrice =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'unitPrice',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__
+ */
+export const useWriteAsseteraIssuanceVenue =
+  /*#__PURE__*/ createUseWriteContract({ abi: asseteraIssuanceVenueAbi })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"grantRole"`
+ */
+export const useWriteAsseteraIssuanceVenueGrantRole =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'grantRole',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"pause"`
+ */
+export const useWriteAsseteraIssuanceVenuePause =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'pause',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"purchase"`
+ */
+export const useWriteAsseteraIssuanceVenuePurchase =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'purchase',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"renounceRole"`
+ */
+export const useWriteAsseteraIssuanceVenueRenounceRole =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'renounceRole',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"rescue"`
+ */
+export const useWriteAsseteraIssuanceVenueRescue =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'rescue',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"revokeRole"`
+ */
+export const useWriteAsseteraIssuanceVenueRevokeRole =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'revokeRole',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"setMaxSettlementPerPurchase"`
+ */
+export const useWriteAsseteraIssuanceVenueSetMaxSettlementPerPurchase =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'setMaxSettlementPerPurchase',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"setUnitPrice"`
+ */
+export const useWriteAsseteraIssuanceVenueSetUnitPrice =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'setUnitPrice',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"unpause"`
+ */
+export const useWriteAsseteraIssuanceVenueUnpause =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'unpause',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"withdraw"`
+ */
+export const useWriteAsseteraIssuanceVenueWithdraw =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'withdraw',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__
+ */
+export const useSimulateAsseteraIssuanceVenue =
+  /*#__PURE__*/ createUseSimulateContract({ abi: asseteraIssuanceVenueAbi })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"grantRole"`
+ */
+export const useSimulateAsseteraIssuanceVenueGrantRole =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'grantRole',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"pause"`
+ */
+export const useSimulateAsseteraIssuanceVenuePause =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'pause',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"purchase"`
+ */
+export const useSimulateAsseteraIssuanceVenuePurchase =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'purchase',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"renounceRole"`
+ */
+export const useSimulateAsseteraIssuanceVenueRenounceRole =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'renounceRole',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"rescue"`
+ */
+export const useSimulateAsseteraIssuanceVenueRescue =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'rescue',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"revokeRole"`
+ */
+export const useSimulateAsseteraIssuanceVenueRevokeRole =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'revokeRole',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"setMaxSettlementPerPurchase"`
+ */
+export const useSimulateAsseteraIssuanceVenueSetMaxSettlementPerPurchase =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'setMaxSettlementPerPurchase',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"setUnitPrice"`
+ */
+export const useSimulateAsseteraIssuanceVenueSetUnitPrice =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'setUnitPrice',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"unpause"`
+ */
+export const useSimulateAsseteraIssuanceVenueUnpause =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'unpause',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `functionName` set to `"withdraw"`
+ */
+export const useSimulateAsseteraIssuanceVenueWithdraw =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: asseteraIssuanceVenueAbi,
+    functionName: 'withdraw',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__
+ */
+export const useWatchAsseteraIssuanceVenueEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({ abi: asseteraIssuanceVenueAbi })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `eventName` set to `"IssuanceMinted"`
+ */
+export const useWatchAsseteraIssuanceVenueIssuanceMintedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: asseteraIssuanceVenueAbi,
+    eventName: 'IssuanceMinted',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `eventName` set to `"Paused"`
+ */
+export const useWatchAsseteraIssuanceVenuePausedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: asseteraIssuanceVenueAbi,
+    eventName: 'Paused',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `eventName` set to `"ProceedsWithdrawn"`
+ */
+export const useWatchAsseteraIssuanceVenueProceedsWithdrawnEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: asseteraIssuanceVenueAbi,
+    eventName: 'ProceedsWithdrawn',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `eventName` set to `"PurchaseCapSet"`
+ */
+export const useWatchAsseteraIssuanceVenuePurchaseCapSetEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: asseteraIssuanceVenueAbi,
+    eventName: 'PurchaseCapSet',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `eventName` set to `"RoleAdminChanged"`
+ */
+export const useWatchAsseteraIssuanceVenueRoleAdminChangedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: asseteraIssuanceVenueAbi,
+    eventName: 'RoleAdminChanged',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `eventName` set to `"RoleGranted"`
+ */
+export const useWatchAsseteraIssuanceVenueRoleGrantedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: asseteraIssuanceVenueAbi,
+    eventName: 'RoleGranted',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `eventName` set to `"RoleRevoked"`
+ */
+export const useWatchAsseteraIssuanceVenueRoleRevokedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: asseteraIssuanceVenueAbi,
+    eventName: 'RoleRevoked',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `eventName` set to `"TokensRescued"`
+ */
+export const useWatchAsseteraIssuanceVenueTokensRescuedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: asseteraIssuanceVenueAbi,
+    eventName: 'TokensRescued',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `eventName` set to `"UnitPriceSet"`
+ */
+export const useWatchAsseteraIssuanceVenueUnitPriceSetEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: asseteraIssuanceVenueAbi,
+    eventName: 'UnitPriceSet',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link asseteraIssuanceVenueAbi}__ and `eventName` set to `"Unpaused"`
+ */
+export const useWatchAsseteraIssuanceVenueUnpausedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: asseteraIssuanceVenueAbi,
+    eventName: 'Unpaused',
   })
 
 /**
