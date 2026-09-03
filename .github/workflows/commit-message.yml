@@ -1,0 +1,55 @@
+name: Commit message
+
+# A PR whose SQUASH MESSAGE release-please cannot parse is silently dropped from the release: the
+# release-please workflow still goes green, the commit never reaches the changelog, and no version is
+# published. That is what happened to #88 on 2026-09-03: two valid branch commits, but the PR title
+# `Feat/AO 803 publish issuance venue sdk` became the squash title because the PR had more than one commit,
+# and release-please logged "commit could not be parsed", counted 0 commits, skipped, and exited 0.
+#
+# This repo squashes with COMMIT_OR_PR_TITLE + COMMIT_MESSAGES, so the check rebuilds the message from the
+# PR title and the branch commits (see scripts/check-commit-message.mjs). It needs the full history to read
+# them, hence fetch-depth 0.
+#
+# Its own workflow rather than a job in ci.yml because it needs `edited`: the failure is fixed by editing
+# the PR title, not by pushing. Putting `edited` on ci.yml would re-run forge and the SDK build on every
+# title tweak.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commit-message-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parse:
+    name: squash message parses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the check reads the branch commits between base and head
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      - name: Unit tests for the check
+        run: node --test scripts/check-commit-message.test.mjs
+
+      # Passed through the environment, never interpolated into the shell. A PR title is attacker-supplied
+      # text, and `${{ }}` inside a `run:` would splice it straight into the script.
+      - name: Check the squash commit message
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/check-commit-message.mjs
