@@ -59,6 +59,14 @@ abstract contract IntentGate is PrimaryStorage, IIntentGate {
         return keccak256(abi.encode(INTENT_TYPEHASH, intent));
     }
 
+    /// @dev The same shortcut for `RedemptionIntent`, valid for the same reason: all fifteen of
+    ///      its members are static types, so `abi.encode` of the struct is exactly its fifteen
+    ///      head words. `PrimaryIntentVectorsTest` builds the canonical EIP-712 encoding field by
+    ///      field and is what notices if a dynamic member is ever introduced.
+    function _redemptionStructHash(RedemptionIntent calldata intent) internal pure returns (bytes32) {
+        return keccak256(abi.encode(REDEMPTION_TYPEHASH, intent));
+    }
+
     /// @dev Verify an intent without consuming its nonce. Pure validation, no state writes.
     ///
     ///      **TWO signatures over ONE digest, and they are not interchangeable.** The settlement
@@ -151,16 +159,20 @@ abstract contract IntentGate is PrimaryStorage, IIntentGate {
     /// @dev Bind the opaque venue calldata to the signed intent. The calldata itself is never
     ///      what the policy is expressed in — the signer signs typed fields and the bytes ride
     ///      along bound by hash (ADR-0020 D5 rejected a blind signing oracle by name).
+    ///      ⚠️ Takes the two SIGNED FIELDS rather than an intent, so that one implementation
+    ///      serves both the buy and the sell-back leg. The rule is identical on the two, and a
+    ///      second copy of it is how the two silently drift apart.
     /// @param venueCalldata The bytes that will be handed to the venue.
-    /// @param intent        The signed intent carrying `calldataHash` and `selector`.
-    function _bindCalldata(bytes calldata venueCalldata, SettlementIntent calldata intent) internal pure {
-        if (keccak256(venueCalldata) != intent.calldataHash) revert CalldataHashMismatch();
+    /// @param calldataHash  The signed `keccak256` of those bytes.
+    /// @param selector      The signed first four bytes.
+    function _bindCalldata(bytes calldata venueCalldata, bytes32 calldataHash, bytes4 selector) internal pure {
+        if (keccak256(venueCalldata) != calldataHash) revert CalldataHashMismatch();
         // casting to 'bytes4' is safe because the exact bytes are already pinned by the
         // `calldataHash` check on the line above. Calldata shorter than four bytes is
         // zero-padded rather than truncated, and the signer would have had to sign both that
         // padded selector and the hash of those same short bytes for it to be accepted.
         // forge-lint: disable-next-line(unsafe-typecast)
-        if (bytes4(venueCalldata) != intent.selector) revert SelectorMismatch();
+        if (bytes4(venueCalldata) != selector) revert SelectorMismatch();
     }
 
     /// @dev Pin both attestations to this exact settlement, and to this settlement's currency.
@@ -194,12 +206,17 @@ abstract contract IntentGate is PrimaryStorage, IIntentGate {
     ///      against, so without the cross-check the fee could be routed to any other listed
     ///      collector than the one the buyer signed for.
     ///
-    /// @param intent     The signed intent.
+    /// @param settlementToken The currency leg, used in BOTH fee-leg positions.
+    /// @param feeCollector    The collector the intent names.
     /// @param paramsHash The intent's struct hash, which both attestations must carry.
     /// @param kycAtt     The compliance attestation.
     /// @param feeAtt     The fee attestation.
+    /// ⚠️ Takes the two signed fields it reads rather than an intent, so that the buy and the
+    ///    sell-back leg share ONE implementation of the binding rule. Nothing else about
+    ///    it changed; the buy suites are unchanged and are the proof of that.
     function _bindAttestations(
-        SettlementIntent calldata intent,
+        address settlementToken,
+        address feeCollector,
         bytes32 paramsHash,
         KycAttestation calldata kycAtt,
         FeeAttestation calldata feeAtt
@@ -211,18 +228,100 @@ abstract contract IntentGate is PrimaryStorage, IIntentGate {
         // the shared leg test becomes the strict denomination check: a fee attested in the
         // asset token would come out of what the buyer receives, and is refused as
         // `FeeTokenNotALeg`.
-        _validateFees(feeAtt, intent.settlementToken, intent.settlementToken);
+        _validateFees(feeAtt, settlementToken, settlementToken);
 
         // Not in `_validateFees`, and not derivable there: it has no intent to compare against.
-        if (feeAtt.feeCollector != intent.feeCollector) revert FeeCollectorMismatch();
+        if (feeAtt.feeCollector != feeCollector) revert FeeCollectorMismatch();
     }
 
     /// @dev Burn the intent's single-use nonce. Called only once every signature on the path
     ///      has been verified.
+    ///      ⚠️ Takes the party and the nonce rather than an intent. The nonce namespace is keyed
+    ///      on the party address and on nothing else, so the buy and the sell-back leg share it: a
+    ///      nonce is spent by whichever leg presents it first, and the sell-back leg cost no new
+    ///      storage. `IntentConsumed` carries the action ordinal, which is what tells the
+    ///      indexer which leg burned it.
     /// @param action The primary-sale action ordinal this settlement runs under.
-    /// @param intent The signed intent.
-    function _consumeIntent(uint8 action, SettlementIntent calldata intent) internal {
-        _primary().usedIntentNonce[intent.buyer][intent.nonce] = true;
-        emit IntentConsumed(intent.buyer, action, intent.nonce);
+    /// @param party  The actor whose nonce namespace this is: buyer or seller.
+    /// @param nonce  The single-use nonce to burn.
+    function _consumeIntent(uint8 action, address party, uint256 nonce) internal {
+        _primary().usedIntentNonce[party][nonce] = true;
+        emit IntentConsumed(party, action, nonce);
+    }
+
+    // --------------------------------------------------------------------- //
+    //                           The sell-back leg                           //
+    // --------------------------------------------------------------------- //
+
+    /// @notice Verify a `RedemptionIntent` and the seller's consent to it, and hand back the
+    ///         struct hash that is also the `paramsHash` both attestations must be bound to.
+    ///
+    ///         The mirror of `_verifyIntent`, check for check. Everything structural is the same
+    ///         — one digest, two signers, the same TTL cap, the same nonce namespace, ERC-1271
+    ///         for the party's consent — and only the AMOUNT relations differ, because the fee is
+    ///         carved out of the proceeds here rather than charged on top of a quote.
+    ///
+    /// @dev    ⚠️ **Deliberately a separate function rather than a mode flag inside
+    ///         `_verifyIntent`.** The two take different payloads with different typehashes, so a
+    ///         merged implementation would have to branch on every amount line anyway, and the
+    ///         audited buy path would then change shape for a leg it does not run. What IS shared
+    ///         is everything below the amounts, and it is shared by calling the same helpers
+    ///         rather than by copying them.
+    ///
+    ///         The amount relations, and why each one:
+    ///           * `maxAssetIn != 0` — a zero pull makes the whole settlement vacuous;
+    ///           * `venueQuoteOut != 0` — the "give something, receive nothing" shape, which no
+    ///             value check downstream catches: the per-transaction cap only rejects a value
+    ///             ABOVE the cap;
+    ///           * `minSettlementOut != 0` — the mirror of the buy's `minAssetOut != 0`. A zero
+    ///             floor makes the post-call proceeds assertion vacuous, so a hostile venue could
+    ///             take the asset and pay nothing and the settlement would still succeed. The
+    ///             seller signs this field, but so does the buyer sign `minAssetOut`, and the buy
+    ///             refuses a zero one anyway;
+    ///           * `sellerFee <= venueQuoteOut` — there is nothing to carve the fee out of
+    ///             otherwise;
+    ///           * `minSettlementOut <= venueQuoteOut - sellerFee` — the seller's own floor must
+    ///             be reachable from the quote the same signature authorises.
+    ///
+    /// @param intent          The redemption intent.
+    /// @param signature       The settlement operator's EIP-712 signature over it.
+    /// @param sellerSignature The SELLER's signature over the SAME digest, EOA or ERC-1271.
+    /// @return structHash     The EIP-712 struct hash, which is also the `paramsHash` binding.
+    function _verifyRedemption(
+        RedemptionIntent calldata intent,
+        bytes calldata signature,
+        bytes calldata sellerSignature
+    ) internal view returns (bytes32 structHash) {
+        // The seller is the actor, resolved through ERC-2771 exactly as the buyer is. Nobody
+        // redeems on somebody else's behalf.
+        if (intent.seller != _msgSender()) revert IntentSellerMismatch();
+
+        if (intent.assetToken == address(0) || intent.settlementToken == address(0) || intent.venue == address(0)) {
+            revert ZeroAddress();
+        }
+        if (intent.assetToken == intent.settlementToken) revert SameToken();
+        if (intent.maxAssetIn == 0) revert ZeroAmount();
+        if (intent.venueQuoteOut == 0) revert ZeroRedemptionQuote();
+        // 🔴 See the ⚠️ above: without this a venue that takes the asset and pays nothing settles.
+        if (intent.minSettlementOut == 0) revert ZeroAmount();
+        if (intent.sellerFee > intent.venueQuoteOut) revert SellerFeeExceedsProceeds();
+        if (intent.minSettlementOut > intent.venueQuoteOut - intent.sellerFee) revert MinSettlementTooHigh();
+
+        if (block.timestamp > intent.deadline) revert IntentExpired();
+        if (intent.deadline > block.timestamp + MAX_INTENT_TTL) revert IntentTtlTooLong();
+        if (usedIntentNonce(intent.seller, intent.nonce)) revert IntentNonceUsed();
+
+        structHash = _redemptionStructHash(intent);
+        bytes32 digest = _hashTypedDataV4(structHash);
+
+        address signer = ECDSA.recover(digest, signature);
+        if (!hasRole(SETTLEMENT_OPERATOR_ROLE, signer)) revert IntentBadSigner();
+
+        // The seller's own consent to these exact terms, taken in the same call that verifies the
+        // intent for the reason `_verifyIntent` gives: a guarantee each caller has to remember to
+        // make is not a guarantee.
+        if (!SignatureChecker.isValidSignatureNow(intent.seller, digest, sellerSignature)) {
+            revert SellerConsentBadSignature();
+        }
     }
 }

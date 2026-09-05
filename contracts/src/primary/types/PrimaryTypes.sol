@@ -72,7 +72,13 @@ abstract contract PrimaryTypes is GateTypes {
         None, // 0 — never gated, never accepted; a zero action is an unset field
         SettleVenue, // 1 — a venue settlement through the constrained executor: a third party's
         // contract, or the per-token sale contract fronting our own issuance
-        SettleMint // 2 — RESERVED and unreachable; see the ⚠️ above before giving it a caller
+        SettleMint, // 2 — RESERVED and unreachable; see the ⚠️ above before giving it a caller
+        RedeemVenue // 3 — the SELL BACK leg of the same venue path: the seller hands the
+        // asset over and the venue pays settlement currency back. It is its own ordinal, and not a
+        // direction flag inside ordinal 1, because the ordinal is what the compliance signer signs
+        // and selling an instrument back is not the same appropriateness question as buying one.
+        // Its entry point is `AsseteraPrimarySales.redeemPrimary` and its payload is
+        // `RedemptionIntent`, NOT `SettlementIntent`.
         // S3 ("observed", recorded rather than executed) has no ordinal yet: it may end up
         // off-chain only. Appending it later is safe, and it is gated the moment it exists.
     }
@@ -203,6 +209,80 @@ abstract contract PrimaryTypes is GateTypes {
     );
 
     // --------------------------------------------------------------------- //
+    //                         The redemption intent                          //
+    // --------------------------------------------------------------------- //
+
+    /// @notice What the settlement operator signs to authorise ONE sell back to a venue — and
+    ///         what the SELLER signs to agree to it. The mirror image of `SettlementIntent`,
+    ///         under `Action.RedeemVenue`.
+    ///
+    ///         It is a SECOND struct rather than a direction flag on the first, for the reason
+    ///         the enum member gives: the two legs carry different amounts with different
+    ///         meanings, and a shared struct would have to leave half its members unread on
+    ///         either leg. `SettlementIntent` is frozen and did not move; `INTENT_TYPEHASH` is
+    ///         exactly what it was.
+    ///
+    ///         The amount model, stated once so the four numbers cannot drift apart. Note that
+    ///         it is NOT the buy's model with the signs flipped: the fee is carved OUT of the
+    ///         proceeds here, where on the buy it is charged ON TOP of the quote.
+    ///
+    ///         - `maxAssetIn`       — the ceiling on what the router pulls from the seller, in
+    ///                                the token's VISIBLE units. Approved to the venue, and the
+    ///                                most it can take.
+    ///         - `venueQuoteOut`    — the venue's firm proceeds quote, in settlement currency.
+    ///                                What the venue is expected to pay the router.
+    ///         - `sellerFee`        — our fee, derived by `FeeMath` from the attested
+    ///                                `takerFeeBps` applied to `venueQuoteOut`, in the settlement
+    ///                                currency, carved OUT of the proceeds. There is nothing to
+    ///                                charge it on top of: the seller sends no currency.
+    ///         - `minSettlementOut` — the floor on the NET proceeds forwarded to the seller,
+    ///                                after the fee. The only number the seller needs to read,
+    ///                                and the one the whole settlement is judged against.
+    ///         - the measured consumption, after the call: whatever asset the venue did not take
+    ///           is returned to the seller in the same transaction.
+    ///
+    /// @dev    ⚠️ **This is an EIP-712 SIGNED PAYLOAD.** The same warning `SettlementIntent`
+    ///         carries applies here, and for the same reasons: adding, removing, reordering or
+    ///         retyping a field changes `REDEMPTION_TYPEHASH` and therefore the digest, which
+    ///         invalidates every redemption intent in flight AND every `paramsHash` binding on
+    ///         the two attestations that ride with it — `paramsHash` IS this struct's EIP-712
+    ///         struct hash. The signer service, the marketplace backend and the indexer all code
+    ///         against this shape.
+    ///
+    ///         ⚠️ All fifteen members are STATIC types, which is what makes
+    ///         `keccak256(abi.encode(REDEMPTION_TYPEHASH, intent))` identical to the EIP-712
+    ///         struct hash. See the same note on `SettlementIntent`; introducing a dynamic
+    ///         member would break the identity silently.
+    struct RedemptionIntent {
+        address seller; // must equal `_msgSender()` (ERC-2771 aware)
+        address assetToken; // what the seller gives up
+        uint8 accountingMode; // an `AssetAccountingMode` ordinal; see that enum for why uint8
+        uint256 maxAssetIn; // ceiling on what is pulled from the seller, in VISIBLE units — a
+        // client cannot consent to a share count, so under `RebasingShares` the router converts
+        // this to shares itself and pulls exactly that many
+        address settlementToken; // must equal `fee.feeToken`; what the seller receives
+        uint256 venueQuoteOut; // the venue's firm proceeds quote, measured against after the call
+        uint256 sellerFee; // our fee, same token, carved OUT of the proceeds
+        uint256 minSettlementOut; // floor on the NET proceeds forwarded to the seller
+        address feeCollector; // must be on this router's collector allowlist
+        address venue; // signed, but checked against NO on-chain list, as on the buy
+        bytes4 selector; // signed, and asserted against `bytes4(venueCalldata)`
+        bytes32 calldataHash; // keccak256 of the calldata passed as its own argument
+        bytes32 supplierReference; // the venue's own quote/order id, so the event can carry it
+        uint256 nonce; // single-use, and in the SAME namespace `SettlementIntent.nonce` uses:
+        // the namespace is keyed on the party address, so one nonce is spent by whichever leg
+        // presents it first and no new storage is needed
+        uint256 deadline; // hard TTL cap, as the two attestations have
+    }
+
+    /// @notice The EIP-712 typehash of `RedemptionIntent`, pinned as a hardcoded literal in
+    ///         `test/primary/PrimaryIntentVectors.t.sol` beside `INTENT_TYPEHASH`, so that
+    ///         editing the struct cannot land quietly.
+    bytes32 public constant REDEMPTION_TYPEHASH = keccak256(
+        "RedemptionIntent(address seller,address assetToken,uint8 accountingMode,uint256 maxAssetIn,address settlementToken,uint256 venueQuoteOut,uint256 sellerFee,uint256 minSettlementOut,address feeCollector,address venue,bytes4 selector,bytes32 calldataHash,bytes32 supplierReference,uint256 nonce,uint256 deadline)"
+    );
+
+    // --------------------------------------------------------------------- //
     //                          Measured effects                              //
     // --------------------------------------------------------------------- //
 
@@ -218,5 +298,19 @@ abstract contract PrimaryTypes is GateTypes {
         uint256 venueIn; // measured settlement-token consumption by the venue
         uint256 refund; // unconsumed settlement token returned to the buyer
         uint256 fee; // settlement token paid to `intent.feeCollector`
+    }
+
+    /// @notice The same, for the sell-back leg: the four numbers `PrimaryRedeemed` reports, every
+    ///         one of them MEASURED rather than quoted.
+    ///
+    /// @dev    Both asset-side numbers are reported in the token's VISIBLE units even though the
+    ///         settler measures and moves them in the asset's own unit of account. That is the
+    ///         same split `SettlementResult.assetDelivered` makes and for the same reason: the
+    ///         reported figures and the seller both speak in instrument units, never in shares.
+    struct RedemptionResult {
+        uint256 assetIn; // measured `assetToken` the venue consumed, in visible units
+        uint256 venueOut; // measured settlement token the venue paid the router
+        uint256 assetRefund; // unconsumed asset returned to the seller, in visible units
+        uint256 fee; // settlement token paid to `intent.feeCollector`, carved out of `venueOut`
     }
 }

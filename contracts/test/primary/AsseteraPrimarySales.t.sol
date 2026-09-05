@@ -46,9 +46,10 @@ contract PrimarySalesInitTest is PrimarySalesTestBase {
 
     /// The same property stated the way it will actually be met: a member appended to the enum
     /// tomorrow, with no initializer line and no test line, is gated the moment it exists.
-    /// Ordinal 3 is the first unallocated one.
+    /// Ordinal 4 is the first unallocated one, ordinal 3 having gone to `Action.RedeemVenue`
+    /// without a single line being added to the initializer. That is the property.
     function test_ComplianceGate_IsClosedForAnActionNobodyHasDeclaredYet() public view {
-        assertTrue(sales.complianceRequired(3), "the next Action to be appended would be ungated");
+        assertTrue(sales.complianceRequired(4), "the next Action to be appended would be ungated");
     }
 
     /// An admin can still exempt an action deliberately — the surface is unchanged — but the
@@ -131,13 +132,18 @@ contract PrimarySalesInitTest is PrimarySalesTestBase {
     function test_ParamsHashAllowed_IsTrueForEveryDeclaredAction() public view {
         assertTrue(harness.paramsHashAllowed(uint8(PrimaryTypes.Action.SettleVenue)), "SettleVenue");
         assertTrue(harness.paramsHashAllowed(uint8(PrimaryTypes.Action.SettleMint)), "SettleMint");
+        assertTrue(harness.paramsHashAllowed(uint8(PrimaryTypes.Action.RedeemVenue)), "RedeemVenue");
     }
 
     /// Ordinal zero is an unset field, never a real action, and must not be able to carry a
     /// bound `paramsHash`.
     function test_ParamsHashAllowed_IsFalseForTheZeroAndUndeclaredActions() public view {
         assertFalse(harness.paramsHashAllowed(uint8(PrimaryTypes.Action.None)), "None");
-        assertFalse(harness.paramsHashAllowed(3), "first unallocated ordinal");
+        // ⚠️ Was `3` until the sell-back leg took that ordinal for `Action.RedeemVenue`.
+        //    Bumping the literal is what a new declared action costs here, and the assertion it
+        //    makes is unchanged:
+        //    the first ordinal NOBODY has allocated must not be able to carry a bound `paramsHash`.
+        assertFalse(harness.paramsHashAllowed(4), "first unallocated ordinal");
         assertFalse(harness.paramsHashAllowed(type(uint8).max), "255");
     }
 
