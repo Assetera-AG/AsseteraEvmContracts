@@ -504,7 +504,7 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
     ///      `_assetUnderlyingOf` before any such comparison.
     ///      ⚠️ Takes the SIGNED MODE and the SIGNED TOKEN rather than an intent, and is
     ///      `internal` rather than `private`, so the sell-back leg in `VenueRedeemer` measures the
-    ///      asset through this same function (AO-847). A second copy of the dispatch would be a
+    ///      asset through this same function. A second copy of the dispatch would be a
     ///      second place for a new accounting family to be forgotten.
     function _assetUnitsOf(uint8 mode, address assetToken, address account) internal view returns (uint256) {
         if (mode == uint8(AssetAccountingMode.Erc20Balance)) {

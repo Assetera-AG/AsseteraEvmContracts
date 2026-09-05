@@ -50,7 +50,7 @@ The contract **is already deployed** on Polygon Amoy and Ethereum Sepolia
 
 ### Two legs, one preamble
 
-There are **two** money-moving entry points since AO-847, and an auditor should read them as one
+There are now **two** money-moving entry points, and an auditor should read them as one
 surface with two tails rather than as two contracts:
 
 | Entry point | Payload | Action ordinal | Event | Fee model |
@@ -64,8 +64,9 @@ binding, attestation binding, the three nonce burns and the per-transaction valu
 separate, in `VenueSettler` and `VenueRedeemer` respectively.
 
 ⚠️ **The shared preamble now takes primitives rather than a `SettlementIntent`.** That refactor is
-the only change AO-847 made to the audited buy path, and it is mechanical: the same checks in the
-same order on the same values. The pre-existing buy suite passes unchanged, which is the evidence.
+the only change the sell-back leg made to the audited buy path, and it is mechanical: the same
+checks in the same order on the same values. The pre-existing buy suite passes unchanged, which is
+the evidence.
 
 ### The shape of one settlement
 
@@ -125,11 +126,11 @@ find src/primary -name '*.sol' | xargs wc -l
 | `src/primary/settle/VenueSettler.sol` | 554 | **The BUY money path.** Snapshot / pull currency / measure / approve / call venue / revoke / measure / refund / forward asset / assert delivery / pay fee / assert zero standing balance |
 | `src/primary/IntentGate.sol` | 327 | The third gate: EIP-712 intent verification for BOTH payloads (operator + party consent), TTL, single-use nonce, calldata/selector binding, attestation binding |
 | `src/primary/types/PrimaryTypes.sol` | 316 | `Action` enum, `AssetAccountingMode`, the frozen `SettlementIntent` struct (**15** static members) and `INTENT_TYPEHASH`, the `RedemptionIntent` struct (15 static members) and `REDEMPTION_TYPEHASH`, `SettlementResult`, `RedemptionResult` |
-| `src/primary/settle/VenueRedeemer.sol` | 267 | **The SELL BACK money path** (AO-847). Inherits `VenueSettler` so the accounting-mode dispatch is shared, not copied: snapshot / pull asset / measure / approve venue in the asset / call / revoke and prove it / measure proceeds / assert the net floor / return unconsumed asset / carve out the fee / forward the rest / assert zero standing balance |
+| `src/primary/settle/VenueRedeemer.sol` | 267 | **The SELL BACK money path.** Inherits `VenueSettler` so the accounting-mode dispatch is shared, not copied: snapshot / pull asset / measure / approve venue in the asset / call / revoke and prove it / measure proceeds / assert the net floor / return unconsumed asset / carve out the fee / forward the rest / assert zero standing balance |
 | `src/primary/interfaces/ISettler.sol` | 260 | The frozen `PrimarySettled` and `PrimaryRedeemed` events and the settlement errors |
 | `src/primary/admin/SettlementLimits.sol` | 257 | Per-token per-transaction value cap in whole units; `_authorizeSettlement`, the shared preamble every settlement path must run, now on primitives so both legs enter it; defensive `decimals()` probing |
 | `src/primary/interfaces/IIntentGate.sol` | 138 | Interface |
-| `src/primary/storage/PrimaryStorage.sol` | 123 | Router state in its own ERC-7201 namespace; `SETTLEMENT_OPERATOR_ROLE`. ⚠️ Unchanged by AO-847: the sell-back leg added **no storage**, because the intent nonce namespace is keyed on the party address and is therefore shared |
+| `src/primary/storage/PrimaryStorage.sol` | 123 | Router state in its own ERC-7201 namespace; `SETTLEMENT_OPERATOR_ROLE`. ⚠️ Unchanged: the sell-back leg added **no storage**, because the intent nonce namespace is keyed on the party address and is therefore shared |
 | `src/primary/interfaces/ISettlementLimits.sol` | 105 | Interface |
 | `src/primary/interfaces/IShareAccountingToken.sol` | 81 | The five functions a share-accounted asset must expose. Two of them, `getSharesByUnderlyingAmount` and `transferSharesFrom`, are called on the sell-back leg only |
 
@@ -256,22 +257,22 @@ slither .                            # BOTH surfaces: 43 results, all triaged be
 | `test/primary/VenueSettler.t.sol` | 5 | 29 | The BUY money path: happy path, reverts, hardcoded fee vectors, limits, refunds |
 | `test/primary/PrimarySalesAdversarial.t.sol` | 4 | 29 | Replay, hostile wallet / ERC-1271, meta-transaction, buyer-consent replay |
 | `test/primary/SettlementLimits.t.sol` | 6 | 27 | `decimals()` handling, admin, enforcement, through the entry point, applies to every path, storage |
-| `test/primary/PrimaryRedemption.t.sol` | 1 | 23 | **Sell back (AO-847), the gate half**: the `redeemPrimary` entry point, seller consent, the shared nonce namespace, the ordinal binding, every amount relation |
+| `test/primary/PrimaryRedemption.t.sol` | 1 | 23 | **Sell back, the gate half**: the `redeemPrimary` entry point, seller consent, the shared nonce namespace, the ordinal binding, every amount relation |
 | `test/primary/VenueRedeemer.t.sol` | 1 | 20 | **Sell back, the money path**: the fee carve-out, the proceeds floor, a venue that takes and pays nothing, partial fills, standing approvals |
 | `test/primary/sale/IssuanceVenueRouterE2E.t.sol` | 1 | 14 | Our own issuance through the router |
 | `test/primary/PermitAndSettle.t.sol` | 1 | 14 | ERC-2612 permit plus settlement in one transaction |
 | `test/primary/VenueSettlerShares.t.sol` | 1 | 11 | Share-accounted assets on the buy leg |
 | `test/primary/sale/IssuanceVenueAdversarial.t.sol` | 4 | 11 | Hostile behaviour against the sale contract |
-| `test/primary/PrimaryIntentVectors.t.sol` | 1 | 10 | Hardcoded typehash / struct-hash / topic0 vectors for BOTH payloads, cross-repo pinning |
+| `test/primary/PrimaryIntentVectors.t.sol` | 1 | 10 | Hardcoded typehash / struct-hash / topic0 vectors for BOTH payloads, pinned against the off-chain implementations |
 | `test/primary/VenueRedeemerShares.t.sol` | 1 | 7 | **Sell back against a share-accounted asset**: the exact-share pull, the remainder the venue's nominal pull leaves, a mid-call multiplier change |
 | `test/primary/PrimaryStorageNamespace.t.sol` | 1 | 5 | ERC-7201 namespace derivation and slot reads |
 | `test/primary/AaplxMainnetFork.t.sol` | 1 | 3 | **Fork**, buy leg, against real Ethereum AAPLx. Skipped without `MAINNET_RPC_URL` |
-| `test/primary/AaplxSellMainnetFork.t.sol` | 1 | 3 | **Fork**, sell-back leg (AO-847), against real Ethereum AAPLx. Proves `transferSharesFrom` exists on the deployed implementation and that its allowance is spent in VISIBLE units. Skipped without `MAINNET_RPC_URL` |
+| `test/primary/AaplxSellMainnetFork.t.sol` | 1 | 3 | **Fork**, sell-back leg, against real Ethereum AAPLx. Proves `transferSharesFrom` exists on the deployed implementation and that its allowance is spent in VISIBLE units. Skipped without `MAINNET_RPC_URL` |
 
 > The whole repository runs **679 tests across 61 suites**; the remainder belong to the exchange. Two of
 > the 679 are the fork suites and report as SKIPPED unless `MAINNET_RPC_URL` is set. Earlier revisions of
-> this document quoted **200** for this surface and **457** for the repository; both predate AO-847 and
-> several packets before it, and neither should be used.
+> this document quoted **200** for this surface and **457** for the repository; both predate the
+> sell-back leg and several changes before it, and neither should be used.
 
 **Coverage** (`forge coverage --ir-minimum --no-match-coverage '(script|test)'`). `--ir-minimum` is
 **required** — plain `forge coverage` disables the optimizer and via-IR and fails "stack too deep" in
@@ -287,8 +288,9 @@ slither .                            # BOTH surfaces: 43 results, all triaged be
 | `src/primary/storage/PrimaryStorage.sol` | 75.00 (3/4) | 50.00 (1/2) | n/a (0/0) | 100.00 (2/2) |
 | **Subtotal (this surface)** | **92.95 (145/156)** | **93.98 (203/216)** | **94.59 (35/37)** | **96.77 (30/31)** |
 
-⚠️ **The coverage table above was measured before AO-847 and has NOT been re-run.** It is left in place
-because the shape of the residue it discusses is unchanged, but the figures do not include
+⚠️ **The coverage table above was measured before the sell-back leg landed and has NOT been
+re-run.** It is left in place because the shape of the residue it discusses is unchanged, but the
+figures do not include
 `VenueRedeemer.sol` or the redemption half of `IntentGate.sol` and must be re-measured before the
 engagement starts. Said plainly rather than quietly restated as if it were current.
 

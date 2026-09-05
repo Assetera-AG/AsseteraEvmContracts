@@ -120,7 +120,7 @@ contract PrimaryIntentVectorsTest is PrimarySalesTestBase {
         assertTrue(_paramsHash(m) != base, "deadline");
     }
 
-    // -- the sell-back leg (AO-847) --------------------------------------------------------
+    // -- the sell-back leg -----------------------------------------------------------------
 
     /// The literal an off-chain signer can hardcode instead of hashing the type string.
     bytes32 internal constant EXPECTED_REDEMPTION_TYPEHASH =
@@ -174,7 +174,7 @@ contract PrimaryIntentVectorsTest is PrimarySalesTestBase {
     }
 
     /// 🔴 The SHARED known-answer vector. The signer service and the compliance service pin this
-    /// same struct hash against their own EIP-712 tooling (viem), so this test is what proves the
+    /// same struct hash against their own EIP-712 tooling, so this test is what proves the
     /// three implementations agree. A typehash pin alone would not: it says nothing about field
     /// order, padding, or the `bytes4` and `uint8` encodings.
     ///

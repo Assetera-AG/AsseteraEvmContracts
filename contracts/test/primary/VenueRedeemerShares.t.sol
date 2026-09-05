@@ -8,7 +8,8 @@ import {XStocksLikeVenue} from "../mocks/XStocksLikeVenue.sol";
 import {VenueRedeemerTestBase} from "./VenueRedeemerTestBase.sol";
 
 /// @title VenueRedeemerSharesTest
-/// @notice AO-847 against a share-accounted asset: selling AAPLx-shaped stock back to a venue.
+/// @notice The sell-back leg against a share-accounted asset: selling AAPLx-shaped stock back
+///         to a venue.
 ///
 ///         The sell-side mirror of `VenueSettlerShares.t.sol`, and the rounding trap arrives from
 ///         the other direction. On the buy leg the provider's ONE nominal hop into the router was

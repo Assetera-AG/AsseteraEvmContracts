@@ -45,7 +45,7 @@ interface IIntentGate {
     ///      something to read before signing.
     error BuyerConsentBadSignature();
 
-    // ── the sell-back leg (AO-847) ────────────────────────────────────────────────────────
+    // ── the sell-back leg ─────────────────────────────────────────────────────────────────
     //
     // `RedemptionIntent` reuses every error above that is about the SHAPE of a signed intent —
     // `IntentExpired`, `IntentTtlTooLong`, `IntentNonceUsed`, `IntentBadSigner`,

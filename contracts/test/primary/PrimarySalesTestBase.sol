@@ -91,7 +91,7 @@ abstract contract PrimarySalesTestBase is Test {
         "SettlementIntent(address buyer,address assetToken,uint8 accountingMode,uint256 minAssetOut,address settlementToken,uint256 venueQuoteIn,uint256 buyerFee,uint256 maxSettlementIn,address feeCollector,address venue,bytes4 selector,bytes32 calldataHash,bytes32 supplierReference,uint256 nonce,uint256 deadline)";
     bytes32 internal constant INTENT_TYPEHASH = keccak256(bytes(INTENT_TYPE_STRING));
 
-    /// The sell-back leg's payload (AO-847), restated here for the same reason: every digest
+    /// The sell-back leg's payload, restated here for the same reason: every digest
     /// these tests build must be derived independently of the contract under test.
     string internal constant REDEMPTION_TYPE_STRING =
         "RedemptionIntent(address seller,address assetToken,uint8 accountingMode,uint256 maxAssetIn,address settlementToken,uint256 venueQuoteOut,uint256 sellerFee,uint256 minSettlementOut,address feeCollector,address venue,bytes4 selector,bytes32 calldataHash,bytes32 supplierReference,uint256 nonce,uint256 deadline)";
@@ -176,7 +176,7 @@ abstract contract PrimarySalesTestBase is Test {
         return keccak256(abi.encode(INTENT_TYPEHASH, intent));
     }
 
-    // ── redemption intent (AO-847) ────────────────────────────────────────────────────────
+    // ── redemption intent ─────────────────────────────────────────────────────────────────
     //
     // ⚠️ The seller is the SAME account as the buyer. This fixture has one customer, the two
     //    legs share one nonce namespace keyed on that account, and `_kycForAction` /

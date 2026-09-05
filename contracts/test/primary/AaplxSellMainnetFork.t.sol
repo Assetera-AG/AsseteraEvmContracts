@@ -14,7 +14,7 @@ interface IBackedMintable {
 }
 
 /// @title AaplxSellMainnetForkTest
-/// @notice AO-847 against the REAL Ethereum AAPLx, forked: the sell-back leg run end to end on
+/// @notice The sell-back leg against the REAL Ethereum AAPLx, forked: run end to end on
 ///         the deployed token rather than on a mock of it.
 ///
 ///         The claim it exists to make is narrow and cannot be made any other way. The router now

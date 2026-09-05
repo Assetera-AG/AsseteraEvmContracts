@@ -8,7 +8,7 @@ import {IShareAccountingToken} from "../interfaces/IShareAccountingToken.sol";
 import {FeeMath} from "../../libs/FeeMath.sol";
 
 /// @title VenueRedeemer
-/// @notice The router's SELL BACK leg (AO-847): the seller hands an asset over and the venue pays
+/// @notice The router's SELL BACK leg: the seller hands an asset over and the venue pays
 ///         settlement currency for it. The mirror of `VenueSettler`, against the same kind of
 ///         venue, under the same constrained-executor discipline — we hand over opaque calldata
 ///         we did not author and judge the result purely on the balance deltas WE measured.
@@ -52,7 +52,8 @@ import {FeeMath} from "../../libs/FeeMath.sol";
 ///         point of that mode — and then approves the visible value of those shares. Whatever the
 ///         venue's own nominal-to-shares rounding leaves behind is measured in SHARES at step 5
 ///         and returned to the seller with `transferShares` at step 7. That is the same
-///         second-hop rounding trap AO-713 fixed on the buy leg, arrived at from the other side.
+///         second-hop rounding trap the share-rounding fix closed on the buy leg, arrived at
+///         from the other side.
 abstract contract VenueRedeemer is VenueSettler {
     using SafeERC20 for IERC20;
 
@@ -166,7 +167,7 @@ abstract contract VenueRedeemer is VenueSettler {
         // rounding produces one every time under `RebasingShares`. Leaving the difference here
         // would contradict the zero-standing-balance invariant, and the router has no sweep.
         // ⚠️ Returned in the asset's OWN unit — an exact SHARE count under `RebasingShares` —
-        //    which is the one-hop rounding trap AO-713 fixed on the buy leg.
+        //    which is the one-hop rounding trap the share-rounding fix closed on the buy leg.
         uint256 assetRefund;
         if (leftoverUnits != 0) {
             _forwardAssetUnits(mode, assetToken, intent.seller, leftoverUnits);
@@ -191,7 +192,7 @@ abstract contract VenueRedeemer is VenueSettler {
 
         // ── 9 · the four measured numbers ─────────────────────────────────────────────────
         // Both asset numbers are converted back to VISIBLE units exactly once, here, so the event
-        // and the activity ledger speak the instrument rather than the share.
+        // and everything downstream speak the instrument rather than the share.
         result = RedemptionResult({
             assetIn: _assetUnderlyingOf(mode, assetToken, requestedUnits - leftoverUnits),
             venueOut: venueOut,

@@ -66,7 +66,7 @@ contract XStocksLikeVenue {
         return swap.paymentAmount;
     }
 
-    /// @notice Fill one swap in the SELL direction (AO-847): pull the asset the caller approved,
+    /// @notice Fill one swap in the SELL direction: pull the asset the caller approved,
     ///         optionally rebase, then pay the proceeds.
     ///
     ///         The same `Swap` shape read the other way round, which is how the real venue works
@@ -76,7 +76,8 @@ contract XStocksLikeVenue {
     ///
     /// @dev    ⚠️ The nominal pull is the point. A venue that knows nothing about shares takes the
     ///         asset with an ordinary `transferFrom`, which converts to shares once more and can
-    ///         leave a remainder at the router — the sell-side mirror of the trap AO-713 fixed.
+    ///         leave a remainder at the router — the sell-side mirror of the trap the
+    ///         share-rounding fix closed.
     ///
     /// @param swap The swap to fill.
     /// @return taken The asset actually pulled, in nominal units.

@@ -15,13 +15,13 @@ pragma solidity 0.8.28;
 ///         A seam itself is an `internal virtual` function, which Solidity cannot express in an
 ///         `interface`, so each is declared on its own module. See below for both.
 ///
-///         ⚠️ **There is a SECOND seam since AO-847, and this paragraph used to say there would
+///         ⚠️ **There is a SECOND seam now, and this paragraph used to say there would
 ///         never be one. That reversal is recorded here rather than tidied away.** What it said
 ///         was that a `MintSettler` stub had been deleted on 2026-08-14 and that our own issuance
 ///         reaches the SAME `_settleVenue` path, with the venue being a per-token sale contract
 ///         that the issuer — not us — grants the minting right to. All of that still holds, and
 ///         the argument behind it is unchanged: the sale contract is the only control that
-///         actually bounds a compromised settlement signer (AO-137, outside this repo).
+///         actually bounds a compromised settlement signer, and it is built outside this repo.
 ///
 ///         What was wrong was the generalisation. "One seam" was a claim about MINTING, and it
 ///         got written down as a claim about seams. Selling an asset BACK to a venue is a
@@ -102,7 +102,7 @@ interface ISettler {
         uint256 nonce
     );
 
-    /// @notice One sell back to a venue, reported entirely from MEASURED effects (AO-847).
+    /// @notice One sell back to a venue, reported entirely from MEASURED effects.
     ///
     ///         The mirror of `PrimarySettled`, with the same discipline: every amount is a balance
     ///         delta this contract observed, never a number the venue quoted or emitted.
@@ -221,7 +221,7 @@ interface ISettler {
     /// @dev The venue call reverted or returned failure.
     error VenueCallFailed();
 
-    // ── the sell-back leg (AO-847) ────────────────────────────────────────────────────────────
+    // ── the sell-back leg ─────────────────────────────────────────────────────────────────────
     //
     // ⚠️ ADDED, never replacing. `VenueSettler`'s errors above are what the buy leg still reverts
     //    with, and the sell-back leg reuses every one of them that states the same thing —

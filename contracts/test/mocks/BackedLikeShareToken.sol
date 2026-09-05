@@ -26,7 +26,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /// @dev    Only the surface the router and the tests need.
 ///
 ///         ⚠️ **Allowances, `transferFrom` and `transferSharesFrom` arrived with the sell-back
-///         leg (AO-847), and this comment used to say the mock deliberately had none of them
+///         leg, and this comment used to say the mock deliberately had none of them
 ///         because "`VenueSettler` never pulls the asset".** That was true of the buy leg and is
 ///         still true of it. `VenueRedeemer` does pull the asset, and a venue selling on the
 ///         seller's behalf pulls it again from the router, so both halves of the allowance

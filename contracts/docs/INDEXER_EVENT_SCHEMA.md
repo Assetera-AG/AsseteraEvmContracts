@@ -310,7 +310,7 @@ Event summary — **`AsseteraPrimarySales` (the primary market)**, a **different
 | Event | Emitted by |
 |---|---|
 | `PrimarySettled` | `settlePrimary` — one per completed primary purchase |
-| `PrimaryRedeemed` | `redeemPrimary` — one per completed sell back to a venue (AO-847). A **second topic**, not a change to `PrimarySettled` |
+| `PrimaryRedeemed` | `redeemPrimary` — one per completed sell back to a venue. A **second topic**, not a change to `PrimarySettled` |
 | `IntentConsumed` | `settlePrimary` and `redeemPrimary`, on intent consumption. The `action` ordinal is what tells the two legs apart |
 | `SettlementCapSet` | `setSettlementCap` (admin) |
 | `WhitelistHandshake` | `whitelistHandshake` (admin) — a venue funding-wallet handshake, no analogue on the exchange |
@@ -841,7 +841,7 @@ There is no mint-specific event to wait for; a stub for one existed during devel
 deleted before this contract's first release. **Do not build a family discriminator for purchases.**
 
 ⚠️ **There IS a second event now, and it is a different leg rather than a different family.**
-`PrimaryRedeemed` (AO-847, below) reports a sell BACK to a venue. It is a separate `topic0`, so a
+`PrimaryRedeemed` (below) reports a sell BACK to a venue. It is a separate `topic0`, so a
 deployed filter on `PrimarySettled` keeps matching exactly what it always matched and picks the new
 leg up by adding a filter. Nothing about this event's shape or meaning changed.
 
@@ -880,7 +880,7 @@ event PrimaryRedeemed(address indexed seller, address indexed assetToken, addres
 - **Emitted by:** `AsseteraPrimarySales`, **not** `AsseteraECS`
 - **Entry point:** `redeemPrimary(venueCalldata, intent, intentSignature, sellerSignature, kyc, fee)`
 
-One sell BACK to a venue: the seller hands the asset over and receives settlement currency (AO-847).
+One sell BACK to a venue: the seller hands the asset over and receives settlement currency.
 It is the mirror of `PrimarySettled` and shares its discipline — every amount is a balance delta
 this contract measured, never a number the venue quoted or emitted.
 
@@ -927,7 +927,7 @@ event IntentConsumed(address indexed buyer, uint8 indexed action, uint256 nonce)
 | Field | Description |
 |---|---|
 | `buyer` | the intent's party, which is also the actor (`_msgSender()`): the BUYER on `settlePrimary` and the SELLER on `redeemPrimary`. The field name is frozen and does not change with the leg |
-| `action` | the primary-sale `Action` ordinal the intent was consumed under — **this contract's ordinals**, not the exchange's. ⚠️ **`1` (`SettleVenue`) for a purchase and `3` (`RedeemVenue`) for a sell back (AO-847).** It used to be constant at `1` and a decoder was told not to branch on it; that is no longer true, and this field is now the cheapest way to tell the two legs apart before joining |
+| `action` | the primary-sale `Action` ordinal the intent was consumed under — **this contract's ordinals**, not the exchange's. ⚠️ **`1` (`SettleVenue`) for a purchase and `3` (`RedeemVenue`) for a sell back.** It used to be constant at `1` and a decoder was told not to branch on it; that is no longer true, and this field is now the cheapest way to tell the two legs apart before joining |
 | `nonce` | the intent's single-use nonce, now burned |
 
 A settlement intent was verified and its single-use nonce marked spent. Emitted **unconditionally**
@@ -948,7 +948,7 @@ verified before **any** nonce is burned, so an invalid one cannot spend the othe
 
 For joining: `IntentConsumed` and `PrimarySettled` (or `PrimaryRedeemed`) from the same transaction
 share `(party, nonce)`. Both attestations riding along carry a `paramsHash` equal to the intent's
-EIP-712 struct hash, which is the join key to `AsseteraSignerService`'s audit row for the intent:
+EIP-712 struct hash, which is the join key the off-chain signer component uses for the same intent:
 
 | Leg | Payload | Typehash |
 |---|---|---|
@@ -957,7 +957,7 @@ EIP-712 struct hash, which is the join key to `AsseteraSignerService`'s audit ro
 
 ⚠️ An earlier revision of this paragraph quoted `0x86c9b91e614acc7421e39417dc43dd7b9bd2e0b2c8ce196c12f8b7391d281a03`
 as the settlement typehash. That value was superseded on 2026-08-24 when `accountingMode` was added
-to `SettlementIntent` (AO-713) and nothing has been signed against it since.
+to `SettlementIntent` and nothing has been signed against it since.
 
 ⚠️ **The intent nonce namespace is SHARED by the two legs**, because it is keyed on the party
 address and on nothing else. A nonce is spent by whichever leg presents it first, so `(party,

@@ -321,9 +321,9 @@ contract AsseteraPrimarySales is
     }
 
     /// @notice Sell an asset BACK to a venue: the seller hands the asset over, the venue pays
-    ///         settlement currency, we carve our fee out of the proceeds and forward the rest
-    ///         (AO-847). The mirror of `settlePrimary`, and the second entry point on this router
-    ///         that moves money.
+    ///         settlement currency, we carve our fee out of the proceeds and forward the rest.
+    ///         The mirror of `settlePrimary`, and the second entry point on this router that
+    ///         moves money.
     ///
     ///         The seller is debited at most `intent.maxAssetIn` of the asset, the venue is
     ///         approved exactly what was pulled and may take less, whatever it does not take is
@@ -405,7 +405,7 @@ contract AsseteraPrimarySales is
         RedemptionResult memory result = _redeemVenue(venueCalldata, intent, fee.takerFeeBps);
 
         // Every amount is MEASURED by the family, every identifier is one the settlement operator
-        // signed — the same split that lets the indexer build an activity-ledger leg with no
+        // signed — the same split that lets the indexer record the movement with no
         // supplier-specific decoder. ⚠️ `ISettler.PrimaryRedeemed` is FROZEN from here on, for
         // the reason `PrimarySettled` is: `topic0` is derived from its signature.
         emit PrimaryRedeemed(
@@ -437,7 +437,7 @@ contract AsseteraPrimarySales is
     ///      real action, and it must not be able to carry a bound `paramsHash`.
     ///
     ///      `Action.RedeemVenue` is included because the sell-back leg binds a `RedemptionIntent`
-    ///      the same way (AO-847). ⚠️ This is the line the enum's own warning says a new member
+    ///      the same way. ⚠️ This is the line the enum's own warning says a new member
     ///      needs, and forgetting it is not silent: the gate's default is restrictive, so a leg
     ///      whose ordinal is missing here rejects EVERY attestation it presents.
     ///

@@ -183,8 +183,8 @@ abstract contract SettlementLimits is IntentGate, ISettlementLimits {
     ///      runs AFTER `_verifyIntent`, which the entry point calls first: that one returns the
     ///      `paramsHash` this needs, and the entry point binds its venue calldata in between.
     ///
-    ///      ⚠️ **It takes PRIMITIVES rather than an intent, and that is what makes it shared
-    ///      (AO-847).** It used to take `SettlementIntent calldata`, which meant only the buy leg
+    ///      ⚠️ **It takes PRIMITIVES rather than an intent, and that is what makes it
+    ///      shared.** It used to take `SettlementIntent calldata`, which meant only the buy leg
     ///      could run it, and a preamble only one path can enter is not a shared preamble — it is
     ///      that path's first six lines. The sell-back leg signs a different struct with different
     ///      amounts, so the parameters here are what the preamble actually READS and nothing more.

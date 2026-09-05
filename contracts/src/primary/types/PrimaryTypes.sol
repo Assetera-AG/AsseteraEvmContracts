@@ -73,7 +73,7 @@ abstract contract PrimaryTypes is GateTypes {
         SettleVenue, // 1 — a venue settlement through the constrained executor: a third party's
         // contract, or the per-token sale contract fronting our own issuance
         SettleMint, // 2 — RESERVED and unreachable; see the ⚠️ above before giving it a caller
-        RedeemVenue // 3 — the SELL BACK leg of the same venue path (AO-847): the seller hands the
+        RedeemVenue // 3 — the SELL BACK leg of the same venue path: the seller hands the
         // asset over and the venue pays settlement currency back. It is its own ordinal, and not a
         // direction flag inside ordinal 1, because the ordinal is what the compliance signer signs
         // and selling an instrument back is not the same appropriateness question as buying one.
@@ -214,7 +214,7 @@ abstract contract PrimaryTypes is GateTypes {
 
     /// @notice What the settlement operator signs to authorise ONE sell back to a venue — and
     ///         what the SELLER signs to agree to it. The mirror image of `SettlementIntent`,
-    ///         under `Action.RedeemVenue` (AO-847).
+    ///         under `Action.RedeemVenue`.
     ///
     ///         It is a SECOND struct rather than a direction flag on the first, for the reason
     ///         the enum member gives: the two legs carry different amounts with different
@@ -246,7 +246,7 @@ abstract contract PrimaryTypes is GateTypes {
     ///         retyping a field changes `REDEMPTION_TYPEHASH` and therefore the digest, which
     ///         invalidates every redemption intent in flight AND every `paramsHash` binding on
     ///         the two attestations that ride with it — `paramsHash` IS this struct's EIP-712
-    ///         struct hash. The signer service, the marketplace API and the indexer all code
+    ///         struct hash. The signer service, the marketplace backend and the indexer all code
     ///         against this shape.
     ///
     ///         ⚠️ All fifteen members are STATIC types, which is what makes
@@ -306,7 +306,7 @@ abstract contract PrimaryTypes is GateTypes {
     /// @dev    Both asset-side numbers are reported in the token's VISIBLE units even though the
     ///         settler measures and moves them in the asset's own unit of account. That is the
     ///         same split `SettlementResult.assetDelivered` makes and for the same reason: the
-    ///         activity ledger and the seller both speak in instrument units, never in shares.
+    ///         reported figures and the seller both speak in instrument units, never in shares.
     struct RedemptionResult {
         uint256 assetIn; // measured `assetToken` the venue consumed, in visible units
         uint256 venueOut; // measured settlement token the venue paid the router

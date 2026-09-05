@@ -11,7 +11,7 @@ import {HostileVenue} from "./mocks/HostileVenue.sol";
 import {VenueRedeemerTestBase} from "./VenueRedeemerTestBase.sol";
 
 /// @title VenueRedeemerTest
-/// @notice AO-847: the sell-back money path. The mirror of `VenueSettler.t.sol`, test for test
+/// @notice The sell-back money path. The mirror of `VenueSettler.t.sol`, test for test
 ///         where the two legs make the same claim, and with its own tests where they do not:
 ///         the fee is CARVED OUT here rather than charged on top, and the router pulls the asset
 ///         rather than being delivered it.
@@ -78,7 +78,7 @@ contract VenueRedeemerTest is VenueRedeemerTestBase {
     }
 
     /// The event carries the four MEASURED numbers and the identifiers the operator signed. It is
-    /// what the indexer builds an activity-ledger leg out of, so the field mapping is pinned.
+    /// what the indexer decodes downstream, so the field mapping is pinned.
     function test_Redeem_EmitsTheMeasuredNumbers() public {
         uint256 taken = 40e18;
         bytes memory data = _sellCalldata(taken, PROCEEDS);

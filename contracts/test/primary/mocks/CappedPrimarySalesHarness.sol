@@ -73,7 +73,7 @@ contract CappedPrimarySalesHarness is AsseteraPrimarySales {
         _assertBuyerFee(intent, takerFeeBps);
     }
 
-    /// @notice The sell-back leg's fee derivation, exposed for the same reason (AO-847).
+    /// @notice The sell-back leg's fee derivation, exposed for the same reason.
     /// @param venueQuoteOut The venue's firm proceeds quote.
     /// @param takerFeeBps   The attested basis points.
     /// @return The fee those two imply, carved OUT of the proceeds.

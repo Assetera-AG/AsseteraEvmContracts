@@ -53,7 +53,7 @@ contract PrimarySalesHarness is AsseteraPrimarySales {
         return _intentStructHash(intent);
     }
 
-    /// @notice The same for the sell-back leg's payload (AO-847).
+    /// @notice The same for the sell-back leg's payload.
     function redemptionStructHash(RedemptionIntent calldata intent) external pure returns (bytes32) {
         return _redemptionStructHash(intent);
     }

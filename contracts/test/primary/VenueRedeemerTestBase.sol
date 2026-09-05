@@ -7,7 +7,7 @@ import {XStocksLikeVenue} from "../mocks/XStocksLikeVenue.sol";
 import {VenueSettlerTestBase} from "./VenueSettlerTestBase.sol";
 
 /// @title VenueRedeemerTestBase
-/// @notice The fixture the sell-back money path needs (AO-847): the same router, the same two
+/// @notice The fixture the sell-back money path needs: the same router, the same two
 ///         real ERC-20s and the same signing helpers the buy suites use, plus a venue that BUYS
 ///         rather than sells and an asset balance for the seller to sell.
 ///

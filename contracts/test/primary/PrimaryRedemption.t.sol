@@ -13,8 +13,8 @@ import {PrimarySalesHarness} from "./mocks/PrimarySalesHarness.sol";
 import {PrimarySalesTestBase} from "./PrimarySalesTestBase.sol";
 
 /// @title PrimaryRedemptionTest
-/// @notice AO-847: everything `redeemPrimary` does BEFORE the money, and everything it does
-///         after the seam. The mirror of the gate half of `AsseteraPrimarySales.t.sol`.
+/// @notice The sell-back gate: everything `redeemPrimary` does BEFORE the money, and everything
+///         it does after the seam. The mirror of the gate half of `AsseteraPrimarySales.t.sol`.
 ///
 ///         Two fixtures, for the reason the buy suites give. Against `sales` the settlement
 ///         currency has no cap, so a well-formed redemption stops on the shared preamble's last

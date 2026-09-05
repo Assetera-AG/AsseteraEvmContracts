@@ -17,7 +17,7 @@ pragma solidity 0.8.28;
 ///         future token must implement to be settleable, so the list is kept to what is actually
 ///         called.
 ///
-///         ⚠️ **Two of the five arrived with the sell-back leg (AO-847) and are called on that
+///         ⚠️ **Two of the five arrived with the sell-back leg and are called on that
 ///         leg only.** `getSharesByUnderlyingAmount` and `transferSharesFrom` are what let the
 ///         router pull an EXACT share count from a seller; the buy leg still never pulls the
 ///         asset and still calls only the other three. A share-accounted token that implements

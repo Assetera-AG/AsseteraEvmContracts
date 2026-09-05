@@ -161,7 +161,7 @@ abstract contract IntentGate is PrimaryStorage, IIntentGate {
     ///      along bound by hash (ADR-0020 D5 rejected a blind signing oracle by name).
     ///      ⚠️ Takes the two SIGNED FIELDS rather than an intent, so that one implementation
     ///      serves both the buy and the sell-back leg. The rule is identical on the two, and a
-    ///      second copy of it is how the two silently drift apart (AO-847).
+    ///      second copy of it is how the two silently drift apart.
     /// @param venueCalldata The bytes that will be handed to the venue.
     /// @param calldataHash  The signed `keccak256` of those bytes.
     /// @param selector      The signed first four bytes.
@@ -212,7 +212,7 @@ abstract contract IntentGate is PrimaryStorage, IIntentGate {
     /// @param kycAtt     The compliance attestation.
     /// @param feeAtt     The fee attestation.
     /// ⚠️ Takes the two signed fields it reads rather than an intent, so that the buy and the
-    ///    sell-back leg share ONE implementation of the binding rule (AO-847). Nothing else about
+    ///    sell-back leg share ONE implementation of the binding rule. Nothing else about
     ///    it changed; the buy suites are unchanged and are the proof of that.
     function _bindAttestations(
         address settlementToken,
@@ -239,7 +239,7 @@ abstract contract IntentGate is PrimaryStorage, IIntentGate {
     ///      ⚠️ Takes the party and the nonce rather than an intent. The nonce namespace is keyed
     ///      on the party address and on nothing else, so the buy and the sell-back leg share it: a
     ///      nonce is spent by whichever leg presents it first, and the sell-back leg cost no new
-    ///      storage (AO-847). `IntentConsumed` carries the action ordinal, which is what tells the
+    ///      storage. `IntentConsumed` carries the action ordinal, which is what tells the
     ///      indexer which leg burned it.
     /// @param action The primary-sale action ordinal this settlement runs under.
     /// @param party  The actor whose nonce namespace this is: buyer or seller.
@@ -250,7 +250,7 @@ abstract contract IntentGate is PrimaryStorage, IIntentGate {
     }
 
     // --------------------------------------------------------------------- //
-    //                    The sell-back leg (AO-847)                          //
+    //                           The sell-back leg                           //
     // --------------------------------------------------------------------- //
 
     /// @notice Verify a `RedemptionIntent` and the seller's consent to it, and hand back the
