@@ -45,6 +45,40 @@ interface IIntentGate {
     ///      something to read before signing.
     error BuyerConsentBadSignature();
 
+    // ── the sell-back leg (AO-847) ────────────────────────────────────────────────────────
+    //
+    // `RedemptionIntent` reuses every error above that is about the SHAPE of a signed intent —
+    // `IntentExpired`, `IntentTtlTooLong`, `IntentNonceUsed`, `IntentBadSigner`,
+    // `CalldataHashMismatch`, `SelectorMismatch`, `SameToken`, `ZeroAmount`, `MakerFeeNotSupported`
+    // — because those statements are identical on both legs and two selectors for one statement is
+    // how a consumer's error map silently goes stale. What follows is only what the buy has no
+    // counterpart for.
+
+    /// @dev `intent.seller` is not the ERC-2771 `_msgSender()`. The sell-back mirror of
+    ///      `IntentBuyerMismatch`, and its own selector because "buyer" and "seller" are what the
+    ///      two payloads actually name.
+    error IntentSellerMismatch();
+    /// @dev The SELLER's own signature over the redemption digest is missing, malformed, or not
+    ///      valid for `intent.seller` — ERC-1271 supported, as on the buy.
+    ///
+    ///      ⚠️ Load-bearing for the same reason `BuyerConsentBadSignature` is, and arguably more
+    ///      so: without it a compromised settlement operator sets `minSettlementOut` to one wei
+    ///      and sells the seller's holding for nothing.
+    error SellerConsentBadSignature();
+    /// @dev `venueQuoteOut` is zero on a redemption: the "give something, receive nothing" shape,
+    ///      and the mirror of `ZeroVenueQuote` on the buy. Its own selector rather than
+    ///      `ZeroVenueQuote` so the two legs stay tellable apart in a consumer's error map.
+    error ZeroRedemptionQuote();
+    /// @dev `sellerFee > venueQuoteOut`: our fee is carved OUT of the proceeds on this leg, so a
+    ///      fee above the quote leaves nothing to carve it from and the settlement would be a
+    ///      pure loss to the seller.
+    error SellerFeeExceedsProceeds();
+    /// @dev `minSettlementOut > venueQuoteOut - sellerFee`: the seller's own floor cannot be met
+    ///      by the quote the same signature authorises, so the number shown in the UI as "you
+    ///      receive at least" is not a number this settlement can produce. The mirror of
+    ///      `MaxSettlementTooLow`.
+    error MinSettlementTooHigh();
+
     /// @dev `keccak256(venueCalldata)` does not equal the signed `calldataHash`.
     error CalldataHashMismatch();
     /// @dev `bytes4(venueCalldata)` does not equal the signed `selector`.

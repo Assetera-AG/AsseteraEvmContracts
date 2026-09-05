@@ -91,6 +91,20 @@ abstract contract PrimarySalesTestBase is Test {
         "SettlementIntent(address buyer,address assetToken,uint8 accountingMode,uint256 minAssetOut,address settlementToken,uint256 venueQuoteIn,uint256 buyerFee,uint256 maxSettlementIn,address feeCollector,address venue,bytes4 selector,bytes32 calldataHash,bytes32 supplierReference,uint256 nonce,uint256 deadline)";
     bytes32 internal constant INTENT_TYPEHASH = keccak256(bytes(INTENT_TYPE_STRING));
 
+    /// The sell-back leg's payload (AO-847), restated here for the same reason: every digest
+    /// these tests build must be derived independently of the contract under test.
+    string internal constant REDEMPTION_TYPE_STRING =
+        "RedemptionIntent(address seller,address assetToken,uint8 accountingMode,uint256 maxAssetIn,address settlementToken,uint256 venueQuoteOut,uint256 sellerFee,uint256 minSettlementOut,address feeCollector,address venue,bytes4 selector,bytes32 calldataHash,bytes32 supplierReference,uint256 nonce,uint256 deadline)";
+    bytes32 internal constant REDEMPTION_TYPEHASH = keccak256(bytes(REDEMPTION_TYPE_STRING));
+
+    /// The sell-back leg's amounts, mirroring the buy's. ⚠️ `SELLER_FEE` is 50 bps of
+    /// `QUOTE_OUT` and is carved OUT of it, so the seller's floor is `QUOTE_OUT - SELLER_FEE`
+    /// and never `QUOTE_OUT`.
+    uint256 internal constant MAX_ASSET_IN = 41e18;
+    uint256 internal constant QUOTE_OUT = 1_000e6;
+    uint256 internal constant SELLER_FEE = 5e6;
+    uint256 internal constant MIN_SETTLEMENT_OUT = 995e6;
+
     function setUp() public virtual {
         kycSigner = vm.addr(kycSignerPk);
         feeSigner = vm.addr(feeSignerPk);
@@ -160,6 +174,75 @@ abstract contract PrimarySalesTestBase is Test {
 
     function _paramsHash(PrimaryTypes.SettlementIntent memory intent) internal pure returns (bytes32) {
         return keccak256(abi.encode(INTENT_TYPEHASH, intent));
+    }
+
+    // ── redemption intent (AO-847) ────────────────────────────────────────────────────────
+    //
+    // ⚠️ The seller is the SAME account as the buyer. This fixture has one customer, the two
+    //    legs share one nonce namespace keyed on that account, and `_kycForAction` /
+    //    `_feeForAction` already sign attestations for it — so a second address would only make
+    //    the suites longer without making any of them say anything more.
+
+    /// A well-formed redemption intent that passes every check the entry point makes.
+    function _redemption() internal view returns (PrimaryTypes.RedemptionIntent memory) {
+        return PrimaryTypes.RedemptionIntent({
+            seller: buyer,
+            assetToken: ASSET,
+            accountingMode: uint8(PrimaryTypes.AssetAccountingMode.Erc20Balance),
+            maxAssetIn: MAX_ASSET_IN,
+            settlementToken: CURRENCY,
+            venueQuoteOut: QUOTE_OUT,
+            sellerFee: SELLER_FEE,
+            minSettlementOut: MIN_SETTLEMENT_OUT,
+            feeCollector: collector,
+            venue: VENUE,
+            selector: VENUE_SELECTOR,
+            calldataHash: keccak256(VENUE_CALLDATA),
+            supplierReference: SUPPLIER_REF,
+            nonce: INTENT_NONCE,
+            deadline: block.timestamp + 3 minutes
+        });
+    }
+
+    function _paramsHash(PrimaryTypes.RedemptionIntent memory intent) internal pure returns (bytes32) {
+        return keccak256(abi.encode(REDEMPTION_TYPEHASH, intent));
+    }
+
+    function _signRedemption(address target, PrimaryTypes.RedemptionIntent memory intent)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return _signRedemptionWith(settlementSignerPk, target, intent);
+    }
+
+    function _signRedemptionWith(uint256 pk, address target, PrimaryTypes.RedemptionIntent memory intent)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return _sign(pk, _digest(PRIMARY_DOMAIN_NAME, target, _paramsHash(intent)));
+    }
+
+    /// The SELLER's own signature over the same digest. A separate helper from
+    /// `_signRedemption` for the reason `_signBuyerConsent` is: which party signed is the whole
+    /// subject of the consent tests.
+    function _signSellerConsent(address target, PrimaryTypes.RedemptionIntent memory intent)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return _signRedemptionWith(buyerPk, target, intent);
+    }
+
+    /// A KYC attestation for the sell-back action.
+    function _kycRedeem(address target, bytes32 paramsHash) internal view returns (GateTypes.KycAttestation memory) {
+        return _kycForAction(uint8(PrimaryTypes.Action.RedeemVenue), PRIMARY_DOMAIN_NAME, target, 0, paramsHash);
+    }
+
+    /// A fee attestation for the sell-back action, at the same 50 bps the buy fixture uses.
+    function _feeRedeem(address target, bytes32 paramsHash) internal view returns (GateTypes.FeeAttestation memory) {
+        return _feeForAction(uint8(PrimaryTypes.Action.RedeemVenue), target, paramsHash, 0, 50, collector, CURRENCY);
     }
 
     // ── digests ───────────────────────────────────────────────────────────────────────────
@@ -342,6 +425,30 @@ abstract contract PrimarySalesTestBase is Test {
             abi.encodeWithSelector(
                 ISettlementLimits.PerTxCapExceeded.selector, CURRENCY, QUOTE_IN + BUYER_FEE, uint256(0)
             )
+        );
+    }
+
+    /// The whole sell-back happy path, assembled, submitted by the seller.
+    function _redeem(AsseteraPrimarySales target) internal {
+        PrimaryTypes.RedemptionIntent memory intent = _redemption();
+        bytes32 paramsHash = _paramsHash(intent);
+        vm.prank(buyer);
+        target.redeemPrimary(
+            VENUE_CALLDATA,
+            intent,
+            _signRedemption(address(target), intent),
+            _signSellerConsent(address(target), intent),
+            _kycRedeem(address(target), paramsHash),
+            _feeRedeem(address(target), paramsHash)
+        );
+    }
+
+    /// 🔴 The sell-back mirror of `_expectReachesTheMoneyPath`. The cap is charged on
+    /// `venueQuoteOut` — the GROSS proceeds — so the amount in the error is `QUOTE_OUT` alone
+    /// and not `QUOTE_OUT - SELLER_FEE`. That is itself part of what this marker proves.
+    function _expectRedemptionReachesTheMoneyPath() internal {
+        vm.expectRevert(
+            abi.encodeWithSelector(ISettlementLimits.PerTxCapExceeded.selector, CURRENCY, QUOTE_OUT, uint256(0))
         );
     }
 

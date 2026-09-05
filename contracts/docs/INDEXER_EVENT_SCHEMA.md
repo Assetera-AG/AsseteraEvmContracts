@@ -309,14 +309,15 @@ Event summary — **`AsseteraPrimarySales` (the primary market)**, a **different
 
 | Event | Emitted by |
 |---|---|
-| `PrimarySettled` | `settlePrimary` — one per completed primary settlement |
-| `IntentConsumed` | `settlePrimary`, on settlement-intent consumption |
+| `PrimarySettled` | `settlePrimary` — one per completed primary purchase |
+| `PrimaryRedeemed` | `redeemPrimary` — one per completed sell back to a venue (AO-847). A **second topic**, not a change to `PrimarySettled` |
+| `IntentConsumed` | `settlePrimary` and `redeemPrimary`, on intent consumption. The `action` ordinal is what tells the two legs apart |
 | `SettlementCapSet` | `setSettlementCap` (admin) |
 | `WhitelistHandshake` | `whitelistHandshake` (admin) — a venue funding-wallet handshake, no analogue on the exchange |
 | `CollectorAllowed` | `setAllowedCollector` (admin) — **same signature and same `topic0`** as the exchange's |
 | `ComplianceRequiredSet` | `setComplianceRequired` (admin) — **same `topic0`** as the exchange's, but a **different `Action` ordinal set** |
-| `KycConsumed` | `settlePrimary`, when `complianceRequired[action]` — **same `topic0`** as the exchange's, different ordinals |
-| `FeeConsumed` | `settlePrimary`, unconditionally — **same `topic0`** as the exchange's, different ordinals |
+| `KycConsumed` | `settlePrimary` / `redeemPrimary`, when `complianceRequired[action]` — **same `topic0`** as the exchange's, different ordinals |
+| `FeeConsumed` | `settlePrimary` / `redeemPrimary`, unconditionally — **same `topic0`** as the exchange's, different ordinals |
 
 ⚠️ The last four share their `topic0` with the exchange's events of the same name, because both
 contracts inherit the same `KycGate`/`FeeGate` and the same admin surface. **They can only be
@@ -833,12 +834,16 @@ from whatever the venue chose to emit**. That is why the indexer needs **no per-
 one signature covers every venue we will ever settle against, and a lying venue's own logs are
 irrelevant to what this event reports.
 
-**No family discriminator, because there is only one family.** Every settlement this router
-performs runs through the same constrained executor and emits this one event, whether the venue is
-a third party's contract or the per-token sale contract fronting our own issuance. There is no
-second settler and no mint-specific event to wait for; a stub for one existed during development
-and was deleted before this contract's first release. **Do not build a family discriminator, and
-do not hold back on modelling primary sales in the expectation of a second event shape.**
+**No family discriminator on the BUY leg, because there is only one buy family.** Every purchase
+this router performs runs through the same constrained executor and emits this one event, whether
+the venue is a third party's contract or the per-token sale contract fronting our own issuance.
+There is no mint-specific event to wait for; a stub for one existed during development and was
+deleted before this contract's first release. **Do not build a family discriminator for purchases.**
+
+⚠️ **There IS a second event now, and it is a different leg rather than a different family.**
+`PrimaryRedeemed` (AO-847, below) reports a sell BACK to a venue. It is a separate `topic0`, so a
+deployed filter on `PrimarySettled` keeps matching exactly what it always matched and picks the new
+leg up by adding a filter. Nothing about this event's shape or meaning changed.
 
 What distinguishes one settlement from another is the venue address, which the catalogue already
 maps to a supplier. `IntentConsumed` is emitted from the same call with the **same `nonce`**, so the
@@ -864,6 +869,51 @@ resolve it.
 
 ---
 
+### `PrimaryRedeemed`
+
+```solidity
+event PrimaryRedeemed(address indexed seller, address indexed assetToken, address indexed venue, uint256 assetIn, address settlementToken, uint256 venueOut, uint256 assetRefund, uint256 fee, address feeCollector, bytes32 supplierReference, uint256 nonce);
+```
+- **topic0:** `0x8cda59bfeb2102501e5e556f5265da55930da46e4aeb3add87d19081b4ab503b`
+- **Indexed:** `seller`, `assetToken`, `venue`
+- **Data:** `assetIn`, `settlementToken`, `venueOut`, `assetRefund`, `fee`, `feeCollector`, `supplierReference`, `nonce`
+- **Emitted by:** `AsseteraPrimarySales`, **not** `AsseteraECS`
+- **Entry point:** `redeemPrimary(venueCalldata, intent, intentSignature, sellerSignature, kyc, fee)`
+
+One sell BACK to a venue: the seller hands the asset over and receives settlement currency (AO-847).
+It is the mirror of `PrimarySettled` and shares its discipline — every amount is a balance delta
+this contract measured, never a number the venue quoted or emitted.
+
+| Field | Description |
+|---|---|
+| `seller` | the party whose asset was taken and who received the net proceeds; resolved actor (`_msgSender()`). Always equals the signed `intent.seller` |
+| `assetToken` | the asset the seller gave up |
+| `venue` | the address that was called. Never zero, and never either of the two settled tokens |
+| `assetIn` | **measured** `assetToken` the venue actually consumed, in the token's **VISIBLE units** even when the router measured it in shares. May be less than the signed `intent.maxAssetIn` — a venue that takes less than it was approved is normal |
+| `settlementToken` | the currency received. Enforced equal to the fee attestation's `feeToken` |
+| `venueOut` | **measured** settlement token the venue paid the router, **GROSS**. Judged against the seller's floor after the fee is taken out (`InsufficientSettlementOut`) |
+| `assetRefund` | asset approved but not consumed, returned to the seller in the same transaction, in visible units. Under share accounting this is returned as an exact SHARE count and only then converted for reporting |
+| `fee` | settlement token paid to `feeCollector`. 🔴 **CARVED OUT of `venueOut`, not charged on top of it.** This is the one place the sell leg's amount model differs from the buy leg's, and reading `PrimarySettled`'s model across would overstate the seller's proceeds by the fee. Cross-checked on-chain against `FeeMath.feeAmount(venueQuoteOut, feeAtt.takerFeeBps)` — floored, the same rounding the buy leg uses |
+| `feeCollector` | the allowlisted recipient of `fee`, from this router's own allowlist |
+| `supplierReference` | the venue's own quote/order id, carried from the signed intent |
+| `nonce` | the redemption intent's nonce. Joins to `IntentConsumed` on `(seller, nonce)` |
+
+**Net seller proceeds = `venueOut - fee`.** The seller's asset debit is `assetIn`; anything the
+router pulled beyond that came straight back as `assetRefund`, so `assetIn + assetRefund` is what
+the seller's allowance was actually spent on.
+
+**The maker-fee rule is the buy leg's.** A non-zero `makerFeeBps` on the fee attestation reverts
+with `MakerFeeNotSupported`: the router does not control the issuer side of a venue redemption any
+more than it controls the proceeds side of a purchase.
+
+⚠️ **New revert selectors on this leg**, all additions — nothing was removed from the buy leg's set:
+`AssetPullMismatch(uint256 requested, uint256 received)`, `InsufficientSettlementOut(uint256 net,
+uint256 minSettlementOut)`, `AssetApprovalNotCleared()`, `SellerFeeMismatch(uint256 attested,
+uint256 expected)`, and on the gate `IntentSellerMismatch()`, `SellerConsentBadSignature()`,
+`ZeroRedemptionQuote()`, `SellerFeeExceedsProceeds()`, `MinSettlementTooHigh()`.
+
+---
+
 ### `IntentConsumed`
 
 ```solidity
@@ -876,8 +926,8 @@ event IntentConsumed(address indexed buyer, uint8 indexed action, uint256 nonce)
 
 | Field | Description |
 |---|---|
-| `buyer` | the intent's buyer, which is also the actor (`_msgSender()`) |
-| `action` | the primary-sale `Action` ordinal the intent was consumed under — **this contract's ordinals**, not the exchange's. **Always `1` (`SettleVenue`)**: it is the only reachable ordinal, so this field is constant today and a decoder should not branch on it |
+| `buyer` | the intent's party, which is also the actor (`_msgSender()`): the BUYER on `settlePrimary` and the SELLER on `redeemPrimary`. The field name is frozen and does not change with the leg |
+| `action` | the primary-sale `Action` ordinal the intent was consumed under — **this contract's ordinals**, not the exchange's. ⚠️ **`1` (`SettleVenue`) for a purchase and `3` (`RedeemVenue`) for a sell back (AO-847).** It used to be constant at `1` and a decoder was told not to branch on it; that is no longer true, and this field is now the cheapest way to tell the two legs apart before joining |
 | `nonce` | the intent's single-use nonce, now burned |
 
 A settlement intent was verified and its single-use nonce marked spent. Emitted **unconditionally**
@@ -896,10 +946,23 @@ consumption events (`IntentConsumed`, `FeeConsumed`, and `KycConsumed` when the 
 all four signatures — the three payloads plus the buyer's countersignature on the intent — are
 verified before **any** nonce is burned, so an invalid one cannot spend the others.
 
-For joining: `IntentConsumed` and `PrimarySettled` from the same transaction share `(buyer, nonce)`.
-Both attestations riding along carry a `paramsHash` equal to the intent's EIP-712 struct hash
-(`INTENT_TYPEHASH = 0x86c9b91e614acc7421e39417dc43dd7b9bd2e0b2c8ce196c12f8b7391d281a03`), which is
-the join key to `AsseteraSignerService`'s audit row for the intent.
+For joining: `IntentConsumed` and `PrimarySettled` (or `PrimaryRedeemed`) from the same transaction
+share `(party, nonce)`. Both attestations riding along carry a `paramsHash` equal to the intent's
+EIP-712 struct hash, which is the join key to `AsseteraSignerService`'s audit row for the intent:
+
+| Leg | Payload | Typehash |
+|---|---|---|
+| purchase | `SettlementIntent` | `0xa24f008693b1ca921f2aca00e79f4bc40748d499f86d54d0d8377dfdc884bf68` |
+| sell back | `RedemptionIntent` | `0x0f518f193bdea7541e9281c432a5e8447455bc3e86b4d1ed635daecfd1daa481` |
+
+⚠️ An earlier revision of this paragraph quoted `0x86c9b91e614acc7421e39417dc43dd7b9bd2e0b2c8ce196c12f8b7391d281a03`
+as the settlement typehash. That value was superseded on 2026-08-24 when `accountingMode` was added
+to `SettlementIntent` (AO-713) and nothing has been signed against it since.
+
+⚠️ **The intent nonce namespace is SHARED by the two legs**, because it is keyed on the party
+address and on nothing else. A nonce is spent by whichever leg presents it first, so `(party,
+nonce)` is unique across both and the join is unambiguous — but the signer service must not issue
+the same number to a purchase and a sell back for one account.
 
 ---
 

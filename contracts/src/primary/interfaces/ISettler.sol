@@ -12,24 +12,44 @@ pragma solidity 0.8.28;
 ///         inherited into it — the same shape as `OrderBook`/`OfferBook` inside
 ///         `AsseteraECS`. No settler is ever deployed, registered or called by address.
 ///
-///         The seam itself is one `internal virtual` function, which Solidity cannot express in
-///         an `interface`, so it is declared on the module instead:
+///         A seam itself is an `internal virtual` function, which Solidity cannot express in an
+///         `interface`, so each is declared on its own module. See below for both.
+///
+///         ⚠️ **There is a SECOND seam since AO-847, and this paragraph used to say there would
+///         never be one. That reversal is recorded here rather than tidied away.** What it said
+///         was that a `MintSettler` stub had been deleted on 2026-08-14 and that our own issuance
+///         reaches the SAME `_settleVenue` path, with the venue being a per-token sale contract
+///         that the issuer — not us — grants the minting right to. All of that still holds, and
+///         the argument behind it is unchanged: the sale contract is the only control that
+///         actually bounds a compromised settlement signer (AO-137, outside this repo).
+///
+///         What was wrong was the generalisation. "One seam" was a claim about MINTING, and it
+///         got written down as a claim about seams. Selling an asset BACK to a venue is a
+///         different money path in every step that matters — the router pulls the ASSET rather
+///         than the currency, approves in the asset, measures proceeds rather than delivery, and
+///         carves the fee OUT of what it received rather than charging it on top — so folding it
+///         into `_settleVenue` behind a direction flag would have branched every line of an
+///         audited function. There are now two:
 ///
 ///         ```solidity
-///         // settle/VenueSettler.sol — the constrained executor
+///         // settle/VenueSettler.sol — the BUY leg
 ///         function _settleVenue(
 ///             bytes calldata venueCalldata, SettlementIntent calldata intent, uint16 takerFeeBps
 ///         ) internal virtual returns (SettlementResult memory);
+///
+///         // settle/VenueRedeemer.sol — the SELL BACK leg
+///         function _redeemVenue(
+///             bytes calldata venueCalldata, RedemptionIntent calldata intent, uint16 takerFeeBps
+///         ) internal virtual returns (RedemptionResult memory);
 ///         ```
 ///
-///         ⚠️ **There is no second seam, and there deliberately is not going to be a mint
-///         one.** A `MintSettler` stub used to sit beside `VenueSettler` for a family in which
-///         this router held the minting right; it was deleted on 2026-08-14. Our own issuance
-///         is reached through the SAME `_settleVenue` path, with the venue being a per-token
-///         sale contract that the issuer — not us — grants the minting right to. The reason is
-///         in `AsseteraPrimarySales`'s header, and it is that the sale contract is the only
-///         control that actually bounds a compromised settlement signer. AO-137 builds it,
-///         outside this repo.
+///         Both are `abstract contract` modules inherited into the SAME proxy, and the second one
+///         inherits the first, so the accounting-mode dispatch, the fee-derivation helper and
+///         every storage region are shared rather than copied. Nothing about the deployment shape
+///         changed: still one proxy, still no settler deployed or called by address.
+///
+///         ⚠️ **ADR-0047 (the issuance-venue decision) states the one-seam position and needs an
+///         amendment.** Filed separately; this file is the code-side record.
 ///
 ///         Why not separate settler contracts: funds or approvals would have to move to
 ///         them, which reintroduces exactly the standing-approval surface the constrained
@@ -76,6 +96,51 @@ interface ISettler {
         address settlementToken,
         uint256 venueIn,
         uint256 refund,
+        uint256 fee,
+        address feeCollector,
+        bytes32 supplierReference,
+        uint256 nonce
+    );
+
+    /// @notice One sell back to a venue, reported entirely from MEASURED effects (AO-847).
+    ///
+    ///         The mirror of `PrimarySettled`, with the same discipline: every amount is a balance
+    ///         delta this contract observed, never a number the venue quoted or emitted.
+    ///
+    /// @dev    ⚠️ **`PrimarySettled` is untouched.** Its `topic0` and its field list are exactly
+    ///         what they were; the sell-back leg gets its OWN topic rather than a direction field
+    ///         on the buy's event, so a deployed indexer filter keeps matching what it always
+    ///         matched and picks the new leg up by adding a filter rather than by changing one.
+    ///
+    ///         ⚠️ This event is FROZEN from here on for the same reason `PrimarySettled` is.
+    ///
+    ///         The `IntentConsumed` join works identically: it is emitted from the same call with
+    ///         `action = Action.RedeemVenue` and the SAME `nonce` this event carries, so the two
+    ///         join on `(seller, nonce)`.
+    ///
+    /// @param seller           The party whose asset was taken and who received the net proceeds;
+    ///                         equals `_msgSender()`.
+    /// @param assetToken       The asset the seller gave up.
+    /// @param venue            The address that was called.
+    /// @param assetIn          Measured `assetToken` the venue actually consumed, in the token's
+    ///                         VISIBLE units even under share accounting.
+    /// @param settlementToken  The currency received; equals the fee attestation's `feeToken`.
+    /// @param venueOut         Measured settlement token the venue paid the router, GROSS.
+    /// @param assetRefund      Asset approved but not consumed, returned to the seller in the same
+    ///                         transaction, in visible units.
+    /// @param fee              Settlement token paid to `feeCollector`, CARVED OUT of `venueOut`.
+    ///                         The seller received `venueOut - fee`.
+    /// @param feeCollector     The allowlisted recipient of `fee`.
+    /// @param supplierReference The venue's own quote/order id, carried from the signed intent.
+    /// @param nonce            The redemption intent's nonce.
+    event PrimaryRedeemed(
+        address indexed seller,
+        address indexed assetToken,
+        address indexed venue,
+        uint256 assetIn,
+        address settlementToken,
+        uint256 venueOut,
+        uint256 assetRefund,
         uint256 fee,
         address feeCollector,
         bytes32 supplierReference,
@@ -155,4 +220,41 @@ interface ISettler {
 
     /// @dev The venue call reverted or returned failure.
     error VenueCallFailed();
+
+    // ── the sell-back leg (AO-847) ────────────────────────────────────────────────────────────
+    //
+    // ⚠️ ADDED, never replacing. `VenueSettler`'s errors above are what the buy leg still reverts
+    //    with, and the sell-back leg reuses every one of them that states the same thing —
+    //    `UnsupportedAccountingMode`, `ShareTransferFailed`, `RouterBalanceChanged`,
+    //    `VenueCallFailed`. What follows is only what the buy has no counterpart for.
+
+    /// @dev The asset pull did not move exactly what it was asked to move: the router's MEASURED
+    ///      delta over `transferFrom` / `transferSharesFrom` is not the amount requested.
+    ///
+    ///      ⚠️ The mirror of `SettlementPullMismatch`, and it fails in both directions for the
+    ///      same reasons. A fee-on-transfer asset debits the seller in full and credits the router
+    ///      less, so proceeding on the quoted number would approve the venue more asset than the
+    ///      router holds and break the residue assertion at the end anyway — named here instead,
+    ///      at the first line that moved anything. A surplus is refused because the router would
+    ///      then hand the venue asset this settlement never pulled.
+    ///
+    ///      It also fires when a `RebasingShares` pull converts `maxAssetIn` to ZERO shares, which
+    ///      is what a ceiling below one share looks like.
+    /// @param requested The units the pull asked for: nominal under `Erc20Balance`, SHARES under
+    ///                  `RebasingShares`.
+    /// @param received  What the router's own holding actually grew by, in the same unit.
+    error AssetPullMismatch(uint256 requested, uint256 received);
+
+    /// @dev The venue paid less than the seller signed for, net of our fee. A revert, never a
+    ///      silent bad fill — the mirror of `InsufficientAssetDelivered`.
+    /// @param net              The measured proceeds minus `sellerFee`, clamped at zero so a venue
+    ///                         that paid nothing reports through this error rather than panicking.
+    /// @param minSettlementOut The floor the seller signed.
+    error InsufficientSettlementOut(uint256 net, uint256 minSettlementOut);
+
+    /// @dev The router's asset approval to the venue is still non-zero after the settler revoked
+    ///      it. Nothing in `src/` can leave one, so this is a statement about the TOKEN: an asset
+    ///      whose `approve` is a no-op, or which re-grants inside a callback, would otherwise
+    ///      leave the venue a standing claim on a router that is supposed to hold nothing.
+    error AssetApprovalNotCleared();
 }

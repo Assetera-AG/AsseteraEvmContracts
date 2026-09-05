@@ -252,9 +252,9 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         //    under `Erc20Balance`, `sharesOf` under `RebasingShares` — and every later comparison
         //    against them uses the same unit. Mixing the two is the bug this whole change exists
         //    to remove, so the unit is chosen once, here, and never re-decided further down.
-        uint256 buyerAssetBefore = _assetUnitsOf(intent, intent.buyer);
+        uint256 buyerAssetBefore = _assetUnitsOf(intent.accountingMode, intent.assetToken, intent.buyer);
         uint256 routerBefore = currency.balanceOf(address(this));
-        uint256 routerAssetBefore = _assetUnitsOf(intent, address(this));
+        uint256 routerAssetBefore = _assetUnitsOf(intent.accountingMode, intent.assetToken, address(this));
 
         // ── 3 · pull exactly this settlement's debit, and MEASURE what arrived ────────────
         // The buyer's allowance to this router is the true ceiling on a compromised settlement
@@ -346,9 +346,11 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         //    That is the whole point: forwarding the measured `balanceOf` increase converts
         //    nominal-to-shares a SECOND time, and the remainder it strands is what made the
         //    2026-08-24 AAPLx fork proof revert at step 9.
-        uint256 routerAssetAfter = _assetUnitsOf(intent, address(this));
+        uint256 routerAssetAfter = _assetUnitsOf(intent.accountingMode, intent.assetToken, address(this));
         if (routerAssetAfter > routerAssetBefore) {
-            _forwardAssetUnits(intent, intent.buyer, routerAssetAfter - routerAssetBefore);
+            _forwardAssetUnits(
+                intent.accountingMode, intent.assetToken, intent.buyer, routerAssetAfter - routerAssetBefore
+            );
         }
 
         // ⚠️ TODO(AO-550) — `intent.assetToken` may be a CLAIM token rather than the instrument
@@ -364,7 +366,7 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         //    designed for now, because the indexer already watches every token in the catalogue,
         //    so the transfers are observed even before anyone models the distinction. Settle it
         //    when the first primary sale is built out.
-        uint256 buyerAssetAfter = _assetUnitsOf(intent, intent.buyer);
+        uint256 buyerAssetAfter = _assetUnitsOf(intent.accountingMode, intent.assetToken, intent.buyer);
         // Clamped rather than left to a checked subtraction so a balance that went DOWN — a
         // downward rebase inside the call, or a venue that took the buyer's asset — reports
         // the shortfall through the settlement error instead of an arithmetic panic.
@@ -386,7 +388,7 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         //    once, so the signable floor is
         //    `getUnderlyingAmountByShares(getSharesByUnderlyingAmount(providerOutgoingAmount))`.
         //    Signing the provider's raw nominal amount reverts here, correctly.
-        uint256 delivered = _assetUnderlyingOf(intent, deliveredUnits);
+        uint256 delivered = _assetUnderlyingOf(intent.accountingMode, intent.assetToken, deliveredUnits);
         if (delivered < intent.minAssetOut) revert InsufficientAssetDelivered(delivered, intent.minAssetOut);
 
         // ── 8 · our fee ───────────────────────────────────────────────────────────────────
@@ -414,7 +416,9 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
         //    a plain ERC-20. Nothing here makes a rebasing settlement currency work, and a
         //    settlement in one is refused rather than mismeasured.
         if (currency.balanceOf(address(this)) != routerBefore) revert RouterBalanceChanged();
-        if (_assetUnitsOf(intent, address(this)) != routerAssetBefore) revert RouterBalanceChanged();
+        if (_assetUnitsOf(intent.accountingMode, intent.assetToken, address(this)) != routerAssetBefore) {
+            revert RouterBalanceChanged();
+        }
 
         // ── 10 · the four measured numbers ────────────────────────────────────────────────
         result = SettlementResult({assetDelivered: delivered, venueIn: venueIn, refund: refund, fee: intent.buyerFee});
@@ -498,14 +502,18 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
     ///      ⚠️ Under `RebasingShares` this is a SHARE count and is NOT comparable with anything
     ///      denominated in the token's visible units — `minAssetOut` above all. Pass it through
     ///      `_assetUnderlyingOf` before any such comparison.
-    function _assetUnitsOf(SettlementIntent calldata intent, address account) private view returns (uint256) {
-        if (intent.accountingMode == uint8(AssetAccountingMode.Erc20Balance)) {
-            return IERC20(intent.assetToken).balanceOf(account);
+    ///      ⚠️ Takes the SIGNED MODE and the SIGNED TOKEN rather than an intent, and is
+    ///      `internal` rather than `private`, so the sell-back leg in `VenueRedeemer` measures the
+    ///      asset through this same function (AO-847). A second copy of the dispatch would be a
+    ///      second place for a new accounting family to be forgotten.
+    function _assetUnitsOf(uint8 mode, address assetToken, address account) internal view returns (uint256) {
+        if (mode == uint8(AssetAccountingMode.Erc20Balance)) {
+            return IERC20(assetToken).balanceOf(account);
         }
-        if (intent.accountingMode == uint8(AssetAccountingMode.RebasingShares)) {
-            return IShareAccountingToken(intent.assetToken).sharesOf(account);
+        if (mode == uint8(AssetAccountingMode.RebasingShares)) {
+            return IShareAccountingToken(assetToken).sharesOf(account);
         }
-        revert UnsupportedAccountingMode(intent.accountingMode);
+        revert UnsupportedAccountingMode(mode);
     }
 
     /// @dev Move `units` of the asset to `to`, in the same unit `_assetUnitsOf` measured.
@@ -513,16 +521,17 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
     ///      ⚠️ `transferShares` returns `bool` and has no SafeERC20 equivalent, so the return is
     ///      checked here explicitly. A token that returns nothing would fail to decode and revert,
     ///      which is also correct.
-    function _forwardAssetUnits(SettlementIntent calldata intent, address to, uint256 units) private {
-        if (intent.accountingMode == uint8(AssetAccountingMode.Erc20Balance)) {
-            SafeERC20.safeTransfer(IERC20(intent.assetToken), to, units);
+    ///      ⚠️ Primitives and `internal`, for the reason on `_assetUnitsOf`.
+    function _forwardAssetUnits(uint8 mode, address assetToken, address to, uint256 units) internal {
+        if (mode == uint8(AssetAccountingMode.Erc20Balance)) {
+            SafeERC20.safeTransfer(IERC20(assetToken), to, units);
             return;
         }
-        if (intent.accountingMode == uint8(AssetAccountingMode.RebasingShares)) {
-            if (!IShareAccountingToken(intent.assetToken).transferShares(to, units)) revert ShareTransferFailed();
+        if (mode == uint8(AssetAccountingMode.RebasingShares)) {
+            if (!IShareAccountingToken(assetToken).transferShares(to, units)) revert ShareTransferFailed();
             return;
         }
-        revert UnsupportedAccountingMode(intent.accountingMode);
+        revert UnsupportedAccountingMode(mode);
     }
 
     /// @dev Convert a measured amount from the settlement's unit of account into the token's
@@ -532,13 +541,14 @@ abstract contract VenueSettler is SettlementLimits, ISettler {
     ///      Identity under `Erc20Balance`. Under `RebasingShares` it is one conversion at the
     ///      post-call multiplier, and it rounds DOWN, so the number compared against the buyer's
     ///      signed floor can never overstate what the buyer can actually withdraw.
-    function _assetUnderlyingOf(SettlementIntent calldata intent, uint256 units) private view returns (uint256) {
-        if (intent.accountingMode == uint8(AssetAccountingMode.Erc20Balance)) {
+    ///      ⚠️ Primitives and `internal`, for the reason on `_assetUnitsOf`.
+    function _assetUnderlyingOf(uint8 mode, address assetToken, uint256 units) internal view returns (uint256) {
+        if (mode == uint8(AssetAccountingMode.Erc20Balance)) {
             return units;
         }
-        if (intent.accountingMode == uint8(AssetAccountingMode.RebasingShares)) {
-            return IShareAccountingToken(intent.assetToken).getUnderlyingAmountByShares(units);
+        if (mode == uint8(AssetAccountingMode.RebasingShares)) {
+            return IShareAccountingToken(assetToken).getUnderlyingAmountByShares(units);
         }
-        revert UnsupportedAccountingMode(intent.accountingMode);
+        revert UnsupportedAccountingMode(mode);
     }
 }

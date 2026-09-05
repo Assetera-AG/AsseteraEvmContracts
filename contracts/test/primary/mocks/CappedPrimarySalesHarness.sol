@@ -72,4 +72,19 @@ contract CappedPrimarySalesHarness is AsseteraPrimarySales {
     function assertBuyerFee(SettlementIntent calldata intent, uint16 takerFeeBps) external pure {
         _assertBuyerFee(intent, takerFeeBps);
     }
+
+    /// @notice The sell-back leg's fee derivation, exposed for the same reason (AO-847).
+    /// @param venueQuoteOut The venue's firm proceeds quote.
+    /// @param takerFeeBps   The attested basis points.
+    /// @return The fee those two imply, carved OUT of the proceeds.
+    function expectedSellerFee(uint256 venueQuoteOut, uint16 takerFeeBps) external pure returns (uint256) {
+        return _expectedSellerFee(venueQuoteOut, takerFeeBps);
+    }
+
+    /// @notice Direct call of the seller-fee cross-check.
+    /// @param intent      The redemption intent whose `sellerFee` is under test.
+    /// @param takerFeeBps The basis points the fee service attested for it.
+    function assertSellerFee(RedemptionIntent calldata intent, uint16 takerFeeBps) external pure {
+        _assertSellerFee(intent, takerFeeBps);
+    }
 }

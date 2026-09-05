@@ -34,7 +34,7 @@ covering this contract.
 
 The contract **is already deployed** on Polygon Amoy and Ethereum Sepolia
 (`packages/sdk/src/deployments/80002.json`, `11155111.json`) and has a substantial adversarial test suite
-(200 tests, below), but neither of those is a review.
+(380 tests, below), but neither of those is a review.
 
 ## What it is
 
@@ -47,6 +47,25 @@ The contract **is already deployed** on Polygon Amoy and Ethereum Sepolia
   address on the other and is rejected as `KycBadSigner`. Cross-contract attestation replay between the
   two surfaces is impossible by construction rather than by check. Pinned by
   `test_ExchangeAttestation_CannotBeReplayedHere`.
+
+### Two legs, one preamble
+
+There are **two** money-moving entry points since AO-847, and an auditor should read them as one
+surface with two tails rather than as two contracts:
+
+| Entry point | Payload | Action ordinal | Event | Fee model |
+|---|---|---|---|---|
+| `settlePrimary` | `SettlementIntent` | `1` (`SettleVenue`) | `PrimarySettled` | charged **on top of** the quote |
+| `redeemPrimary` | `RedemptionIntent` | `3` (`RedeemVenue`) | `PrimaryRedeemed` | **carved out of** the proceeds |
+
+Everything before the money is shared and is entered by both: signature verification shape, calldata
+binding, attestation binding, the three nonce burns and the per-transaction value cap
+(`SettlementLimits._authorizeSettlement`). Everything from the first token movement onwards is
+separate, in `VenueSettler` and `VenueRedeemer` respectively.
+
+⚠️ **The shared preamble now takes primitives rather than a `SettlementIntent`.** That refactor is
+the only change AO-847 made to the audited buy path, and it is mechanical: the same checks in the
+same order on the same values. The pre-existing buy suite passes unchanged, which is the evidence.
 
 ### The shape of one settlement
 
@@ -93,7 +112,8 @@ a different commit.
 
 ## In scope
 
-The primary-sales surface under `contracts/src/primary/` — **9 files, 1,976 LoC**:
+The primary-sales surface under `contracts/src/primary/` — **10 files, 2,431 LoC** (excluding
+`sale/`, which is the separately-deployed issuance venue):
 
 ```bash
 find src/primary -name '*.sol' | xargs wc -l
@@ -101,15 +121,17 @@ find src/primary -name '*.sol' | xargs wc -l
 
 | File | LoC | Role |
 |---|---:|---|
-| `src/primary/AsseteraPrimarySales.sol` | 482 | UUPS proxy entrypoint; assembles the modules; `initialize`; the frozen `settlePrimary` entry point; the fail-CLOSED `complianceRequired` override; admin surface (collector allowlist, compliance toggle, pause, `whitelistHandshake`) |
-| `src/primary/settle/VenueSettler.sol` | 415 | **The money path.** Snapshot / pull / measure / approve / call venue / revoke / measure / refund / forward / assert delivery / pay fee / assert zero standing balance |
-| `src/primary/admin/SettlementLimits.sol` | 239 | Per-token per-transaction value cap in whole units; `_authorizeSettlement`, the shared preamble every settlement path must run; defensive `decimals()` probing |
-| `src/primary/IntentGate.sol` | 228 | The third gate: EIP-712 settlement-intent verification (operator + buyer), TTL, single-use nonce, calldata/selector binding, attestation binding |
-| `src/primary/types/PrimaryTypes.sol` | 169 | `Action` enum, the frozen `SettlementIntent` struct (14 static members), `INTENT_TYPEHASH`, `SettlementResult` |
-| `src/primary/interfaces/ISettler.sol` | 136 | The frozen `PrimarySettled` event and the settlement errors |
-| `src/primary/storage/PrimaryStorage.sol` | 123 | Router state in its own ERC-7201 namespace; `SETTLEMENT_OPERATOR_ROLE` |
+| `src/primary/AsseteraPrimarySales.sol` | 603 | UUPS proxy entrypoint; assembles the modules; `initialize`; the frozen `settlePrimary` entry point and the `redeemPrimary` one beside it; the fail-CLOSED `complianceRequired` override; admin surface (collector allowlist, compliance toggle, pause, `whitelistHandshake`) |
+| `src/primary/settle/VenueSettler.sol` | 554 | **The BUY money path.** Snapshot / pull currency / measure / approve / call venue / revoke / measure / refund / forward asset / assert delivery / pay fee / assert zero standing balance |
+| `src/primary/IntentGate.sol` | 327 | The third gate: EIP-712 intent verification for BOTH payloads (operator + party consent), TTL, single-use nonce, calldata/selector binding, attestation binding |
+| `src/primary/types/PrimaryTypes.sol` | 316 | `Action` enum, `AssetAccountingMode`, the frozen `SettlementIntent` struct (**15** static members) and `INTENT_TYPEHASH`, the `RedemptionIntent` struct (15 static members) and `REDEMPTION_TYPEHASH`, `SettlementResult`, `RedemptionResult` |
+| `src/primary/settle/VenueRedeemer.sol` | 267 | **The SELL BACK money path** (AO-847). Inherits `VenueSettler` so the accounting-mode dispatch is shared, not copied: snapshot / pull asset / measure / approve venue in the asset / call / revoke and prove it / measure proceeds / assert the net floor / return unconsumed asset / carve out the fee / forward the rest / assert zero standing balance |
+| `src/primary/interfaces/ISettler.sol` | 260 | The frozen `PrimarySettled` and `PrimaryRedeemed` events and the settlement errors |
+| `src/primary/admin/SettlementLimits.sol` | 257 | Per-token per-transaction value cap in whole units; `_authorizeSettlement`, the shared preamble every settlement path must run, now on primitives so both legs enter it; defensive `decimals()` probing |
+| `src/primary/interfaces/IIntentGate.sol` | 138 | Interface |
+| `src/primary/storage/PrimaryStorage.sol` | 123 | Router state in its own ERC-7201 namespace; `SETTLEMENT_OPERATOR_ROLE`. ⚠️ Unchanged by AO-847: the sell-back leg added **no storage**, because the intent nonce namespace is keyed on the party address and is therefore shared |
 | `src/primary/interfaces/ISettlementLimits.sol` | 105 | Interface |
-| `src/primary/interfaces/IIntentGate.sol` | 104 | Interface |
+| `src/primary/interfaces/IShareAccountingToken.sol` | 81 | The five functions a share-accounted asset must expose. Two of them, `getSharesByUnderlyingAmount` and `transferSharesFrom`, are called on the sell-back leg only |
 
 One more **external entry point** on this proxy does not live under `src/primary/` at all, because it is
 shared with the exchange. It is in scope for this engagement and must be read with the table above:
@@ -130,10 +152,14 @@ inheritance chain is:
 GateTypes
   └─ PrimaryTypes                                        (src/primary/types/)
 GateStorage  ─ KycGate ─ FeeGate
-  └─ PrimaryStorage  ─ IntentGate ─ SettlementLimits ─ VenueSettler ─┐
-ContextUpgradeable                                                   ├─ AsseteraPrimarySales
-  └─ PermitRelay                                    (src/core/)     ─┘
+  └─ PrimaryStorage ─ IntentGate ─ SettlementLimits ─ VenueSettler ─ VenueRedeemer ─┐
+ContextUpgradeable                                                                  ├─ AsseteraPrimarySales
+  └─ PermitRelay                                                (src/core/)        ─┘
 ```
+
+⚠️ `VenueRedeemer` was inserted at the end of that chain and took `VenueSettler`'s place in
+`AsseteraPrimarySales`'s inheritance list, so the linearisation — and therefore the storage layout —
+is unchanged. Every region this proxy uses is ERC-7201 namespaced in any case.
 
 So `src/types/GateTypes.sol`, `src/gates/GateStorage.sol`, `src/gates/KycGate.sol`,
 `src/gates/FeeGate.sol`, `src/libs/FeeMath.sol` and `src/core/PermitRelay.sol` (**570 LoC together**) are
@@ -212,29 +238,40 @@ ordinal is only safe because of the fail-closed override above; the NatSpec says
 ```bash
 cd contracts
 forge build                          # Solidity 0.8.28, via-IR, optimizer 200 runs — clean
-forge test                           # BOTH surfaces: 457 tests across 40 suites, all passing
-forge test --match-path 'test/primary/*'   # THIS surface: 200 tests across 31 suites
+forge test                           # BOTH surfaces: 679 tests across 61 suites, all passing
+forge test --match-path 'test/primary/*'   # THIS surface: 380 tests across 51 suites
 forge coverage --ir-minimum --no-match-coverage '(script|test)'
 bash script/storage-layout.sh        # upgrade-safety guard; must print "storage layout unchanged"
 slither .                            # BOTH surfaces: 43 results, all triaged benign
 ```
 
-**Test suite for this surface — 200 tests, 0 failures, 31 suites**
+**Test suite for this surface — 380 tests, 0 failures, 51 suites**
 (`forge test --match-path 'test/primary/*'`):
 
 | File | Suites | Tests | What it covers |
 |---|---:|---:|---|
-| `test/primary/AsseteraPrimarySales.t.sol` | 6 | 69 | Init (13), entry point (24), admin (14), buyer consent (10), EIP-712 domain (4), settled state (4) |
-| `test/primary/VenueSettlerHostile.t.sol` | 8 | 40 | A lying venue (10), reentrancy (7), fee-on-transfer currency (5), cap boundary (5), rebasing asset (4), venue identity (4), silent transfers (3), sender surcharge (2) |
-| `test/primary/VenueSettler.t.sol` | 5 | 29 | Happy path (8), reverts (8), hardcoded fee vectors (7), limits (4), refunds (2) |
-| `test/primary/SettlementLimits.t.sol` | 6 | 27 | `decimals()` handling (7), admin (6), enforcement (5), through the entry point (4), applies to every family (3), storage (2) |
-| `test/primary/PrimarySalesAdversarial.t.sol` | 4 | 26 | Replay (12), hostile wallet / ERC-1271 (6), meta-transaction (5), buyer-consent replay (3) |
+| `test/primary/AsseteraPrimarySales.t.sol` | 6 | 69 | Init, the `settlePrimary` entry point, admin, buyer consent, the EIP-712 domain, settled state |
+| `test/primary/sale/AsseteraIssuanceVenue.t.sol` | 7 | 66 | The separately-deployed per-offering sale contract |
+| `test/primary/VenueSettlerHostile.t.sol` | 9 | 43 | A lying venue, reentrancy, fee-on-transfer currency, cap boundary, rebasing asset, venue identity, silent transfers, sender surcharge |
+| `test/primary/VenueSettler.t.sol` | 5 | 29 | The BUY money path: happy path, reverts, hardcoded fee vectors, limits, refunds |
+| `test/primary/PrimarySalesAdversarial.t.sol` | 4 | 29 | Replay, hostile wallet / ERC-1271, meta-transaction, buyer-consent replay |
+| `test/primary/SettlementLimits.t.sol` | 6 | 27 | `decimals()` handling, admin, enforcement, through the entry point, applies to every path, storage |
+| `test/primary/PrimaryRedemption.t.sol` | 1 | 23 | **Sell back (AO-847), the gate half**: the `redeemPrimary` entry point, seller consent, the shared nonce namespace, the ordinal binding, every amount relation |
+| `test/primary/VenueRedeemer.t.sol` | 1 | 20 | **Sell back, the money path**: the fee carve-out, the proceeds floor, a venue that takes and pays nothing, partial fills, standing approvals |
+| `test/primary/sale/IssuanceVenueRouterE2E.t.sol` | 1 | 14 | Our own issuance through the router |
+| `test/primary/PermitAndSettle.t.sol` | 1 | 14 | ERC-2612 permit plus settlement in one transaction |
+| `test/primary/VenueSettlerShares.t.sol` | 1 | 11 | Share-accounted assets on the buy leg |
+| `test/primary/sale/IssuanceVenueAdversarial.t.sol` | 4 | 11 | Hostile behaviour against the sale contract |
+| `test/primary/PrimaryIntentVectors.t.sol` | 1 | 10 | Hardcoded typehash / struct-hash / topic0 vectors for BOTH payloads, cross-repo pinning |
+| `test/primary/VenueRedeemerShares.t.sol` | 1 | 7 | **Sell back against a share-accounted asset**: the exact-share pull, the remainder the venue's nominal pull leaves, a mid-call multiplier change |
 | `test/primary/PrimaryStorageNamespace.t.sol` | 1 | 5 | ERC-7201 namespace derivation and slot reads |
-| `test/primary/PrimaryIntentVectors.t.sol` | 1 | 4 | Hardcoded `INTENT_TYPEHASH` / digest vectors, cross-repo pinning |
+| `test/primary/AaplxMainnetFork.t.sol` | 1 | 3 | **Fork**, buy leg, against real Ethereum AAPLx. Skipped without `MAINNET_RPC_URL` |
+| `test/primary/AaplxSellMainnetFork.t.sol` | 1 | 3 | **Fork**, sell-back leg (AO-847), against real Ethereum AAPLx. Proves `transferSharesFrom` exists on the deployed implementation and that its allowance is spent in VISIBLE units. Skipped without `MAINNET_RPC_URL` |
 
-> The whole repository runs **457 tests across 40 suites**; the remaining 257 in 9 suites belong to the
-> exchange. Earlier documents, including `docs/SECURITY-REVIEW-2026-07-14.md`, quote **129** — that figure
-> predates this contract entirely and should not be used.
+> The whole repository runs **679 tests across 61 suites**; the remainder belong to the exchange. Two of
+> the 679 are the fork suites and report as SKIPPED unless `MAINNET_RPC_URL` is set. Earlier revisions of
+> this document quoted **200** for this surface and **457** for the repository; both predate AO-847 and
+> several packets before it, and neither should be used.
 
 **Coverage** (`forge coverage --ir-minimum --no-match-coverage '(script|test)'`). `--ir-minimum` is
 **required** — plain `forge coverage` disables the optimizer and via-IR and fails "stack too deep" in
@@ -245,9 +282,15 @@ slither .                            # BOTH surfaces: 43 results, all triaged be
 | `src/primary/IntentGate.sol` | 100.00 (30/30) | 100.00 (50/50) | 100.00 (16/16) | 100.00 (5/5) |
 | `src/primary/admin/SettlementLimits.sol` | 100.00 (32/32) | 100.00 (40/40) | 100.00 (6/6) | 100.00 (6/6) |
 | `src/primary/settle/VenueSettler.sol` | 97.44 (38/39) | 95.71 (67/70) | 81.82 (9/11) | 100.00 (3/3) |
+| `src/primary/settle/VenueRedeemer.sol` | not re-measured | | | |
 | `src/primary/AsseteraPrimarySales.sol` | 82.35 (42/51) | 83.33 (45/54) | 100.00 (4/4) | 93.33 (14/15) |
 | `src/primary/storage/PrimaryStorage.sol` | 75.00 (3/4) | 50.00 (1/2) | n/a (0/0) | 100.00 (2/2) |
 | **Subtotal (this surface)** | **92.95 (145/156)** | **93.98 (203/216)** | **94.59 (35/37)** | **96.77 (30/31)** |
+
+⚠️ **The coverage table above was measured before AO-847 and has NOT been re-run.** It is left in place
+because the shape of the residue it discusses is unchanged, but the figures do not include
+`VenueRedeemer.sol` or the redemption half of `IntentGate.sol` and must be re-measured before the
+engagement starts. Said plainly rather than quietly restated as if it were current.
 
 Reading the residue honestly:
 

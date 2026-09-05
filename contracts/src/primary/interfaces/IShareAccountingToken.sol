@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 /// @title IShareAccountingToken
-/// @notice The three functions `VenueSettler` calls on a share-accounted asset token under
+/// @notice The five functions the settlement path calls on a share-accounted asset token under
 ///         `AssetAccountingMode.RebasingShares`, and nothing else.
 ///
 ///         A share-accounted token stores SHARES and derives `balanceOf` as
@@ -12,11 +12,18 @@ pragma solidity 0.8.28;
 ///         transferred, so a balance delta is not a reliable measure of delivery.
 ///
 /// @dev    ⚠️ **Deliberately minimal, and it is not the token's whole interface.** The Backed
-///         implementation also exposes `getCurrentMultiplier()` and
-///         `getSharesByUnderlyingAmount()`. Those are what the SIGNER needs off chain, to derive
-///         the `minAssetOut` floor for the provider's one nominal hop. The router needs neither,
-///         and every function named here is a function some future token must implement to be
-///         settleable, so the list is kept to what is actually called.
+///         implementation also exposes `getCurrentMultiplier()`, which is what the SIGNER needs
+///         off chain and the router never reads. Every function named here is a function some
+///         future token must implement to be settleable, so the list is kept to what is actually
+///         called.
+///
+///         ⚠️ **Two of the five arrived with the sell-back leg (AO-847) and are called on that
+///         leg only.** `getSharesByUnderlyingAmount` and `transferSharesFrom` are what let the
+///         router pull an EXACT share count from a seller; the buy leg still never pulls the
+///         asset and still calls only the other three. A share-accounted token that implements
+///         `transferShares` but not `transferSharesFrom` can therefore be BOUGHT through this
+///         router and not SOLD back through it, and the sell reverts on the missing selector
+///         rather than settling wrongly.
 ///
 ///         ⚠️ **Pinned by us, not imported from the issuer.** Backed's Solidity is public but the
 ///         xStocks integration guidance tells general integrators to use ordinary ERC-20
@@ -39,6 +46,30 @@ interface IShareAccountingToken {
     ///         reverts `ShareTransferFailed` on a false return, so a token that silently reports
     ///         failure cannot be mistaken for one that moved the shares.
     function transferShares(address recipient, uint256 sharesAmount) external returns (bool);
+
+    /// @notice Move an exact share count FROM another account, spending this contract's ERC-20
+    ///         allowance on it.
+    ///
+    /// @dev    🔴 **The allowance is spent in the token's VISIBLE units, not in shares.** Backed's
+    ///         implementation computes `getUnderlyingAmountByShares(sharesAmount)` at the
+    ///         post-accrual multiplier and passes THAT to `_spendAllowance`. So a seller approves
+    ///         the router in ordinary token units — the number a wallet renders — while the
+    ///         router moves an exact, rebase-invariant share count. Verified against the deployed
+    ///         Ethereum AAPLx implementation (`transferSharesFrom(address,address,uint256)`,
+    ///         selector `0x6d780459`, present in its dispatch table) and against Backed's
+    ///         published `BackedAutoFeeTokenImplementation`.
+    ///
+    ///         ⚠️ Returns `bool`, with no SafeERC20 equivalent, exactly as `transferShares` does.
+    ///         `VenueRedeemer` checks the return explicitly and reverts `ShareTransferFailed`.
+    function transferSharesFrom(address from, address to, uint256 sharesAmount) external returns (bool);
+
+    /// @notice Convert the token's visible units to a share count at the CURRENT multiplier.
+    ///
+    /// @dev    Rounds down, which is what makes it safe to derive a PULL from a signed ceiling:
+    ///         the share count it returns can never convert back to more than the visible amount
+    ///         it was given, so approving `maxAssetIn` always covers the allowance the pull
+    ///         spends. Called once per redemption, on `RedemptionIntent.maxAssetIn`.
+    function getSharesByUnderlyingAmount(uint256 amount) external view returns (uint256);
 
     /// @notice Convert a share count to the token's visible units at the CURRENT multiplier.
     ///

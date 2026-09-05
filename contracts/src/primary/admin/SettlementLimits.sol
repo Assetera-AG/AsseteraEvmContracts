@@ -183,30 +183,48 @@ abstract contract SettlementLimits is IntentGate, ISettlementLimits {
     ///      runs AFTER `_verifyIntent`, which the entry point calls first: that one returns the
     ///      `paramsHash` this needs, and the entry point binds its venue calldata in between.
     ///
-    /// @param action     The primary-sale action ordinal this settlement runs under.
-    /// @param intent     The already-verified settlement intent.
-    /// @param paramsHash The intent's EIP-712 struct hash, as returned by `_verifyIntent`.
-    /// @param kycAtt     The compliance attestation.
-    /// @param feeAtt     The fee attestation.
+    ///      ⚠️ **It takes PRIMITIVES rather than an intent, and that is what makes it shared
+    ///      (AO-847).** It used to take `SettlementIntent calldata`, which meant only the buy leg
+    ///      could run it, and a preamble only one path can enter is not a shared preamble — it is
+    ///      that path's first six lines. The sell-back leg signs a different struct with different
+    ///      amounts, so the parameters here are what the preamble actually READS and nothing more.
+    ///      The buy suites are unchanged and are the proof that the audited path kept its
+    ///      behaviour.
+    ///
+    /// @param action          The gated action ordinal, hardcoded by the caller, never taken from
+    ///                        the request.
+    /// @param party           The actor: the buyer on a settlement, the seller on a redemption.
+    ///                        It is the KYC/fee subject AND the intent nonce namespace.
+    /// @param settlementToken The currency leg, in both fee-leg positions and as the cap key.
+    /// @param feeCollector    The collector the intent names; must equal the attested one.
+    /// @param cappedValue     The value the per-transaction cap is charged on: `venueQuoteIn +
+    ///                        buyerFee` on a settlement, `venueQuoteOut` on a redemption.
+    /// @param nonce           The intent nonce to burn, in `party`'s namespace.
+    /// @param paramsHash      The intent's EIP-712 struct hash; both attestations must carry it.
     function _authorizeSettlement(
         uint8 action,
-        SettlementIntent calldata intent,
+        address party,
+        address settlementToken,
+        address feeCollector,
+        uint256 cappedValue,
+        uint256 nonce,
         bytes32 paramsHash,
         KycAttestation calldata kycAtt,
         FeeAttestation calldata feeAtt
     ) internal {
-        _bindAttestations(intent, paramsHash, kycAtt, feeAtt);
-        _consumeKycAndFee(intent.buyer, action, 0, kycAtt, feeAtt);
-        _consumeIntent(action, intent);
+        _bindAttestations(settlementToken, feeCollector, paramsHash, kycAtt, feeAtt);
+        _consumeKycAndFee(party, action, 0, kycAtt, feeAtt);
+        _consumeIntent(action, party, nonce);
         // LAST, and the position is deliberate. The cap is an operational limit rather than a
         // property of the request, so checking it ahead of the signatures would let a currency
         // nobody has sized yet report `PerTxCapExceeded` for a settlement whose real defect is a
         // bad signature — the wrong answer to the wrong question. It still runs before the
         // family is entered and therefore before the first token call.
         //
-        // `IntentGate._verifyIntent` already evaluated this sum under checked arithmetic to
-        // compare it against `maxSettlementIn`, so it cannot overflow.
-        _consumeSettlementLimit(intent.settlementToken, intent.venueQuoteIn + intent.buyerFee);
+        // The sum the buy leg passes was already evaluated under checked arithmetic by
+        // `IntentGate._verifyIntent`, to compare it against `maxSettlementIn`, so it cannot
+        // overflow. The sell-back leg passes `venueQuoteOut`, which is a single signed field.
+        _consumeSettlementLimit(settlementToken, cappedValue);
     }
 
     /// @dev The token's decimals, or a revert naming the token. `decimals()` is not part of the
