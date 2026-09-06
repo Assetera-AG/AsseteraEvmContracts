@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.2.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v8.1.0...evm-contracts-v8.2.0) (2026-09-06)
+
+
+### Features
+
+* **primary:** sell back to the venue through a second settlement seam ([#93](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/93)) ([efffe6b](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/efffe6bdd06265f390bf565db4cdea42758ac4c4))
+
 ## [8.1.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v8.0.1...evm-contracts-v8.1.0) (2026-09-03)
 
 
