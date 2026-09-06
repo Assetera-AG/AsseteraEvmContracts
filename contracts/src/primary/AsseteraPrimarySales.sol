@@ -6,7 +6,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import {ERC2771ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
 import {PermitRelay} from "../core/PermitRelay.sol";
-import {VenueSettler} from "./settle/VenueSettler.sol";
+import {VenueRedeemer} from "./settle/VenueRedeemer.sol";
 import {PrimaryTypes} from "./types/PrimaryTypes.sol";
 
 /// @title AsseteraPrimarySales — the constrained executor for primary market settlement
@@ -106,13 +106,15 @@ import {PrimaryTypes} from "./types/PrimaryTypes.sol";
 ///         resolves is the ERC-2771 one, which is what makes a relayed permit-and-settle resolve
 ///         the buyer rather than the forwarder.
 ///
-///         ⚠️ **This file owns the inheritance list.** The settlement money path is
-///         `VenueSettler`'s and changes there; nothing here should need to change with it.
+///         ⚠️ **This file owns the inheritance list.** The settlement money paths are
+///         `VenueSettler`'s and `VenueRedeemer`'s and change there; nothing here should need to
+///         change with them. `VenueRedeemer` INHERITS `VenueSettler` and stands in its former
+///         position in this list, so the linearisation and the storage layout are unchanged.
 contract AsseteraPrimarySales is
     PrimaryTypes,
     Initializable,
     UUPSUpgradeable,
-    VenueSettler,
+    VenueRedeemer,
     PermitRelay,
     ERC2771ContextUpgradeable
 {
@@ -256,7 +258,7 @@ contract AsseteraPrimarySales is
         uint8 action = uint8(Action.SettleVenue);
 
         bytes32 paramsHash = _verifyIntent(intent, intentSignature, buyerSignature);
-        _bindCalldata(venueCalldata, intent);
+        _bindCalldata(venueCalldata, intent.calldataHash, intent.selector);
         // The router does not control the proceeds side of a venue settlement, so an
         // issuer-side fee cannot be charged here. Attesting one must revert rather than
         // silently do nothing.
@@ -280,7 +282,17 @@ contract AsseteraPrimarySales is
         // The shared preamble: both attestations bound, the per-transaction value cap charged,
         // all three nonces burned. It is shared so that the cap is charged FOR every settlement
         // path rather than BY every settlement path — see `SettlementLimits._authorizeSettlement`.
-        _authorizeSettlement(action, intent, paramsHash, kyc, fee);
+        _authorizeSettlement(
+            action,
+            intent.buyer,
+            intent.settlementToken,
+            intent.feeCollector,
+            intent.venueQuoteIn + intent.buyerFee,
+            intent.nonce,
+            paramsHash,
+            kyc,
+            fee
+        );
 
         // `fee.takerFeeBps` is carried into the settler so it can cross-check `intent.buyerFee`
         // against what the FEE signer attested. Two independent signers must agree on one
@@ -308,6 +320,109 @@ contract AsseteraPrimarySales is
         );
     }
 
+    /// @notice Sell an asset BACK to a venue: the seller hands the asset over, the venue pays
+    ///         settlement currency, we carve our fee out of the proceeds and forward the rest.
+    ///         The mirror of `settlePrimary`, and the second entry point on this router that
+    ///         moves money.
+    ///
+    ///         The seller is debited at most `intent.maxAssetIn` of the asset, the venue is
+    ///         approved exactly what was pulled and may take less, whatever it does not take is
+    ///         returned in the same transaction, `intent.sellerFee` goes to the allowlisted
+    ///         collector, and the seller must end up receiving at least `intent.minSettlementOut`
+    ///         of `intent.settlementToken` or the whole transaction reverts.
+    ///
+    /// @dev    ⚠️ **`SettlementIntent`, `INTENT_TYPEHASH`, `settlePrimary` and `PrimarySettled`
+    ///         are all untouched by this addition.** The sell-back leg signs its own payload
+    ///         (`RedemptionIntent`), runs under its own action ordinal (`Action.RedeemVenue`) and
+    ///         emits its own event (`PrimaryRedeemed`), so a deployed indexer filter, a signer
+    ///         service digest or a marketplace call built for the buy leg keeps working exactly
+    ///         as it did. What is genuinely SHARED is the preamble and the nonce namespace, and
+    ///         sharing them is the point: the per-transaction cap is charged FOR every path
+    ///         rather than BY every path.
+    ///
+    ///         ⚠️ **One nonce namespace, keyed on the party address.** A nonce is spent by
+    ///         whichever leg presents it first, so the signer service must not hand the same
+    ///         number to a buy and a sell for the same account. That is a property of the
+    ///         namespace rather than a new constraint — `usedIntentNonce(party, nonce)` was
+    ///         always keyed this way — and it is what let this leg land with no new storage.
+    ///
+    ///         The order of operations is `settlePrimary`'s, for the same reasons:
+    ///           1. all four signatures verified BEFORE any nonce is burned;
+    ///           2. `orderId` passed as a literal zero, so a non-zero one on the KYC attestation
+    ///              is rejected — there is no order book on this path either;
+    ///           3. a non-zero `makerFeeBps` rejected BEFORE the collector checks, so the revert
+    ///              names the actual defect rather than a consequence of it;
+    ///           4. the money is the settler family's job, behind an internal seam.
+    ///
+    ///         ⚠️ The per-transaction cap is charged on `venueQuoteOut` — the GROSS proceeds, and
+    ///         therefore the whole value of the transaction. Not on the net, which would let the
+    ///         fee shave a redemption under a cap it should have breached.
+    ///
+    /// @param venueCalldata   The opaque bytes to hand the venue. Bound by `intent.calldataHash`
+    ///                        and `intent.selector`.
+    /// @param intent          The redemption intent, signed by the settlement operator and by the
+    ///                        seller.
+    /// @param intentSignature That operator's EIP-712 signature over `intent`. Accepted only if
+    ///                        it recovers to a `SETTLEMENT_OPERATOR_ROLE` holder.
+    /// @param sellerSignature The SELLER's EIP-712 signature over the SAME digest, EOA or
+    ///                        ERC-1271.
+    /// @param kyc             The compliance attestation, `paramsHash`-bound to `intent`.
+    /// @param fee             The fee attestation, `paramsHash`-bound to `intent`.
+    function redeemPrimary(
+        bytes calldata venueCalldata,
+        RedemptionIntent calldata intent,
+        bytes calldata intentSignature,
+        bytes calldata sellerSignature,
+        KycAttestation calldata kyc,
+        FeeAttestation calldata fee
+    ) external whenNotPaused nonReentrant {
+        // Hardcoded, never taken from the caller or from the intent, for the reason
+        // `settlePrimary` gives: the ordinal is what the two attestations are signed against, so
+        // letting the request choose it would let a request choose its own compliance policy.
+        uint8 action = uint8(Action.RedeemVenue);
+
+        bytes32 paramsHash = _verifyRedemption(intent, intentSignature, sellerSignature);
+        _bindCalldata(venueCalldata, intent.calldataHash, intent.selector);
+        // The router does not control the ISSUER side of a venue redemption any more than it
+        // controls the proceeds side of a purchase, so an issuer-side fee cannot be charged here
+        // either. BEFORE `_bindAttestations`, and the ordering is the point rather than an
+        // accident — see the same note on `settlePrimary`.
+        if (fee.makerFeeBps != 0) revert MakerFeeNotSupported();
+        _authorizeSettlement(
+            action,
+            intent.seller,
+            intent.settlementToken,
+            intent.feeCollector,
+            intent.venueQuoteOut,
+            intent.nonce,
+            paramsHash,
+            kyc,
+            fee
+        );
+
+        // `fee.takerFeeBps` is carried into the settler so it can cross-check `intent.sellerFee`
+        // against what the FEE signer attested, exactly as the buy leg does.
+        RedemptionResult memory result = _redeemVenue(venueCalldata, intent, fee.takerFeeBps);
+
+        // Every amount is MEASURED by the family, every identifier is one the settlement operator
+        // signed — the same split that lets the indexer record the movement with no
+        // supplier-specific decoder. ⚠️ `ISettler.PrimaryRedeemed` is FROZEN from here on, for
+        // the reason `PrimarySettled` is: `topic0` is derived from its signature.
+        emit PrimaryRedeemed(
+            intent.seller,
+            intent.assetToken,
+            intent.venue,
+            result.assetIn,
+            intent.settlementToken,
+            result.venueOut,
+            result.assetRefund,
+            result.fee,
+            intent.feeCollector,
+            intent.supplierReference,
+            intent.nonce
+        );
+    }
+
     // --------------------------------------------------------------------- //
     //                          Gate action policy                           //
     // --------------------------------------------------------------------- //
@@ -321,6 +436,11 @@ contract AsseteraPrimarySales is
     ///      `Action.None` is excluded deliberately: ordinal zero is an unset field, never a
     ///      real action, and it must not be able to carry a bound `paramsHash`.
     ///
+    ///      `Action.RedeemVenue` is included because the sell-back leg binds a `RedemptionIntent`
+    ///      the same way. ⚠️ This is the line the enum's own warning says a new member
+    ///      needs, and forgetting it is not silent: the gate's default is restrictive, so a leg
+    ///      whose ordinal is missing here rejects EVERY attestation it presents.
+    ///
     ///      `Action.SettleMint` is included even though nothing in `src/` runs under it. It is a
     ///      RESERVED ordinal rather than a dead one (see `PrimaryTypes.Action`), and the answer
     ///      to "does this action bind an intent" is a property of the action, not of whether an
@@ -328,7 +448,8 @@ contract AsseteraPrimarySales is
     ///      to be remembered later; answering `true` costs nothing, because an ordinal with no
     ///      entry point cannot present an attestation at all.
     function _paramsHashAllowed(uint8 action) internal view virtual override returns (bool) {
-        return action == uint8(Action.SettleVenue) || action == uint8(Action.SettleMint);
+        return action == uint8(Action.SettleVenue) || action == uint8(Action.SettleMint)
+            || action == uint8(Action.RedeemVenue);
     }
 
     /// @notice Whether an action requires a KYC attestation on THIS router.

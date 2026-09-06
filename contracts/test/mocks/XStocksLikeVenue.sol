@@ -66,6 +66,41 @@ contract XStocksLikeVenue {
         return swap.paymentAmount;
     }
 
+    /// @notice Fill one swap in the SELL direction: pull the asset the caller approved,
+    ///         optionally rebase, then pay the proceeds.
+    ///
+    ///         The same `Swap` shape read the other way round, which is how the real venue works
+    ///         too: `assetToken`/`assetAmount` is what the venue TAKES, in nominal units, and
+    ///         `paymentToken`/`paymentAmount` is what it PAYS. `recipient` is the router again,
+    ///         because the router is the registered wallet.
+    ///
+    /// @dev    ⚠️ The nominal pull is the point. A venue that knows nothing about shares takes the
+    ///         asset with an ordinary `transferFrom`, which converts to shares once more and can
+    ///         leave a remainder at the router — the sell-side mirror of the trap the
+    ///         share-rounding fix closed.
+    ///
+    /// @param swap The swap to fill.
+    /// @return taken The asset actually pulled, in nominal units.
+    function executeSell(Swap calldata swap) external returns (uint256 taken) {
+        lastSwap = swap;
+
+        if (swap.assetAmount != 0) {
+            IERC20(swap.assetToken).transferFrom(msg.sender, address(this), swap.assetAmount);
+        }
+
+        // Ordered between the two legs for the same reason it is on the buy: a corporate action
+        // landing inside our transaction must be able to move the multiplier after the router has
+        // measured its own share count and before the settlement is judged.
+        if (multiplierDuringCall != 0) {
+            BackedLikeShareToken(swap.assetToken).setMultiplier(multiplierDuringCall);
+        }
+
+        if (swap.paymentAmount != 0) {
+            IERC20(swap.paymentToken).transfer(swap.recipient, swap.paymentAmount);
+        }
+        return swap.assetAmount;
+    }
+
     /// @notice Schedule a mid-call multiplier change. Zero disables it.
     /// @param multiplier_ The multiplier to move the asset to during the next swap.
     function setMultiplierDuringCall(uint256 multiplier_) external {

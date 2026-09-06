@@ -53,6 +53,30 @@ contract PrimarySalesHarness is AsseteraPrimarySales {
         return _intentStructHash(intent);
     }
 
+    /// @notice The same for the sell-back leg's payload.
+    function redemptionStructHash(RedemptionIntent calldata intent) external pure returns (bytes32) {
+        return _redemptionStructHash(intent);
+    }
+
+    uint256 public constant STUB_ASSET_IN = 39e18;
+    uint256 public constant STUB_VENUE_OUT = 980e6;
+    uint256 public constant STUB_ASSET_REFUND = 1e18;
+    uint256 public constant STUB_SELLER_FEE = 4e6;
+
+    /// @dev The sell-back seam, stubbed for the same reason `_settleVenue` is: everything AFTER
+    ///      it — the three nonce burns and `PrimaryRedeemed` — can then be observed without a
+    ///      single token moving, and not one line of `src/primary/settle/VenueRedeemer.sol` runs.
+    function _redeemVenue(bytes calldata, RedemptionIntent calldata, uint16)
+        internal
+        pure
+        override
+        returns (RedemptionResult memory)
+    {
+        return RedemptionResult({
+            assetIn: STUB_ASSET_IN, venueOut: STUB_VENUE_OUT, assetRefund: STUB_ASSET_REFUND, fee: STUB_SELLER_FEE
+        });
+    }
+
     /// @notice Direct read of the ERC-2771 `_msgData()` override, which nothing in `src/` calls.
     ///
     /// @dev    🔴 It is an override Solidity forces the contract to declare and no production
@@ -115,7 +139,17 @@ contract PrimarySalesHarness is AsseteraPrimarySales {
         FeeAttestation calldata fee
     ) external {
         bytes32 paramsHash = _verifyIntent(intent, intentSignature, buyerSignature);
-        _authorizeSettlement(uint8(Action.SettleMint), intent, paramsHash, kyc, fee);
+        _authorizeSettlement(
+            uint8(Action.SettleMint),
+            intent.buyer,
+            intent.settlementToken,
+            intent.feeCollector,
+            intent.venueQuoteIn + intent.buyerFee,
+            intent.nonce,
+            paramsHash,
+            kyc,
+            fee
+        );
         revert AnotherFamilyMoneyPathReached();
     }
 }

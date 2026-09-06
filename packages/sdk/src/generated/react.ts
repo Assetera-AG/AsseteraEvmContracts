@@ -2284,6 +2284,13 @@ export const asseteraPrimarySalesAbi = [
   {
     type: 'function',
     inputs: [],
+    name: 'REDEMPTION_TYPEHASH',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
     name: 'SETTLEMENT_OPERATOR_ROLE',
     outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
     stateMutability: 'view',
@@ -2422,6 +2429,78 @@ export const asseteraPrimarySalesAbi = [
     name: 'proxiableUUID',
     outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
     stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'venueCalldata', internalType: 'bytes', type: 'bytes' },
+      {
+        name: 'intent',
+        internalType: 'struct PrimaryTypes.RedemptionIntent',
+        type: 'tuple',
+        components: [
+          { name: 'seller', internalType: 'address', type: 'address' },
+          { name: 'assetToken', internalType: 'address', type: 'address' },
+          { name: 'accountingMode', internalType: 'uint8', type: 'uint8' },
+          { name: 'maxAssetIn', internalType: 'uint256', type: 'uint256' },
+          { name: 'settlementToken', internalType: 'address', type: 'address' },
+          { name: 'venueQuoteOut', internalType: 'uint256', type: 'uint256' },
+          { name: 'sellerFee', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'minSettlementOut',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'feeCollector', internalType: 'address', type: 'address' },
+          { name: 'venue', internalType: 'address', type: 'address' },
+          { name: 'selector', internalType: 'bytes4', type: 'bytes4' },
+          { name: 'calldataHash', internalType: 'bytes32', type: 'bytes32' },
+          {
+            name: 'supplierReference',
+            internalType: 'bytes32',
+            type: 'bytes32',
+          },
+          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+          { name: 'deadline', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      { name: 'intentSignature', internalType: 'bytes', type: 'bytes' },
+      { name: 'sellerSignature', internalType: 'bytes', type: 'bytes' },
+      {
+        name: 'kyc',
+        internalType: 'struct GateTypes.KycAttestation',
+        type: 'tuple',
+        components: [
+          { name: 'account', internalType: 'address', type: 'address' },
+          { name: 'action', internalType: 'uint8', type: 'uint8' },
+          { name: 'orderId', internalType: 'uint256', type: 'uint256' },
+          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+          { name: 'deadline', internalType: 'uint256', type: 'uint256' },
+          { name: 'paramsHash', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'signature', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+      {
+        name: 'fee',
+        internalType: 'struct GateTypes.FeeAttestation',
+        type: 'tuple',
+        components: [
+          { name: 'account', internalType: 'address', type: 'address' },
+          { name: 'action', internalType: 'uint8', type: 'uint8' },
+          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+          { name: 'deadline', internalType: 'uint256', type: 'uint256' },
+          { name: 'paramsHash', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'makerFeeBps', internalType: 'uint16', type: 'uint16' },
+          { name: 'takerFeeBps', internalType: 'uint16', type: 'uint16' },
+          { name: 'feeCollector', internalType: 'address', type: 'address' },
+          { name: 'feeToken', internalType: 'address', type: 'address' },
+          { name: 'signature', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+    ],
+    name: 'redeemPrimary',
+    outputs: [],
+    stateMutability: 'nonpayable',
   },
   {
     type: 'function',
@@ -2746,6 +2825,74 @@ export const asseteraPrimarySalesAbi = [
     anonymous: false,
     inputs: [
       {
+        name: 'seller',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'assetToken',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'venue',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'assetIn',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'settlementToken',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'venueOut',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'assetRefund',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      { name: 'fee', internalType: 'uint256', type: 'uint256', indexed: false },
+      {
+        name: 'feeCollector',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'supplierReference',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      {
+        name: 'nonce',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'PrimaryRedeemed',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
         name: 'buyer',
         internalType: 'address',
         type: 'address',
@@ -2959,6 +3106,15 @@ export const asseteraPrimarySalesAbi = [
     inputs: [{ name: 'target', internalType: 'address', type: 'address' }],
     name: 'AddressEmptyCode',
   },
+  { type: 'error', inputs: [], name: 'AssetApprovalNotCleared' },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'requested', internalType: 'uint256', type: 'uint256' },
+      { name: 'received', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'AssetPullMismatch',
+  },
   { type: 'error', inputs: [], name: 'BuyerConsentBadSignature' },
   {
     type: 'error',
@@ -3024,10 +3180,19 @@ export const asseteraPrimarySalesAbi = [
     ],
     name: 'InsufficientAssetDelivered',
   },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'net', internalType: 'uint256', type: 'uint256' },
+      { name: 'minSettlementOut', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'InsufficientSettlementOut',
+  },
   { type: 'error', inputs: [], name: 'IntentBadSigner' },
   { type: 'error', inputs: [], name: 'IntentBuyerMismatch' },
   { type: 'error', inputs: [], name: 'IntentExpired' },
   { type: 'error', inputs: [], name: 'IntentNonceUsed' },
+  { type: 'error', inputs: [], name: 'IntentSellerMismatch' },
   { type: 'error', inputs: [], name: 'IntentTtlTooLong' },
   { type: 'error', inputs: [], name: 'InvalidFee' },
   { type: 'error', inputs: [], name: 'InvalidInitialization' },
@@ -3040,6 +3205,7 @@ export const asseteraPrimarySalesAbi = [
   { type: 'error', inputs: [], name: 'KycTtlTooLong' },
   { type: 'error', inputs: [], name: 'MakerFeeNotSupported' },
   { type: 'error', inputs: [], name: 'MaxSettlementTooLow' },
+  { type: 'error', inputs: [], name: 'MinSettlementTooHigh' },
   { type: 'error', inputs: [], name: 'NotInitializing' },
   { type: 'error', inputs: [], name: 'ParamsHashMismatch' },
   {
@@ -3060,6 +3226,16 @@ export const asseteraPrimarySalesAbi = [
   },
   { type: 'error', inputs: [], name: 'SameToken' },
   { type: 'error', inputs: [], name: 'SelectorMismatch' },
+  { type: 'error', inputs: [], name: 'SellerConsentBadSignature' },
+  { type: 'error', inputs: [], name: 'SellerFeeExceedsProceeds' },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'attested', internalType: 'uint256', type: 'uint256' },
+      { name: 'expected', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'SellerFeeMismatch',
+  },
   {
     type: 'error',
     inputs: [
@@ -3097,6 +3273,7 @@ export const asseteraPrimarySalesAbi = [
   { type: 'error', inputs: [], name: 'VenueIsASettledToken' },
   { type: 'error', inputs: [], name: 'ZeroAddress' },
   { type: 'error', inputs: [], name: 'ZeroAmount' },
+  { type: 'error', inputs: [], name: 'ZeroRedemptionQuote' },
   { type: 'error', inputs: [], name: 'ZeroVenueQuote' },
 ] as const
 
@@ -5745,6 +5922,21 @@ export const useReadAsseteraPrimarySalesMaxSettlementTokenDecimals =
   })
 
 /**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraPrimarySalesAbi}__ and `functionName` set to `"REDEMPTION_TYPEHASH"`
+ *
+ * - [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Polygon Polygon Scan__](https://polygonscan.com/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ */
+export const useReadAsseteraPrimarySalesRedemptionTypehash =
+  /*#__PURE__*/ createUseReadContract({
+    abi: asseteraPrimarySalesAbi,
+    address: asseteraPrimarySalesAddress,
+    functionName: 'REDEMPTION_TYPEHASH',
+  })
+
+/**
  * Wraps __{@link useReadContract}__ with `abi` set to __{@link asseteraPrimarySalesAbi}__ and `functionName` set to `"SETTLEMENT_OPERATOR_ROLE"`
  *
  * - [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
@@ -6089,6 +6281,21 @@ export const useWriteAsseteraPrimarySalesPermitAndCall =
   })
 
 /**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link asseteraPrimarySalesAbi}__ and `functionName` set to `"redeemPrimary"`
+ *
+ * - [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Polygon Polygon Scan__](https://polygonscan.com/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ */
+export const useWriteAsseteraPrimarySalesRedeemPrimary =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: asseteraPrimarySalesAbi,
+    address: asseteraPrimarySalesAddress,
+    functionName: 'redeemPrimary',
+  })
+
+/**
  * Wraps __{@link useWriteContract}__ with `abi` set to __{@link asseteraPrimarySalesAbi}__ and `functionName` set to `"renounceRole"`
  *
  * - [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
@@ -6295,6 +6502,21 @@ export const useSimulateAsseteraPrimarySalesPermitAndCall =
     abi: asseteraPrimarySalesAbi,
     address: asseteraPrimarySalesAddress,
     functionName: 'permitAndCall',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link asseteraPrimarySalesAbi}__ and `functionName` set to `"redeemPrimary"`
+ *
+ * - [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Polygon Polygon Scan__](https://polygonscan.com/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ */
+export const useSimulateAsseteraPrimarySalesRedeemPrimary =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: asseteraPrimarySalesAbi,
+    address: asseteraPrimarySalesAddress,
+    functionName: 'redeemPrimary',
   })
 
 /**
@@ -6564,6 +6786,21 @@ export const useWatchAsseteraPrimarySalesPausedEvent =
     abi: asseteraPrimarySalesAbi,
     address: asseteraPrimarySalesAddress,
     eventName: 'Paused',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link asseteraPrimarySalesAbi}__ and `eventName` set to `"PrimaryRedeemed"`
+ *
+ * - [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Polygon Polygon Scan__](https://polygonscan.com/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc)
+ */
+export const useWatchAsseteraPrimarySalesPrimaryRedeemedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: asseteraPrimarySalesAbi,
+    address: asseteraPrimarySalesAddress,
+    eventName: 'PrimaryRedeemed',
   })
 
 /**

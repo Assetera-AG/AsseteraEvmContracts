@@ -23,9 +23,21 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///         increase is a second hop, which strands one share at the router. That share is what
 ///         `RouterBalanceChanged` refused, correctly, before AO-713.
 ///
-/// @dev    Only the surface the router and the tests need. It is NOT a full ERC-20 — no
-///         `transferFrom`, no allowances — because `VenueSettler` never pulls the asset. It
-///         only ever measures it and pushes it.
+/// @dev    Only the surface the router and the tests need.
+///
+///         ⚠️ **Allowances, `transferFrom` and `transferSharesFrom` arrived with the sell-back
+///         leg, and this comment used to say the mock deliberately had none of them
+///         because "`VenueSettler` never pulls the asset".** That was true of the buy leg and is
+///         still true of it. `VenueRedeemer` does pull the asset, and a venue selling on the
+///         seller's behalf pulls it again from the router, so both halves of the allowance
+///         mechanism are now exercised.
+///
+///         🔴 The allowance is spent in VISIBLE units on both pull paths, including the share
+///         one, because that is what Backed's `BackedAutoFeeTokenImplementation` does: its
+///         `transferSharesFrom` computes `getUnderlyingAmountByShares(sharesAmount)` and passes
+///         THAT to `_spendAllowance`, then moves the exact share count. A mock that spent the
+///         allowance in shares would let a router that under-approves pass every test here and
+///         revert against the real token.
 ///
 ///         ⚠️ Rounding is DOWN in every direction, matching Backed's integer division. That
 ///         asymmetry is the whole point of the mock: a version that rounded to nearest, or that
@@ -43,12 +55,13 @@ contract BackedLikeShareToken is IERC20 {
     bool public shareTransfersReturnFalse;
 
     mapping(address => uint256) private _shares;
+    mapping(address => mapping(address => uint256)) private _allowance;
     uint256 private _totalShares;
 
-    /// @dev The token does not implement allowances; nothing on the settlement path needs them.
-    error NotImplemented();
     /// @dev Moving more shares than the sender holds.
     error InsufficientShares();
+    /// @dev The spender's allowance does not cover the VISIBLE value of the move.
+    error InsufficientAllowance();
 
     constructor(string memory name_, string memory symbol_, uint256 multiplier_) {
         name = name_;
@@ -80,6 +93,18 @@ contract BackedLikeShareToken is IERC20 {
     /// @param fails Whether the next `transferShares` should return false.
     function setShareTransfersReturnFalse(bool fails) external {
         shareTransfersReturnFalse = fails;
+    }
+
+    /// @notice Move an exact share count FROM another account, spending the caller's allowance in
+    ///         VISIBLE units. Shaped exactly like Backed's; see the 🔴 note in the header.
+    /// @param from         The holder.
+    /// @param to           The recipient.
+    /// @param sharesAmount The exact share count to move.
+    function transferSharesFrom(address from, address to, uint256 sharesAmount) external returns (bool) {
+        if (shareTransfersReturnFalse) return false;
+        _spendAllowance(from, msg.sender, getUnderlyingAmountByShares(sharesAmount));
+        _moveShares(from, to, sharesAmount);
+        return true;
     }
 
     /// @notice Shares to visible units, rounding down.
@@ -114,16 +139,23 @@ contract BackedLikeShareToken is IERC20 {
         return true;
     }
 
-    function allowance(address, address) external pure returns (uint256) {
-        return 0;
+    function allowance(address owner, address spender) public view returns (uint256) {
+        return _allowance[owner][spender];
     }
 
-    function approve(address, uint256) external pure returns (bool) {
-        revert NotImplemented();
+    function approve(address spender, uint256 amount) external returns (bool) {
+        _allowance[msg.sender][spender] = amount;
+        emit Approval(msg.sender, spender, amount);
+        return true;
     }
 
-    function transferFrom(address, address, uint256) external pure returns (bool) {
-        revert NotImplemented();
+    /// @notice A NOMINAL pull: the allowance is spent in visible units and the amount is converted
+    ///         to shares with integer division, so this is the SECOND hop that rounds. It is what
+    ///         a venue uses to take the asset off the router on the sell-back leg.
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        _spendAllowance(from, msg.sender, amount);
+        _moveShares(from, to, getSharesByUnderlyingAmount(amount));
+        return true;
     }
 
     // ── test controls ─────────────────────────────────────────────────────────────────────
@@ -142,6 +174,15 @@ contract BackedLikeShareToken is IERC20 {
     ///         predict, and the only honest way to test that is to let the venue do it.
     function setMultiplier(uint256 multiplier_) external {
         multiplier = multiplier_;
+    }
+
+    function _spendAllowance(address owner, address spender, uint256 amount) private {
+        uint256 current = _allowance[owner][spender];
+        if (current == type(uint256).max) return;
+        if (current < amount) revert InsufficientAllowance();
+        unchecked {
+            _allowance[owner][spender] = current - amount;
+        }
     }
 
     function _moveShares(address from, address to, uint256 sharesAmount) private {
