@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.2.1](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v8.2.0...evm-contracts-v8.2.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **deployments:** record the sell-back router implementation on all four chains ([#95](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/95)) ([1a56448](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/1a564484ddd5820d344c5af2c9b102fe96b65648))
+
 ## [8.2.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v8.1.0...evm-contracts-v8.2.0) (2026-09-06)
 
 
