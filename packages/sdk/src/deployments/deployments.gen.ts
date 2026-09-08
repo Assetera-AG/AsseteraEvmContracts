@@ -36,7 +36,7 @@ export const deployments = {
     },
     "implementations": {
       "AsseteraECS": "0xB6De6C29f039ed53e993f916961A758D32C13c11",
-      "AsseteraPrimarySales": "0xCb0ef38528fd695116B745722d7d03485584175F"
+      "AsseteraPrimarySales": "0xF2f8Dfd9bbc1AD2A78447A0196deC84e3397737B"
     },
     "metadata": {
       "admin": "0x5c682CFC1ffd09a1CA2c04165C34E14aB8810c0E",
