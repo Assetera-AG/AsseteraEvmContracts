@@ -11,7 +11,7 @@ export const deployments = {
     },
     "implementations": {
       "AsseteraECS": "0xF2f8Dfd9bbc1AD2A78447A0196deC84e3397737B",
-      "AsseteraPrimarySales": "0xB6De6C29f039ed53e993f916961A758D32C13c11"
+      "AsseteraPrimarySales": "0xf58cF2421e39a572F821cDDF08Bdf6dce673dc74"
     },
     "metadata": {
       "admin": "0x5c682CFC1ffd09a1CA2c04165C34E14aB8810c0E",
@@ -36,7 +36,7 @@ export const deployments = {
     },
     "implementations": {
       "AsseteraECS": "0xB6De6C29f039ed53e993f916961A758D32C13c11",
-      "AsseteraPrimarySales": "0xCb0ef38528fd695116B745722d7d03485584175F"
+      "AsseteraPrimarySales": "0xF2f8Dfd9bbc1AD2A78447A0196deC84e3397737B"
     },
     "metadata": {
       "admin": "0x5c682CFC1ffd09a1CA2c04165C34E14aB8810c0E",
@@ -63,7 +63,7 @@ export const deployments = {
     },
     "implementations": {
       "AsseteraECS": "0xB6De6C29f039ed53e993f916961A758D32C13c11",
-      "AsseteraPrimarySales": "0xC0c7F32806a8C99287151B7F4886Ef2CDEFf2C7d"
+      "AsseteraPrimarySales": "0xF2f8Dfd9bbc1AD2A78447A0196deC84e3397737B"
     },
     "metadata": {
       "admin": "0x7bEfCf24Ca3E457B100F769bf24FF31d698970ac",
@@ -90,7 +90,7 @@ export const deployments = {
     },
     "implementations": {
       "AsseteraECS": "0xB6De6C29f039ed53e993f916961A758D32C13c11",
-      "AsseteraPrimarySales": "0xC0c7F32806a8C99287151B7F4886Ef2CDEFf2C7d"
+      "AsseteraPrimarySales": "0xF2f8Dfd9bbc1AD2A78447A0196deC84e3397737B"
     },
     "metadata": {
       "admin": "0x18be62A39daDCe169e05eA45E956124537214310",
