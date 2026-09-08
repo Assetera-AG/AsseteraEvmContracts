@@ -6,7 +6,14 @@ test = "test"
 script = "script"
 solc = "0.8.28"
 optimizer = true
-optimizer_runs = 200
+# 200 until the exchange measured escrow at the pull (EscrowPull.sol). That change put AsseteraECS 4 bytes
+# under the EIP-170 limit and the test upgrade fixture AsseteraECSV2, which inherits it and gates CI
+# through `forge build --sizes`, 110 bytes over. Folding call sites did not help: the via-IR optimizer is
+# not monotonic here (one fold grew the contract by 300 bytes). At 100 runs the exchange has ~290 bytes of
+# room and the fixture ~180, for a small runtime-gas cost. Measured, not assumed; re-measure both before
+# raising this again. A router rebuilt at 100 runs differs from the implementations deployed at 200 only
+# by this setting, which is not a reason to upgrade it.
+optimizer_runs = 100
 via_ir = true
 
 # Deploy scripts write the per-network deployment artifact into the SDK (its source of truth, ADR-0026 D4).

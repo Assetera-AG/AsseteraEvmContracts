@@ -6,6 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {KycGate} from "../gates/KycGate.sol";
 import {FeeGate} from "../gates/FeeGate.sol";
 import {ExchangeAdmin} from "../admin/ExchangeAdmin.sol";
+import {EscrowPull} from "./EscrowPull.sol";
 import {FeeMath} from "../libs/FeeMath.sol";
 
 /// @title OfferBook
@@ -13,7 +14,7 @@ import {FeeMath} from "../libs/FeeMath.sol";
 ///         and accept — acceptance settles atomically in the same call, no
 ///         separate operator step (AC-246). Plus permissionless sweep of
 ///         expired offers.
-abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
+abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin, EscrowPull {
     using SafeERC20 for IERC20;
 
     event OfferMade(
@@ -230,7 +231,14 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin {
         }
         // The single point where a proposer's leg enters escrow. Whatever the order funded is
         // already inside the venue, so only the shortfall and the fee come out of their wallet.
-        IERC20(legToken).safeTransferFrom(proposer, address(this), amount - drawn + fee);
+        //
+        // What arrives is measured, and an offer refuses a short delivery rather than crediting
+        // it: the two legs are a negotiated pair, and scaling one of them would settle a trade
+        // neither party agreed to. An order can absorb a shortfall because its price is a ratio
+        // that survives a smaller quantity; an offer cannot.
+        uint256 requested = amount - drawn + fee;
+        uint256 received = _pullEscrow(legToken, proposer, requested);
+        if (received < requested) revert EscrowPullShort(requested, received);
     }
 
     /// @dev Close the linked order once an accepted offer has consumed it (AO-746). Leaves a

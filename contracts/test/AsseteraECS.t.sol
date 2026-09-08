@@ -14,6 +14,7 @@ import {IFeeGate} from "../src/interfaces/IFeeGate.sol";
 import {OrderBook} from "../src/core/OrderBook.sol";
 import {OfferBook} from "../src/core/OfferBook.sol";
 import {PermitRelay} from "../src/core/PermitRelay.sol";
+import {EscrowPull} from "../src/core/EscrowPull.sol";
 import {ExchangeAdmin} from "../src/admin/ExchangeAdmin.sol";
 import {FaucetToken} from "./mocks/FaucetToken.sol";
 import {AsseteraECSV2} from "./mocks/AsseteraECSV2.sol";
@@ -3768,35 +3769,43 @@ contract AsseteraECSTest is Test {
     // ===================================================================== //
     //         token safety — fee-on-transfer / rebasing (M-1 / I-2)         //
     // ===================================================================== //
-    // These tests document and prove the M-1 security-review finding: the
-    // pooled OrderBook/OfferBook escrow assumes a token's transferFrom/
-    // transfer delivers exactly the nominal amount requested. They are
-    // expected to demonstrate insolvency/reverts with non-standard tokens —
-    // that is the point, not a bug in these tests. A standard FaucetToken
-    // never hits these paths (see the escrow-conservation invariant suite in
-    // test/invariants/ for the positive-case regression guard).
+    // The pooled OrderBook/OfferBook escrow used to record the NOMINAL amount a maker asked
+    // the token to move (security-review finding M-1). A fee-on-transfer token delivers
+    // less, the pool ends up short, and the last maker out could not withdraw. Escrow is now
+    // measured at the pull: an order opens with what actually arrived, an offer refuses a
+    // short delivery. These tests pin that. The rebasing case below is unchanged: a balance
+    // that moves AFTER placement is not something a pull measurement can see, and it still
+    // ends in the token's own insufficient-balance revert on the last claimant.
 
-    function test_TokenSafety_FeeOnTransfer_EscrowOverstatedAtPlacement() public {
+    event OrderEscrowShort(
+        uint256 indexed id, address indexed sellToken, uint256 requested, uint256 received, uint256 credited
+    );
+
+    function test_TokenSafety_FeeOnTransfer_OrderCreditsWhatArrived() public {
         FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 100); // 1%
         fot.mint(alice, 10_000e18);
 
         uint256 sellAmt = 1_000e18;
+        uint256 arrived = sellAmt - (sellAmt * 100) / 10_000; // 990e18
         AsseteraECS.KycAttestation memory att = _attestPlace(alice, address(fot), sellAmt, address(usdc), WANT_USDC);
         AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(fot), sellAmt, address(usdc), WANT_USDC);
         vm.startPrank(alice);
         fot.approve(address(exchange), sellAmt);
+        vm.expectEmit(true, true, false, true, address(exchange));
+        emit OrderEscrowShort(1, address(fot), sellAmt, arrived, arrived);
         uint256 id = exchange.placeOrder(address(fot), sellAmt, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
 
-        // Order records the full nominal sellAmount as escrowed...
-        assertEq(exchange.getOrder(id).remainingQuantity, sellAmt, "records nominal amount");
-        // ...but the contract actually received 1% less: recorded escrow overstates real holdings.
-        uint256 actualHeld = sellAmt - (sellAmt * 100) / 10_000;
-        assertEq(fot.balanceOf(address(exchange)), actualHeld, "actual balance short by the transfer fee");
-        assertLt(fot.balanceOf(address(exchange)), exchange.getOrder(id).remainingQuantity);
+        ExchangeTypes.Order memory o = exchange.getOrder(id);
+        // The order opens with the measured delta, and the pool holds exactly that.
+        assertEq(o.remainingQuantity, arrived, "credits what arrived");
+        assertEq(fot.balanceOf(address(exchange)), arrived, "pool equals the recorded claim");
+        // The listed price is untouched: sellAmount : buyAmount is still the maker's ratio.
+        assertEq(o.sellAmount, sellAmt, "price basis unchanged");
+        assertEq(o.buyAmount, WANT_USDC);
     }
 
-    function test_TokenSafety_FeeOnTransfer_PoolInsolvency_LastCancellerReverts() public {
+    function test_TokenSafety_FeeOnTransfer_BothMakersCanCancel() public {
         FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 100); // 1%
         fot.mint(alice, 10_000e18);
         fot.mint(bob, 10_000e18);
@@ -3817,25 +3826,68 @@ contract AsseteraECSTest is Test {
         uint256 bobId = exchange.placeOrder(address(fot), sellAmt, address(usdc), WANT_USDC, 0, bAtt, bFeeAtt);
         vm.stopPrank();
 
-        // Pool actually holds 2 * 990e18 = 1_980e18, but recorded escrow already sums to 2_000e18.
+        // Pool holds 2 * 990e18 and the two recorded claims sum to exactly that.
         assertEq(fot.balanceOf(address(exchange)), 1_980e18);
+        assertEq(exchange.getOrder(aliceId).remainingQuantity + exchange.getOrder(bobId).remainingQuantity, 1_980e18);
 
-        // Alice cancels first: the contract is debited the full recorded 1_000e18 (she nets 990e18
-        // after her own incoming-transfer haircut is re-applied on the way out).
+        // Each cancel pays the recorded claim. The token taxes the way out too, so a maker
+        // nets 980.1e18 of the 990e18 the pool pays, and that tax is theirs to bear: nothing
+        // is paid out of the other maker's escrow.
+        uint256 aliceBefore = fot.balanceOf(alice);
         vm.prank(alice);
         exchange.cancelOrder(aliceId);
-        assertEq(fot.balanceOf(address(exchange)), 980e18);
+        assertEq(fot.balanceOf(address(exchange)), 990e18, "bob's claim is still fully backed");
+        assertEq(fot.balanceOf(alice) - aliceBefore, 990e18 - (990e18 * 100) / 10_000);
 
-        // Bob's cancel requests his full recorded 1_000e18 — Alice's cancel already drew down the
-        // shared pool below what's needed to cover Bob's nominal escrow, so his cancel reverts. The
-        // FOT mock itself splits that 1_000e18 transfer into a 990e18 payout leg + a 10e18 burn leg
-        // (each its own balance check), so the shortfall surfaces on the payout leg at 990e18, not
-        // the full nominal 1_000e18.
         vm.prank(bob);
-        vm.expectRevert(
-            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, address(exchange), 980e18, 990e18)
-        );
         exchange.cancelOrder(bobId);
+        assertEq(fot.balanceOf(address(exchange)), 0, "pool is empty once both claims are paid");
+    }
+
+    function test_TokenSafety_FeeOnTransfer_FillPaysListedPriceOnCreditedQuantity() public {
+        FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 100); // 1%
+        fot.mint(alice, 10_000e18);
+        usdc.mint(bob, 10_000e6);
+
+        uint256 sellAmt = 1_000e18;
+        uint256 arrived = 990e18;
+        AsseteraECS.KycAttestation memory att = _attestPlace(alice, address(fot), sellAmt, address(usdc), WANT_USDC);
+        AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(fot), sellAmt, address(usdc), WANT_USDC);
+        vm.startPrank(alice);
+        fot.approve(address(exchange), sellAmt);
+        uint256 id = exchange.placeOrder(address(fot), sellAmt, address(usdc), WANT_USDC, 0, att, feeAtt);
+        vm.stopPrank();
+
+        // A fill of the full credited quantity pays the LISTED price per unit: 990 of the
+        // 1000-for-1000 listing costs 990 USDC, not the 1000 USDC the nominal order named.
+        uint256 aliceUsdcBefore = usdc.balanceOf(alice);
+        vm.startPrank(bob);
+        usdc.approve(address(exchange), WANT_USDC);
+        exchange.fillOrder(id, arrived, _attest(bob, ExchangeTypes.Action.Fill, id));
+        vm.stopPrank();
+
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Filled));
+        assertEq(usdc.balanceOf(alice) - aliceUsdcBefore, 990e6, "maker is paid at the listed unit price");
+        // The asset leg moves gross from a pool that holds exactly the claim, so the pool is
+        // whole afterwards. The taker bears the token's tax on the way out.
+        assertEq(fot.balanceOf(address(exchange)), 0, "pool is exactly consumed");
+        assertEq(fot.balanceOf(bob), arrived - (arrived * 100) / 10_000);
+    }
+
+    function test_TokenSafety_FeeOnTransfer_NothingArrivesReverts() public {
+        // A token that keeps the whole transfer delivers nothing; there is no quantity to open
+        // an order with, and the placement refuses rather than recording a zero-sized claim.
+        FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 10_000); // 100%
+        fot.mint(alice, 10_000e18);
+
+        uint256 sellAmt = 1_000e18;
+        AsseteraECS.KycAttestation memory att = _attestPlace(alice, address(fot), sellAmt, address(usdc), WANT_USDC);
+        AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(fot), sellAmt, address(usdc), WANT_USDC);
+        vm.startPrank(alice);
+        fot.approve(address(exchange), sellAmt);
+        vm.expectRevert(abi.encodeWithSelector(EscrowPull.EscrowPullShort.selector, sellAmt, 0));
+        exchange.placeOrder(address(fot), sellAmt, address(usdc), WANT_USDC, 0, att, feeAtt);
+        vm.stopPrank();
     }
 
     function test_TokenSafety_Rebasing_NegativeRebaseCausesInsolvency() public {
@@ -3880,12 +3932,13 @@ contract AsseteraECSTest is Test {
         exchange.cancelOrder(bobId);
     }
 
-    function test_TokenSafety_FeeOnTransfer_AcceptOfferShortfall() public {
+    function test_TokenSafety_FeeOnTransfer_MakeOfferRefusesShortDelivery() public {
         FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 100); // 1%
         fot.mint(alice, 10_000e18);
 
         uint256 makerAmt = 1_000e18;
         uint256 takerAmt = WANT_USDC;
+        uint256 arrived = makerAmt - (makerAmt * 100) / 10_000;
 
         AsseteraECS.KycAttestation memory att =
             _attestMakeOffer(alice, bob, address(fot), makerAmt, address(usdc), takerAmt);
@@ -3893,27 +3946,13 @@ contract AsseteraECSTest is Test {
             _feeMakeOffer(alice, bob, address(fot), makerAmt, address(usdc), takerAmt);
         vm.startPrank(alice);
         fot.approve(address(exchange), makerAmt);
-        uint256 id = exchange.makeOffer(0, bob, address(fot), makerAmt, address(usdc), takerAmt, 0, att, feeAtt);
+        // An offer's two legs are a negotiated pair. A leg that arrives short cannot be scaled
+        // on its own, so the placement is refused and the pool never carries a claim it cannot pay.
+        vm.expectRevert(abi.encodeWithSelector(EscrowPull.EscrowPullShort.selector, makerAmt, arrived));
+        exchange.makeOffer(0, bob, address(fot), makerAmt, address(usdc), takerAmt, 0, att, feeAtt);
         vm.stopPrank();
 
-        // The offer records the nominal makerAmount, but the contract only ever received 99% of it.
-        uint256 actualHeld = makerAmt - (makerAmt * 100) / 10_000;
-        assertEq(fot.balanceOf(address(exchange)), actualHeld);
-
-        AsseteraECS.KycAttestation memory acceptAtt = _attestAcceptOffer(bob, id, makerAmt, takerAmt);
-        vm.startPrank(bob);
-        usdc.approve(address(exchange), takerAmt);
-        // acceptOffer tries to release the full nominal makerAmount (zero protocol taker fee here) to
-        // bob. The FOT mock splits that payout into a (makerAmt - transferFee) leg to bob — which
-        // exactly drains the contract's actualHeld balance to zero and succeeds — followed by a
-        // transferFee burn leg that then reverts against a zero balance, instead of silently
-        // under-paying the taker.
-        uint256 transferFee = makerAmt - actualHeld;
-        vm.expectRevert(
-            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, address(exchange), 0, transferFee)
-        );
-        exchange.acceptOffer(id, acceptAtt);
-        vm.stopPrank();
+        assertEq(fot.balanceOf(address(exchange)), 0, "nothing stays behind after the refusal");
     }
 
     // ===================================================================== //

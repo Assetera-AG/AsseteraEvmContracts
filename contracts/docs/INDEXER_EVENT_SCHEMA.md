@@ -278,6 +278,7 @@ Event summary — **`AsseteraECS` (the exchange / secondary market)**:
 | Event | Emitted by |
 |---|---|
 | `OrderPlaced` | `placeOrder`, `placeOrderWithPermit` |
+| `OrderEscrowShort` | `placeOrder`, `placeOrderWithPermit` — only when the token delivered less than asked, after `OrderPlaced` (4.2.0) |
 | `OrderCancelled` | `cancelOrder` |
 | `OrderFilled` | `fillOrder` (full fill) |
 | `OrderPartiallyFilled` | `fillOrder` (partial fill) |
@@ -387,6 +388,35 @@ event OrderPlaced(uint256 indexed id, address indexed maker, address sellToken, 
 | `expireTs` | `0` = no expiry |
 | `makerFeeBps`, `takerFeeBps`, `feeCollector` | fee terms snapshotted onto the order from the fee attestation (same fields `OfferMade` carries at creation) — mirrored back out in `OrderFilled`/`OrderPartiallyFilled` at fill time |
 | `feeToken` | the settlement currency both fees are denominated in; one of `sellToken`/`buyToken` (AC-833). ⚠️ An order placed **before** AC-833 carries `address(0)` here and can never be filled — see `LegacyOrderMustBeUnwound` in [§7](#7-errors-for-revert-reason-decoding) |
+
+⚠️ **`sellAmount` is the price basis, not necessarily the escrowed quantity.** Since exchange 4.2.0 the
+contract measures what the token actually delivered. When that is less than `sellAmount + escrowedFee` (a
+fee-on-transfer token), `OrderEscrowShort` follows in the same transaction and its `credited` is the
+`remainingQuantity` the order opened with. A consumer that mirrors escrow must set `remainingQuantity` from
+`OrderEscrowShort.credited` when that event is present, and from `sellAmount` otherwise. Fills still price
+at `buyAmount / sellAmount` per unit.
+
+---
+
+### `OrderEscrowShort`
+
+```solidity
+event OrderEscrowShort(uint256 indexed id, address indexed sellToken, uint256 requested, uint256 received, uint256 credited);
+```
+- **topic0:** `0xb042cb07ff95073eceb67964e50168573a21ec7ac88a97f9137ecdcbf48db3b7`
+- **Indexed:** `id`, `sellToken`
+- **Data:** `requested`, `received`, `credited`
+- **Emitted by:** `placeOrder`, `placeOrderWithPermit` — only when the pull delivered less than it asked for, always after `OrderPlaced` for the same `id` in the same transaction
+
+| Field | Description |
+|---|---|
+| `id` | the order `OrderPlaced` just opened |
+| `sellToken` | the token that short-delivered |
+| `requested` | `sellAmount + escrowedFee`, what the contract asked the token to move |
+| `received` | the measured balance delta |
+| `credited` | `received - escrowedFee`: the order's opening `remainingQuantity`. The escrowed fee stays whole; the shortfall comes off the maker's quantity |
+
+Offers never emit this: a short leg on `makeOffer`/`replaceOffer` reverts `EscrowPullShort` instead (see [§7](#7-errors-for-revert-reason-decoding)).
 
 ---
 
@@ -1382,6 +1412,7 @@ because the two share the fee and attestation-binding code.
 | `LegacyOrderMustBeUnwound(uint256)` | `0xd41439cf` — an order created before the AC-833 fee-token change carries `feeToken == address(0)`, so its fees cannot be denominated. It can still be cancelled, swept or force-cancelled, but it can never be filled |
 | `LegacyOfferMustBeUnwound(uint256)` | `0xe5d19dda` — the same for an offer: cancellable, sweepable and force-cancellable, but never counterable or acceptable |
 | `OrderNotLinkable(uint256)` | `0xa9fdb0c4` — new (AO-746): `makeOffer` named an order that no party to the offer owns, or that sells a token neither leg trades. Such a link could never fund anything, so it is refused at creation. An order that exists but is not `Open` raises `OrderNotOpen(uint256)` instead |
+| `EscrowPullShort(uint256,uint256)` | `0xc7a8c29b` — new (4.2.0): `(requested, received)`. The token delivered less than the contract asked it to move and the call could not absorb it. Raised by `makeOffer`/`replaceOffer` on any shortfall (an offer's legs are a negotiated pair), and by `placeOrder`/`placeOrderWithPermit` only when nothing beyond the escrowed fee arrived. A partial shortfall on an order does not revert: the order opens with what arrived and emits `OrderEscrowShort` |
 | `KycAccountMismatch()` | `0x542c202e` |
 | `KycActionMismatch()` | `0x95016318` |
 | `KycOrderMismatch()` | `0x19e30b01` |

@@ -148,8 +148,13 @@ contract AsseteraECS is ExchangeTypes, Initializable, UUPSUpgradeable, OrderBook
     ///      which lives in a mapping, so every existing entry keeps its slots and reads back with
     ///      `orderId == 0`. This IS installable over a live 4.0.0 proxy with a plain `upgradeToAndCall`,
     ///      and the MAJOR digit is what says so. Off-chain consumers move in lockstep regardless.
+    ///
+    ///      MINOR bumped to 4.2.0: escrow is measured at the pull (`EscrowPull`). An order opens with the
+    ///      quantity that actually arrived and emits `OrderEscrowShort` when that is less than it asked
+    ///      for; an offer refuses a short delivery with `EscrowPullShort`. No storage moved, no existing
+    ///      event changed, so this too installs over a live 4.x proxy with a plain `upgradeToAndCall`.
     function version() external pure virtual returns (string memory) {
-        return "4.1.0";
+        return "4.2.0";
     }
 
     function _msgSender() internal view override(ContextUpgradeable, ERC2771ContextUpgradeable) returns (address) {

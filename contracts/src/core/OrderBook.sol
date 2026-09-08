@@ -7,13 +7,14 @@ import {KycGate} from "../gates/KycGate.sol";
 import {FeeGate} from "../gates/FeeGate.sol";
 import {ExchangeAdmin} from "../admin/ExchangeAdmin.sol";
 import {PermitRelay} from "./PermitRelay.sol";
+import {EscrowPull} from "./EscrowPull.sol";
 import {FeeMath} from "../libs/FeeMath.sol";
 
 /// @title OrderBook
 /// @notice Order lifecycle: place, self-cancel, fill, and permissionless sweep
 ///         of expired orders. Operator-only settle/refund are parked — see
 ///         docs/parked/OperatorFunctions.sol (AC-246).
-abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
+abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay, EscrowPull {
     using SafeERC20 for IERC20;
 
     /// @dev Emitted when a new order is placed. Includes the fee terms snapshotted onto the
@@ -67,6 +68,14 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
     );
     /// @dev `refunded` is remaining escrow plus any unconsumed escrowed fee (AC-833).
     event OrderExpired(uint256 indexed id, address indexed maker, uint256 refunded);
+    /// @dev Emitted right after `OrderPlaced` when the sell token delivered less than it was asked
+    ///      to move (a fee on transfer). `requested` is `sellAmount + escrowedFee`, `received` the
+    ///      measured balance delta, and `credited` the `remainingQuantity` the order opened with.
+    ///      `OrderPlaced.sellAmount` stays the price basis; consumers that mirror escrow must take
+    ///      the quantity from here when this event is present.
+    event OrderEscrowShort(
+        uint256 indexed id, address indexed sellToken, uint256 requested, uint256 received, uint256 credited
+    );
 
     /// @dev An order placed before the AC-833 upgrade carries no settlement currency
     ///      (`feeToken == address(0)`), so its fees cannot be denominated correctly.
@@ -202,7 +211,8 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
             boughtQuantity: 0
         });
 
-        IERC20(sellToken).safeTransferFrom(maker, address(this), sellAmount + escrowedFee);
+        uint256 requested = sellAmount + escrowedFee;
+        uint256 received = _pullEscrow(sellToken, maker, requested);
         emit OrderPlaced(
             id,
             maker,
@@ -216,6 +226,18 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
             feeAtt.feeCollector,
             feeAtt.feeToken
         );
+        if (received < requested) {
+            // The token kept part of the pull (fee on transfer). The order opens with what
+            // actually arrived, so the pool can always pay it back. The escrowed fee stays
+            // whole, because it is the collector's money once a fill earns it; the shortfall
+            // comes off the maker's quantity, and the maker bears the tax on their own token.
+            // `sellAmount` is untouched: with `buyAmount` it is the listed price, and a fill
+            // still pays that price per unit on whatever quantity remains.
+            if (received <= escrowedFee) revert EscrowPullShort(requested, received);
+            uint256 credited = received - escrowedFee;
+            _orders[id].remainingQuantity = credited;
+            emit OrderEscrowShort(id, sellToken, requested, received, credited);
+        }
     }
 
     /// @notice Maker self-cancel. Never requires a KYC attestation — a user must
