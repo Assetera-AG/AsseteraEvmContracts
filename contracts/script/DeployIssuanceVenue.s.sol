@@ -23,7 +23,9 @@ import {IAsseteraIssuanceVenue} from "../src/primary/sale/IAsseteraIssuanceVenue
 ///    the address it computes, so inventing one per offering is a hazard with no benefit here.
 ///
 /// ⚠️ **Nothing is written to `packages/sdk/src/deployments/`.** The address printed below goes
-///    into the offering's catalogue row (`primary_sale_contract`), not into the SDK manifest.
+///    into the offering's catalogue row (`issuance_venue_contract`), not into the SDK manifest.
+///    Not `primary_sale_contract`: that column is the indexer's delivery-token override, and a venue
+///    address there silently repoints the token the indexer watches.
 ///
 /// Usage:
 ///   forge script script/DeployIssuanceVenue.s.sol:DeployIssuanceVenue --rpc-url amoy --broadcast --verify
@@ -89,7 +91,8 @@ contract DeployIssuanceVenue is Script {
         console2.log("  1. ISSUER grants this address the minting right on the asset token.");
         console2.log("  2. Router admin: setSettlementCap(settlementToken, wholeUnits) on AsseteraPrimarySales,");
         console2.log("     which reads an unset cap as 'this currency cannot settle at all'.");
-        console2.log("  3. Catalogue: point the offering's primary_sale_contract at the address above.");
+        console2.log("  3. Catalogue: set the offering's issuance_venue_contract to the address above");
+        console2.log("     (NOT primary_sale_contract, which is the indexer's delivery-token override).");
         if (config.maxSettlementPerPurchaseWholeUnits == 0) {
             console2.log(
                 "  4. This venue was deployed CLOSED (cap 0). Call setMaxSettlementPerPurchase before selling."
