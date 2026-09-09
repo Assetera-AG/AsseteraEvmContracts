@@ -87,4 +87,33 @@ contract AttestationVerifier is IAttestationVerifier {
         );
         return ECDSA.recover(MessageHashUtils.toTypedDataHash(domainSeparator, structHash), att.signature);
     }
+
+    /// @inheritdoc IAttestationVerifier
+    function validateFees(GateTypes.FeeAttestation calldata att, address legA, address legB, bool collectorAllowed)
+        external
+        pure
+        override
+    {
+        if (att.makerFeeBps > 10_000 || att.takerFeeBps > 10_000) revert IFeeGate.InvalidFee();
+        if (att.feeToken != legA && att.feeToken != legB) revert IFeeGate.FeeTokenNotALeg(att.feeToken);
+        if (att.makerFeeBps > 0 || att.takerFeeBps > 0) {
+            if (att.feeCollector == address(0)) revert GateStorage.ZeroAddress();
+            if (!collectorAllowed) revert IFeeGate.FeeCollectorNotAllowed(att.feeCollector);
+        }
+    }
+
+    /// @inheritdoc IAttestationVerifier
+    function verifyFeeTerms(
+        bytes32 domainSeparator,
+        address account,
+        uint8 action,
+        uint256 maxTtl,
+        GateTypes.FeeAttestation calldata att,
+        address legA,
+        address legB,
+        bool collectorAllowed
+    ) external view override returns (address signer) {
+        this.validateFees(att, legA, legB, collectorAllowed);
+        return this.verifyFee(domainSeparator, account, action, maxTtl, att);
+    }
 }

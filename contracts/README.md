@@ -77,7 +77,11 @@ These four commands are exactly what CI runs on every PR — see
 
 Deployment is **deterministic** (ADR-0026): contracts are deployed through the **CreateX** factory, and the
 exchange proxy + forwarder use **CREATE3** — so they get the **same address on every chain** for a given
-deployer, an address that survives implementation upgrades. The per-network record is written to
+deployer, an address that survives implementation upgrades. The **attestation verifier**
+(`src/gates/AttestationVerifier.sol`) is deployed by CREATE2 keyed on its own bytecode before the
+implementations, and both implementations take its address as a constructor immutable next to the
+forwarder; changing the verifier therefore rolls both implementations. It is recorded as
+`contracts.AttestationVerifier` and checked by `Verify.s.sol`. The per-network record is written to
 [`../packages/sdk/src/deployments/<chainId>.json`](../packages/sdk/src/deployments) (the SDK's source of
 truth), keyed by numeric `chainId` and carrying the `caip2` id + `namespace` for the indexer/API. Re-running
 is idempotent — it reuses existing contracts and, when the layout allows it, **upgrades the proxy in place**
@@ -122,7 +126,7 @@ browser key is matched on `Origin` and returns 403 from a terminal.
 
 | Script | Purpose |
 |---|---|
-| [`script/Deploy.s.sol`](script/Deploy.s.sol) | Deterministic deploy of forwarder + tokens + exchange impl + CREATE3 proxy (atomic init), or upgrade the proxy in place. |
+| [`script/Deploy.s.sol`](script/Deploy.s.sol) | Deterministic deploy of forwarder + attestation verifier + tokens + exchange impl + CREATE3 proxy (atomic init), or upgrade the proxy in place. |
 | [`script/DeployIssuanceVenue.s.sol`](script/DeployIssuanceVenue.s.sol) | Deploy **one offering's** `AsseteraIssuanceVenue` (per-token primary sale). Plain `new`, not CREATE3; nothing written to the SDK manifest. Runbook: [`docs/ISSUANCE-VENUE-RUNBOOK.md`](docs/ISSUANCE-VENUE-RUNBOOK.md). |
 | [`script/UpgradeCalldata.s.sol`](script/UpgradeCalldata.s.sol) | Print the `upgradeToAndCall` calldata for a Safe multisig to propose (prod upgrades). |
 | [`script/Verify.s.sol`](script/Verify.s.sol) | Post-deploy **governance** check: proxy wiring, who holds which role, whether the deployer still holds admin, compliance gating, pause state, and whether the router's settlement caps are still closed. Not source verification — that is `forge verify-contract`. |

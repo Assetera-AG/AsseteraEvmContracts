@@ -13,7 +13,8 @@ import {DeploymentFile} from "./DeploymentFile.sol";
 
 /// @notice Deploys a new implementation and prints the Safe transaction
 ///         calldata needed to upgrade the proxy. No broadcast of the upgrade
-///         itself - that goes through the Safe multisig.
+///         itself - that goes through the Safe multisig. Deploys the attestation
+///         verifier first when the deployment record does not have one yet.
 ///
 /// Usage:
 ///   TARGET=ecs     forge script script/UpgradeCalldata.s.sol:UpgradeCalldata \

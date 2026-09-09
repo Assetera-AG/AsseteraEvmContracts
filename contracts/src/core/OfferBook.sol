@@ -148,8 +148,7 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin, EscrowPull {
             feeAtt,
             keccak256(abi.encodePacked(taker, makerToken, makerAmount, takerToken, takerAmount))
         );
-        _validateFees(feeAtt, makerToken, takerToken);
-        _consumeKycAndFee(maker, uint8(Action.MakeOffer), 0, att, feeAtt);
+        _consumeKycAndFee(maker, uint8(Action.MakeOffer), 0, att, feeAtt, makerToken, takerToken);
 
         id = _storeOffer(orderId, maker, taker, makerToken, makerAmount, takerToken, takerAmount, expireTs, feeAtt);
         emit OfferMade(

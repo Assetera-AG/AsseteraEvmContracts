@@ -290,6 +290,7 @@ Event summary — **`AsseteraECS` (the exchange / secondary market)**:
 | `ComplianceRequiredSet` | `setComplianceRequired` |
 | `OfferMade` | `makeOffer` |
 | `OfferReplaced` | `replaceOffer` |
+| `OfferEscrowShort` | `makeOffer`, `replaceOffer` — only when the proposer's asset leg delivered less than asked, after `OfferMade` / `OfferReplaced` (4.4.0) |
 | `OfferCancelled` | `cancelOffer` |
 | `OfferForceCancelled` | `cancelOfferForUser` |
 | `OfferExpired` | `sweepExpiredOffers` (once per swept id) |
@@ -416,7 +417,7 @@ event OrderEscrowShort(uint256 indexed id, address indexed sellToken, uint256 re
 | `received` | the measured balance delta |
 | `credited` | `received - escrowedFee`: the order's opening `remainingQuantity`. The escrowed fee stays whole; the shortfall comes off the maker's quantity |
 
-Offers never emit this: a short leg on `makeOffer`/`replaceOffer` reverts `EscrowPullShort` instead (see [§7](#7-errors-for-revert-reason-decoding)).
+Offers have their own event, `OfferEscrowShort` (4.4.0), documented with the offer events below.
 
 ---
 
@@ -622,6 +623,30 @@ event OfferReplaced(uint256 indexed id, address indexed by, uint256 newMakerAmou
 - **Data:** `newMakerAmount`, `newTakerAmount`, `expireTs`
 
 `by` becomes the offer's new `proposedBy`. Fee terms (`makerFeeBps`/`takerFeeBps`/`feeCollector`) are **not** renegotiated by this call — they stay fixed from `OfferMade`; join back to that event (or `getOffer(id)`) if fee amounts are needed downstream.
+
+⚠️ **The proposer's leg in `OfferMade` / `OfferReplaced` is the proposed amount, not necessarily the escrowed one.** Since exchange 4.4.0 a proposer's ASSET leg that arrives short (a fee-on-transfer token) is booked as what arrived, and `OfferEscrowShort` follows in the same transaction. A consumer that mirrors the offer must set that leg from `OfferEscrowShort.credited` when the event is present. The acceptor's attestation binds the booked amounts, so an off-chain signer reads them from chain (`getOffer(id)`) rather than from the proposal.
+
+---
+
+### `OfferEscrowShort`
+
+```solidity
+event OfferEscrowShort(uint256 indexed id, address indexed legToken, uint256 requested, uint256 received, uint256 credited);
+```
+- **topic0:** `0x56b8e26f1bede700149e9605a26fa364c95ffdb18d1be00de93ee05a12cc0186`
+- **Indexed:** `id`, `legToken`
+- **Data:** `requested`, `received`, `credited`
+- **Emitted by:** `makeOffer`, `replaceOffer` — only when the pull delivered less than it asked for, always after `OfferMade` / `OfferReplaced` for the same `id` in the same transaction
+
+| Field | Description |
+|---|---|
+| `id` | the offer just made or re-proposed |
+| `legToken` | the proposer's leg. Equal to the offer's `makerToken` when the maker proposed (then `makerAmount` is now `credited`), `takerToken` when the taker did (then `takerAmount` is) |
+| `requested` | what the contract asked the token to move out of the proposer's wallet: the leg less what the linked order funded |
+| `received` | the measured balance delta |
+| `credited` | the leg as booked: what the linked order funded plus what arrived |
+
+Only a proposer's ASSET leg is credited. A proposer's CURRENCY leg (the leg that carries a fee) and the ACCEPTING leg at settlement must arrive whole; a short delivery there reverts `EscrowPullShort` (see [§7](#7-errors-for-revert-reason-decoding)).
 
 ---
 
@@ -1414,7 +1439,7 @@ because the two share the fee and attestation-binding code.
 | `LegacyOrderMustBeUnwound(uint256)` | `0xd41439cf` — an order created before the AC-833 fee-token change carries `feeToken == address(0)`, so its fees cannot be denominated. It can still be cancelled, swept or force-cancelled, but it can never be filled |
 | `LegacyOfferMustBeUnwound(uint256)` | `0xe5d19dda` — the same for an offer: cancellable, sweepable and force-cancellable, but never counterable or acceptable |
 | `OrderNotLinkable(uint256)` | `0xa9fdb0c4` — new (AO-746): `makeOffer` named an order that no party to the offer owns, or that sells a token neither leg trades. Such a link could never fund anything, so it is refused at creation. An order that exists but is not `Open` raises `OrderNotOpen(uint256)` instead |
-| `EscrowPullShort(uint256,uint256)` | `0xc7a8c29b` — new (4.2.0): `(requested, received)`. The token delivered less than the contract asked it to move and the call could not absorb it. Raised by `makeOffer`/`replaceOffer` on any shortfall (an offer's legs are a negotiated pair), and by `placeOrder`/`placeOrderWithPermit` only when nothing beyond the escrowed fee arrived. A partial shortfall on an order does not revert: the order opens with what arrived and emits `OrderEscrowShort` |
+| `EscrowPullShort(uint256,uint256)` | `0xc7a8c29b` — new (4.2.0): `(requested, received)`. The token delivered less than the contract asked it to move and the call could not absorb it. Raised by `acceptOffer` when the accepting leg arrives short, by `makeOffer`/`replaceOffer` when a proposer's CURRENCY leg arrives short (since 4.4.0; a proposer's asset leg is booked as what arrived and emits `OfferEscrowShort` instead), by `fillOrder` on a buy-side fill whose asset arrives short (4.3.0), and by `placeOrder`/`placeOrderWithPermit` only when nothing beyond the escrowed fee arrived. A partial shortfall on an order does not revert: the order opens with what arrived and emits `OrderEscrowShort` |
 | `KycAccountMismatch()` | `0x542c202e` |
 | `KycActionMismatch()` | `0x95016318` |
 | `KycOrderMismatch()` | `0x19e30b01` |

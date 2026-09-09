@@ -115,11 +115,10 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay, Esc
         _bindParamsHash(
             uint8(Action.Place), att, feeAtt, keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount))
         );
-        // Fee bounds + denomination — always enforced (defence in depth) so a compromised
-        // fee signer cannot set extreme fees, route to an unlisted collector, or
+        // Fee bounds + denomination are enforced in the same call (defence in depth) so a
+        // compromised fee signer cannot set extreme fees, route to an unlisted collector, or
         // denominate the fees in a token that isn't part of this trade.
-        _validateFees(feeAtt, sellToken, buyToken);
-        _consumeKycAndFee(_msgSender(), uint8(Action.Place), 0, att, feeAtt);
+        _consumeKycAndFee(_msgSender(), uint8(Action.Place), 0, att, feeAtt, sellToken, buyToken);
         return _placeOrder(sellToken, sellAmount, buyToken, buyAmount, expireTs, feeAtt);
     }
 
@@ -150,8 +149,7 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay, Esc
         _bindParamsHash(
             uint8(Action.Place), att, feeAtt, keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount))
         );
-        _validateFees(feeAtt, sellToken, buyToken);
-        _consumeKycAndFee(_msgSender(), uint8(Action.Place), 0, att, feeAtt);
+        _consumeKycAndFee(_msgSender(), uint8(Action.Place), 0, att, feeAtt, sellToken, buyToken);
         // Permit must cover the FULL escrow, which on a buy-side order is
         // sellAmount + the maker's escrowed fee — see `_placeOrder`.
         _tryPermit(sellToken, _escrowTotal(sellToken, sellAmount, feeAtt), permitDeadline, v, r, s);

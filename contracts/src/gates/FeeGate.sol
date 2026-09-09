@@ -91,6 +91,46 @@ abstract contract FeeGate is KycGate, IFeeGate {
     ) internal {
         _verifyKyc(account, action, orderId, kycAtt);
         _verifyFee(account, action, feeAtt);
+        _burnKycAndFee(account, action, orderId, kycAtt, feeAtt);
+    }
+
+    /// @dev `_validateFees` + `_consumeKycAndFee` for a venue that does both in one place (the
+    ///      exchange): the fee terms and the fee signature are checked by one verifier call, so the
+    ///      implementation carries one call stub fewer. A venue that validates terms earlier than it
+    ///      burns nonces (the primary router) keeps the two steps apart.
+    function _consumeKycAndFee(
+        address account,
+        uint8 action,
+        uint256 orderId,
+        KycAttestation calldata kycAtt,
+        FeeAttestation calldata feeAtt,
+        address legA,
+        address legB
+    ) internal {
+        _verifyKyc(account, action, orderId, kycAtt);
+        address signer = _ATTESTATION_VERIFIER.verifyFeeTerms(
+            _domainSeparatorV4(),
+            account,
+            action,
+            MAX_FEE_TTL,
+            feeAtt,
+            legA,
+            legB,
+            allowedCollectors(feeAtt.feeCollector)
+        );
+        if (usedFeeNonce(account, feeAtt.nonce)) revert FeeNonceUsed();
+        if (!hasRole(FEE_OPERATOR_ROLE, signer)) revert FeeBadSigner();
+        _burnKycAndFee(account, action, orderId, kycAtt, feeAtt);
+    }
+
+    /// @dev The nonce burns shared by both `_consumeKycAndFee` shapes.
+    function _burnKycAndFee(
+        address account,
+        uint8 action,
+        uint256 orderId,
+        KycAttestation calldata kycAtt,
+        FeeAttestation calldata feeAtt
+    ) private {
         if (complianceRequired(action)) {
             _gate().usedNonce[account][kycAtt.nonce] = true;
             emit KycConsumed(account, action, orderId, kycAtt.nonce);
@@ -108,14 +148,6 @@ abstract contract FeeGate is KycGate, IFeeGate {
     /// @param legA One of the two legs (sellToken / makerToken).
     /// @param legB The other leg (buyToken / takerToken).
     function _validateFees(FeeAttestation calldata att, address legA, address legB) internal view {
-        if (att.makerFeeBps > MAX_FEE_BPS || att.takerFeeBps > MAX_FEE_BPS) revert InvalidFee();
-        // Required even for a zero-fee order (AC-833): it pins the settlement currency
-        // for the order's whole lifetime, and keeps `feeToken == address(0)` meaning
-        // exactly one thing — a legacy order placed before this upgrade.
-        if (att.feeToken != legA && att.feeToken != legB) revert FeeTokenNotALeg(att.feeToken);
-        if (att.makerFeeBps > 0 || att.takerFeeBps > 0) {
-            if (att.feeCollector == address(0)) revert ZeroAddress();
-            if (!allowedCollectors(att.feeCollector)) revert FeeCollectorNotAllowed(att.feeCollector);
-        }
+        _ATTESTATION_VERIFIER.validateFees(att, legA, legB, allowedCollectors(att.feeCollector));
     }
 }
