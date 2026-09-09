@@ -37,7 +37,7 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "generate": "wagmi generate && node scripts/gen-deployments.mjs",
+    "generate": "forge build --root ../../contracts && wagmi generate && node scripts/gen-deployments.mjs",
     "prebuild": "npm run generate",
     "build": "tsup",
     "postbuild": "node scripts/copy-deployments.mjs",

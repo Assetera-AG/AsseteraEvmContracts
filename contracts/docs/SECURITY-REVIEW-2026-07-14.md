@@ -114,6 +114,15 @@ on-chain invariant**, and `fillOrder` inherits whatever token the order already 
 > a short leg with `EscrowPullShort`, because its two legs are a negotiated pair. The pool now always equals the
 > sum of its claims at placement. The rebasing half of this finding is unchanged: a balance that moves after
 > placement is not something a pull measurement can see, and stays a policy exclusion.
+>
+> **Status update 2026-09-09 (4.3.0, 4.4.0).** A buy-side fill now routes the asset through the exchange
+> (pull from the taker, forward to the maker), so a token that exempts the exchange from its fee covers that
+> leg too and a taxed delivery reverts rather than shorting the maker. An offer proposer's asset leg is now
+> booked as what arrived and emits `OfferEscrowShort`, the same rule an order follows; the accepting leg and a
+> proposer's currency leg (fee sized on the proposed amount) still refuse a short delivery. The rule these
+> settle: a party escrowing ahead of a trade is credited what arrived, visibly; a party delivering at the
+> moment of a trade must arrive whole. The attestation validation moved to a separately deployed
+> `AttestationVerifier` reached by STATICCALL to make room; see the audit scope.
 
 ---
 

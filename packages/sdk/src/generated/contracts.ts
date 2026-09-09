@@ -13,6 +13,7 @@ export const asseteraEcsAbi = [
     type: 'constructor',
     inputs: [
       { name: 'trustedForwarder', internalType: 'address', type: 'address' },
+      { name: 'attestationVerifier', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -801,6 +802,38 @@ export const asseteraEcsAbi = [
     inputs: [
       { name: 'id', internalType: 'uint256', type: 'uint256', indexed: true },
       {
+        name: 'legToken',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'requested',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'received',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'credited',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'OfferEscrowShort',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'id', internalType: 'uint256', type: 'uint256', indexed: true },
+      {
         name: 'proposedBy',
         internalType: 'address',
         type: 'address',
@@ -1456,17 +1489,6 @@ export const asseteraEcsAbi = [
     type: 'error',
     inputs: [{ name: 'target', internalType: 'address', type: 'address' }],
     name: 'AddressEmptyCode',
-  },
-  { type: 'error', inputs: [], name: 'ECDSAInvalidSignature' },
-  {
-    type: 'error',
-    inputs: [{ name: 'length', internalType: 'uint256', type: 'uint256' }],
-    name: 'ECDSAInvalidSignatureLength',
-  },
-  {
-    type: 'error',
-    inputs: [{ name: 's', internalType: 'bytes32', type: 'bytes32' }],
-    name: 'ECDSAInvalidSignatureS',
   },
   {
     type: 'error',
@@ -2234,6 +2256,7 @@ export const asseteraPrimarySalesAbi = [
     type: 'constructor',
     inputs: [
       { name: 'trustedForwarder', internalType: 'address', type: 'address' },
+      { name: 'attestationVerifier', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },

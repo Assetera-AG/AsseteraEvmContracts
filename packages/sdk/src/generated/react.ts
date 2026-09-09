@@ -20,6 +20,7 @@ export const asseteraEcsAbi = [
     type: 'constructor',
     inputs: [
       { name: 'trustedForwarder', internalType: 'address', type: 'address' },
+      { name: 'attestationVerifier', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -808,6 +809,38 @@ export const asseteraEcsAbi = [
     inputs: [
       { name: 'id', internalType: 'uint256', type: 'uint256', indexed: true },
       {
+        name: 'legToken',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'requested',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'received',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'credited',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'OfferEscrowShort',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'id', internalType: 'uint256', type: 'uint256', indexed: true },
+      {
         name: 'proposedBy',
         internalType: 'address',
         type: 'address',
@@ -1463,17 +1496,6 @@ export const asseteraEcsAbi = [
     type: 'error',
     inputs: [{ name: 'target', internalType: 'address', type: 'address' }],
     name: 'AddressEmptyCode',
-  },
-  { type: 'error', inputs: [], name: 'ECDSAInvalidSignature' },
-  {
-    type: 'error',
-    inputs: [{ name: 'length', internalType: 'uint256', type: 'uint256' }],
-    name: 'ECDSAInvalidSignatureLength',
-  },
-  {
-    type: 'error',
-    inputs: [{ name: 's', internalType: 'bytes32', type: 'bytes32' }],
-    name: 'ECDSAInvalidSignatureS',
   },
   {
     type: 'error',
@@ -2241,6 +2263,7 @@ export const asseteraPrimarySalesAbi = [
     type: 'constructor',
     inputs: [
       { name: 'trustedForwarder', internalType: 'address', type: 'address' },
+      { name: 'attestationVerifier', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -5003,6 +5026,21 @@ export const useWatchAsseteraEcsOfferCancelledEvent =
     abi: asseteraEcsAbi,
     address: asseteraEcsAddress,
     eventName: 'OfferCancelled',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link asseteraEcsAbi}__ and `eventName` set to `"OfferEscrowShort"`
+ *
+ * - [__View Contract on Ethereum Etherscan__](https://etherscan.io/address/0xf045d3FE81C14d8c13DbaB0b03a4Ea1505e499ad)
+ * - [__View Contract on Polygon Polygon Scan__](https://polygonscan.com/address/0xf045d3FE81C14d8c13DbaB0b03a4Ea1505e499ad)
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0xf045d3FE81C14d8c13DbaB0b03a4Ea1505e499ad)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0xf045d3FE81C14d8c13DbaB0b03a4Ea1505e499ad)
+ */
+export const useWatchAsseteraEcsOfferEscrowShortEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: asseteraEcsAbi,
+    address: asseteraEcsAddress,
+    eventName: 'OfferEscrowShort',
   })
 
 /**

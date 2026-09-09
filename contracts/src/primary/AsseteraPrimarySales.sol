@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {GateStorage} from "../gates/GateStorage.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
@@ -136,7 +137,12 @@ contract AsseteraPrimarySales is
     ///        uses, so the relayer story is unchanged. Immutable in implementation bytecode,
     ///        therefore proxy-safe. `address(0)` disables meta-transactions.
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address trustedForwarder) ERC2771ContextUpgradeable(trustedForwarder) {
+    /// @param trustedForwarder The ERC-2771 forwarder, baked in as an immutable.
+    /// @param attestationVerifier The `AttestationVerifier` this implementation checks attestations with.
+    constructor(address trustedForwarder, address attestationVerifier)
+        ERC2771ContextUpgradeable(trustedForwarder)
+        GateStorage(attestationVerifier)
+    {
         _disableInitializers();
     }
 

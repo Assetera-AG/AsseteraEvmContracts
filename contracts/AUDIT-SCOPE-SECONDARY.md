@@ -65,7 +65,9 @@ find src -name '*.sol' -not -path 'src/primary/*' | xargs wc -l
 | `src/core/PermitRelay.sol` | 138 | `permitAndCall`: ERC-2612 permit + one self-`delegatecall`, so approve-then-trade is one transaction (AO-298). ⚠️ Since AO-713 this file is compiled into the **primary-sales proxy too**; a finding here lands on both |
 | `src/gates/KycGate.sol` | 75 | EIP-712 KYC attestation verification + nonce burn |
 | `src/gates/FeeGate.sol` | 141 | EIP-712 fee attestation verification + fee bounds / denomination / collector allowlist |
-| `src/gates/GateStorage.sol` | 130 | Gate state in ERC-7201 namespaced storage (`assetera.storage.Gate`) + the OZ bases the gates need (AO-514) |
+| `src/gates/GateStorage.sol` | 130 | Gate state in ERC-7201 namespaced storage (`assetera.storage.Gate`) + the OZ bases the gates need (AO-514); holds the immutable `AttestationVerifier` address |
+| `src/gates/AttestationVerifier.sol` | 119 | **Separately deployed, stateless.** Attestation field checks, EIP-712 struct hash + digest, ECDSA recovery, fee bounds / denomination. Reached by STATICCALL from `KycGate` / `FeeGate` through an immutable; reads no storage. Exists because the exchange sits at the EIP-170 limit. A finding here lands on both proxies |
+| `src/interfaces/IAttestationVerifier.sol` | 56 | The verifier's interface |
 | `src/admin/ExchangeAdmin.sol` | 118 | Admin surface: pause, compliance toggles, collector allowlist, force-cancel |
 | `src/storage/ExchangeStorage.sol` | 61 | Order-book storage base behind `__gap` |
 | `src/types/ExchangeTypes.sol` | 119 | Order/Offer structs, enums (`Action`, statuses) |
@@ -248,7 +250,7 @@ Dependencies are **frozen for the duration of an external audit**.
 | Behaviour | This surface |
 |---|---|
 | Standard ERC-20 (`transfer` / `transferFrom` move exactly the requested amount) | **Supported** — the only supported class |
-| Fee-on-transfer / deflationary | **Measured at the pull since 4.2.0** (`core/EscrowPull.sol`). An order opens with the quantity that arrived and emits `OrderEscrowShort`; an offer refuses a short leg with `EscrowPullShort`. The pool always equals the sum of its claims. The token still taxes every payout, so such a token is a poor fit, but it can no longer strand other makers' escrow (finding M-1, fixed) |
+| Fee-on-transfer / deflationary | **Measured at the pull since 4.2.0** (`core/EscrowPull.sol`). An order opens with the quantity that arrived and emits `OrderEscrowShort`; an offer proposer's asset leg is booked the same way and emits `OfferEscrowShort` (4.4.0). The accepting leg, the asset on a buy-side fill (routed through the exchange, 4.3.0) and a proposer's currency leg refuse a short delivery with `EscrowPullShort`. The pool always equals the sum of its claims. The token still taxes every payout, so such a token is a poor fit, but it can no longer strand other makers' escrow (finding M-1, fixed) |
 | Rebasing (positive or negative) | **Refused by policy, not by code.** A negative rebase desyncs recorded escrow from the real balance (finding M-1) |
 | Non-standard `decimals()` / missing `decimals()` | Never read by this surface |
 | Freezable / blacklistable (USDC and friends) | **Supported but hazardous** — escrow can be permanently stranded (finding L-1). This is what production actually uses |
@@ -602,8 +604,11 @@ Fully described in the internal review; the load-bearing ones, re-read against t
    built; a listed fee-on-transfer token then stranded a maker's cancel in production. Every pull now goes
    through `core/EscrowPull.sol`, which measures the balance delta. An order opens with
    `remainingQuantity = received - escrowedFee` (the escrowed fee stays whole, the maker bears the tax on
-   their own quantity, `sellAmount` stays the price basis) and emits `OrderEscrowShort`; an offer refuses
-   a short leg with `EscrowPullShort(requested, received)` because its two legs are a negotiated pair.
+   their own quantity, `sellAmount` stays the price basis) and emits `OrderEscrowShort`; since 4.4.0 an
+   offer proposer's asset leg is booked the same way and emits `OfferEscrowShort`, while the accepting
+   leg, the asset on a buy-side fill (routed through the exchange, 4.3.0) and a proposer's currency leg
+   refuse a short delivery with `EscrowPullShort(requested, received)`: a party escrowing ahead of a
+   trade is credited what arrived, visibly; a party delivering at the moment of a trade must arrive whole.
    Payouts still move the nominal recorded figure and the token taxes them again, so the recipient of a
    fill or refund nets less than the pool paid; that is the token's behaviour, not a solvency problem.
    **Rebasing tokens remain policy-only:** a balance that moves after placement is invisible to a pull

@@ -9,6 +9,7 @@ pragma solidity 0.8.28;
 //  ╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝
 //        E X E C U T I O N  ·  C L E A R I N G  ·  S E T T L E M E N T
 
+import {GateStorage} from "./gates/GateStorage.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
@@ -61,7 +62,12 @@ contract AsseteraECS is ExchangeTypes, Initializable, UUPSUpgradeable, OrderBook
     /// @param trustedForwarder ERC-2771 forwarder (relayer). Immutable in impl
     ///        bytecode — proxy-safe. Set to address(0) to disable meta-tx.
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address trustedForwarder) ERC2771ContextUpgradeable(trustedForwarder) {
+    /// @param trustedForwarder The ERC-2771 forwarder, baked in as an immutable.
+    /// @param attestationVerifier The `AttestationVerifier` this implementation checks attestations with.
+    constructor(address trustedForwarder, address attestationVerifier)
+        ERC2771ContextUpgradeable(trustedForwarder)
+        GateStorage(attestationVerifier)
+    {
         _disableInitializers();
     }
 
@@ -158,8 +164,15 @@ contract AsseteraECS is ExchangeTypes, Initializable, UUPSUpgradeable, OrderBook
     ///      taker, forward to the maker) instead of transferring it taker to maker directly, so a token
     ///      that exempts the exchange from a transfer fee covers this leg too, and a taxed asset reverts
     ///      the fill rather than delivering the maker short. No storage moved, no event changed.
+    ///
+    ///      MINOR bumped to 4.4.0: an offer proposer's asset leg is booked as what arrived and emits
+    ///      `OfferEscrowShort` (the accepting leg and a proposer's currency leg still must arrive whole),
+    ///      and the stateless part of the gates moved to a separately deployed `AttestationVerifier`
+    ///      that the implementation takes as a constructor immutable. No storage moved; the new event is
+    ///      additive. Installs over a live 4.x proxy with a plain `upgradeToAndCall` once the verifier is
+    ///      deployed on that chain (`script/UpgradeCalldata.s.sol` does both).
     function version() external pure virtual returns (string memory) {
-        return "4.3.0";
+        return "4.4.0";
     }
 
     function _msgSender() internal view override(ContextUpgradeable, ERC2771ContextUpgradeable) returns (address) {

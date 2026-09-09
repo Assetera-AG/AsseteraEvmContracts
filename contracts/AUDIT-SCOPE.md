@@ -48,6 +48,14 @@ GateStorage ─ KycGate ─ FeeGate ─────────────┴�
 enumerated in the secondary document because that is where they were written. **A finding in any of them
 lands on both proxies**, and a per-surface engagement should say so explicitly in the finding.
 
+**One contract is deployed on its own and called by both implementations:** `src/gates/AttestationVerifier.sol`
+(interface `src/interfaces/IAttestationVerifier.sol`). It holds the stateless part of the gates — attestation
+field checks, EIP-712 struct hash and digest, ECDSA recovery, fee bounds and denomination — and is reached by
+STATICCALL through an immutable each implementation takes in its constructor, exactly like the ERC-2771
+forwarder. It reads no storage; the gates keep every storage-backed fact (gating enabled, nonce spent, role
+held, collector allowlisted) and pass the answers in. It exists because the exchange sits at the EIP-170 size
+limit. **A finding in it lands on both proxies**, and its address is part of every implementation's initcode.
+
 ## Audit target (frozen commit)
 
 Please audit a **single frozen commit**. We tag a dedicated release for the engagement (e.g. `audit-v1`);
@@ -196,7 +204,7 @@ This is the first thing an auditor will ask about, so it is stated here rather t
 | | Secondary (`AsseteraECS`) | Primary (`AsseteraPrimarySales`) |
 |---|---|---|
 | Balance-delta accounting | **Yes, since 4.2.0.** Every pull goes through `src/core/EscrowPull.sol`, which measures this contract's balance before and after `safeTransferFrom` | **Yes.** `VenueSettler` snapshots its own balances and the buyer's asset balance, and measures deltas across the venue call |
-| Fee-on-transfer token | **Absorbed on an order, refused on an offer.** An order opens with the quantity that arrived and emits `OrderEscrowShort`; an offer reverts `EscrowPullShort(requested, received)` because its legs are a negotiated pair. The pool always equals the sum of its claims — exchange finding **M-1**, fixed 2026-09-08 | **Refused on-chain.** `SettlementPullMismatch(requested, received)` if the pull delivers anything other than the exact amount |
+| Fee-on-transfer token | **Credited where a party escrows ahead of a trade, refused where a party delivers at the moment of a trade.** An order opens with the quantity that arrived and emits `OrderEscrowShort`; an offer proposer's asset leg is booked the same way and emits `OfferEscrowShort` (4.4.0). The accepting leg, the asset on a buy-side fill (routed through the exchange since 4.3.0) and a proposer's currency leg revert `EscrowPullShort(requested, received)`. The pool always equals the sum of its claims — exchange finding **M-1**, fixed 2026-09-08 and 2026-09-09 | **Refused on-chain.** `SettlementPullMismatch(requested, received)` if the pull delivers anything other than the exact amount |
 | Enforcement of the policy | **On-chain for the pull; policy for rebasing.** Token addresses are also bound into the signed `paramsHash`, so the backend decides what can enter escrow. No on-chain tradable-token allowlist | On-chain for the currency leg; the zero-standing-balance assertion covers the asset leg |
 | Freezable / blacklistable (USDC) | **Supported but hazardous** — escrow can be stranded (finding L-1) | **Supported but hazardous** |
 

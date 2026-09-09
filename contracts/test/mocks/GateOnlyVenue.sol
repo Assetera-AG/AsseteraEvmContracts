@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {GateStorage} from "../../src/gates/GateStorage.sol";
 import {FeeGate} from "../../src/gates/FeeGate.sol";
 
 /// @notice A contract that uses the compliance and fee gates and NOTHING else — no orders, no
@@ -29,7 +30,7 @@ contract GateOnlyVenue is Initializable, FeeGate {
     uint8 public constant ACTION_FORGOTTEN = 2;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
+    constructor(address attestationVerifier) GateStorage(attestationVerifier) {
         _disableInitializers();
     }
 

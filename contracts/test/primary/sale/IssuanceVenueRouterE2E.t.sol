@@ -13,6 +13,7 @@ import {FaucetToken} from "../../mocks/FaucetToken.sol";
 import {IssuerAssetToken} from "./mocks/IssuanceVenueMocks.sol";
 import {GateTypes} from "../../../src/types/GateTypes.sol";
 import {PrimarySalesTestBase} from "../PrimarySalesTestBase.sol";
+import {AttestationVerifier} from "../../../src/gates/AttestationVerifier.sol";
 
 /// @title IssuanceVenueRouterE2ETest
 /// @notice 🔴 **The acceptance criterion for this whole packet**: one real primary sale, end to
@@ -63,7 +64,7 @@ contract IssuanceVenueRouterE2ETest is PrimarySalesTestBase {
         rwa = new IssuerAssetToken("Mock Tokenised RWA", "mRWA", issuer);
 
         // The real router, freshly deployed, not a harness.
-        AsseteraPrimarySales impl = new AsseteraPrimarySales(address(forwarder));
+        AsseteraPrimarySales impl = new AsseteraPrimarySales(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData =
             abi.encodeCall(AsseteraPrimarySales.initialize, (admin, kycSigner, feeSigner, settlementSigner));
         live = AsseteraPrimarySales(address(new ERC1967Proxy(address(impl), initData)));

@@ -11,6 +11,7 @@ import {GateStorage} from "../src/gates/GateStorage.sol";
 import {IKycGate} from "../src/interfaces/IKycGate.sol";
 import {IFeeGate} from "../src/interfaces/IFeeGate.sol";
 import {FaucetToken} from "./mocks/FaucetToken.sol";
+import {AttestationVerifier} from "../src/gates/AttestationVerifier.sol";
 
 // =========================================================================================== //
 //                        THE CROSS-REPO paramsHash VECTORS — READ THIS                        //
@@ -347,7 +348,7 @@ contract ParamsHashVectorsOnChainTest is Test {
         deployCodeTo("FaucetToken.sol:FaucetToken", abi.encode("Vector Token B", "VTB", uint8(18)), TOKEN_B);
 
         ERC2771Forwarder forwarder = new ERC2771Forwarder("AsseteraForwarder");
-        AsseteraECS impl = new AsseteraECS(address(forwarder));
+        AsseteraECS impl = new AsseteraECS(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData =
             abi.encodeCall(AsseteraECS.initialize, (admin, vm.addr(kycSignerPk), vm.addr(feeSignerPk)));
         exchange = AsseteraECS(address(new ERC1967Proxy(address(impl), initData)));
@@ -595,7 +596,7 @@ contract EIP712DigestVectorsTest is Test {
         // The venue's ADDRESS is in the domain separator, so it has to live at the pinned one.
         // No trusted forwarder: the digests do not depend on it, and leaving it zero keeps the
         // fixture to exactly the values that are pinned.
-        AsseteraECS impl = new AsseteraECS(address(0));
+        AsseteraECS impl = new AsseteraECS(address(0), address(new AttestationVerifier()));
         bytes memory initData =
             abi.encodeCall(AsseteraECS.initialize, (admin, vm.addr(kycSignerPk), vm.addr(feeSignerPk)));
         deployCodeTo("ERC1967Proxy.sol:ERC1967Proxy", abi.encode(address(impl), initData), VENUE);

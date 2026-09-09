@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {GateTypes} from "../types/GateTypes.sol";
+import {IAttestationVerifier} from "../interfaces/IAttestationVerifier.sol";
 
 /// @title GateStorage
 /// @notice Universal base of the attestation gates: their state, the OZ
@@ -26,6 +27,23 @@ import {GateTypes} from "../types/GateTypes.sol";
 ///         shares this base without either contract constraining the other, and
 ///         no `__gap` is needed here — the struct can grow in place.
 abstract contract GateStorage is GateTypes, AccessControlUpgradeable, EIP712Upgradeable {
+    /// @dev The attestation verifier (see `AttestationVerifier`). Immutable, so it lives in
+    ///      the implementation's bytecode and not in the proxy's storage; an upgrade that
+    ///      replaces the verifier is an implementation redeploy with a new constructor
+    ///      argument, the same as a forwarder change.
+    ///
+    ///      No getter and no zero check, on purpose: the exchange has no bytecode to spare.
+    ///      A wrong or empty verifier makes every gated action revert on the first call,
+    ///      which the test suite and the post-deploy verify script both exercise; the
+    ///      verify script reads the address back out of the implementation's code.
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
+    IAttestationVerifier internal immutable _ATTESTATION_VERIFIER;
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(address verifier_) {
+        _ATTESTATION_VERIFIER = IAttestationVerifier(verifier_);
+    }
+
     // --------------------------------------------------------------------- //
     //                       Namespaced gate state                            //
     // --------------------------------------------------------------------- //
