@@ -44,10 +44,14 @@ const deployments = {
   AsseteraPrimarySales: addressesByChain("AsseteraPrimarySales"),
 };
 
+// `forge build` runs in the `generate` script, not inside the plugin. The plugin captures the build's
+// output through a 1 MB pipe (execSync with stdio "pipe"), and forge 1.8.1 stable overflowed it in CI
+// ("spawnSync /bin/sh ENOBUFS") with nothing in the log to say why. Building first puts the output in
+// the terminal and leaves the plugin to read artifacts only.
 export default defineConfig([
   {
     out: "src/generated/contracts.ts",
-    plugins: [foundry({ project: "../../contracts", forge: { build: true }, include, deployments })],
+    plugins: [foundry({ project: "../../contracts", forge: { build: false }, include, deployments })],
   },
   {
     out: "src/generated/react.ts",
