@@ -25,6 +25,7 @@ import {ExchangeExemptFeeToken} from "./mocks/ExchangeExemptFeeToken.sol";
 import {RebasingToken} from "./mocks/RebasingToken.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
+import {AttestationVerifier} from "../src/gates/AttestationVerifier.sol";
 
 contract AsseteraECSTest is Test {
     AsseteraECS internal exchange;
@@ -85,7 +86,7 @@ contract AsseteraECSTest is Test {
         rwa = new FaucetToken("Mock RWA Token", "mRWA", 18);
         forwarder = new ERC2771Forwarder("AsseteraForwarder");
 
-        AsseteraECS impl = new AsseteraECS(address(forwarder));
+        AsseteraECS impl = new AsseteraECS(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData = abi.encodeCall(AsseteraECS.initialize, (admin, kycSigner, feeSigner));
         exchange = AsseteraECS(address(new ERC1967Proxy(address(impl), initData)));
 
@@ -313,7 +314,7 @@ contract AsseteraECSTest is Test {
         // OPERATOR_ROLE is parked (AC-246) — not granted, no getter to assert against.
         assertTrue(exchange.hasRole(KYC_OPERATOR_ROLE, kycSigner));
         assertTrue(exchange.hasRole(FEE_OPERATOR_ROLE, feeSigner));
-        assertEq(exchange.version(), "4.3.0");
+        assertEq(exchange.version(), "4.4.0");
         assertEq(exchange.trustedForwarder(), address(forwarder));
     }
 
@@ -334,14 +335,14 @@ contract AsseteraECSTest is Test {
     }
 
     function test_Initialize_RevertsOnZeroKycSigner() public {
-        AsseteraECS impl = new AsseteraECS(address(forwarder));
+        AsseteraECS impl = new AsseteraECS(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData = abi.encodeCall(AsseteraECS.initialize, (admin, address(0), feeSigner));
         vm.expectRevert(GateStorage.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initData);
     }
 
     function test_Initialize_RevertsOnZeroFeeSigner() public {
-        AsseteraECS impl = new AsseteraECS(address(forwarder));
+        AsseteraECS impl = new AsseteraECS(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData = abi.encodeCall(AsseteraECS.initialize, (admin, kycSigner, address(0)));
         vm.expectRevert(GateStorage.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initData);
@@ -1046,7 +1047,7 @@ contract AsseteraECSTest is Test {
 
     function test_Upgrade_PreservesStateAndForwarder() public {
         uint256 id = _placeRwaForUsdc(alice);
-        AsseteraECSV2 implV2 = new AsseteraECSV2(address(forwarder));
+        AsseteraECSV2 implV2 = new AsseteraECSV2(address(forwarder), address(new AttestationVerifier()));
         vm.prank(admin);
         exchange.upgradeToAndCall(address(implV2), "");
 
@@ -1113,7 +1114,7 @@ contract AsseteraECSTest is Test {
         ExchangeTypes.Offer memory snapOffer = exchange.getOffer(offerId);
 
         // ---- 3. Upgrade the implementation --------------------------------- //
-        AsseteraECSV2 implV2 = new AsseteraECSV2(address(forwarder));
+        AsseteraECSV2 implV2 = new AsseteraECSV2(address(forwarder), address(new AttestationVerifier()));
         vm.prank(admin);
         exchange.upgradeToAndCall(address(implV2), "");
         AsseteraECSV2 v2 = AsseteraECSV2(address(exchange));
@@ -1173,7 +1174,7 @@ contract AsseteraECSTest is Test {
     }
 
     function test_Upgrade_RevertsIfNotAdmin() public {
-        AsseteraECSV2 implV2 = new AsseteraECSV2(address(forwarder));
+        AsseteraECSV2 implV2 = new AsseteraECSV2(address(forwarder), address(new AttestationVerifier()));
         vm.prank(operator);
         vm.expectRevert(
             abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", operator, ADMIN_ROLE)
@@ -1277,7 +1278,7 @@ contract AsseteraECSTest is Test {
     // ===================================================================== //
 
     function test_Initialize_RevertsOnZeroAdmin() public {
-        AsseteraECS impl = new AsseteraECS(address(forwarder));
+        AsseteraECS impl = new AsseteraECS(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData = abi.encodeCall(AsseteraECS.initialize, (address(0), kycSigner, feeSigner));
         vm.expectRevert(GateStorage.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initData);

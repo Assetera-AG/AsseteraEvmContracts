@@ -54,6 +54,19 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin, EscrowPull {
     /// @param remainingQuantity The order's remaining quantity AFTER the draw.
     event OrderEscrowDrawn(uint256 indexed orderId, uint256 indexed offerId, uint256 drawn, uint256 remainingQuantity);
 
+    /// @notice The proposer's asset leg arrived short of what `makeOffer` or `replaceOffer` asked the
+    ///         token to move, and the offer was booked with what arrived (4.4.0). Follows `OfferMade`
+    ///         or `OfferReplaced` for the same id in the same transaction, and is emitted only then.
+    ///         A consumer takes the proposer's leg from `credited` when this event is present.
+    /// @param legToken  The proposer's leg. Equal to the offer's `makerToken` when the maker proposed,
+    ///                  `takerToken` when the taker did; that leg's stored amount is now `credited`.
+    /// @param requested What the contract asked the token to move out of the proposer's wallet.
+    /// @param received  The measured balance delta.
+    /// @param credited  The leg as booked: what the linked order funded plus what arrived.
+    event OfferEscrowShort(
+        uint256 indexed id, address indexed legToken, uint256 requested, uint256 received, uint256 credited
+    );
+
     /// @notice An accepted offer consumed the order it was raised against, which is now `Filled`
     ///         and no longer fillable by anyone else (AO-746).
     /// @param refunded Everything the order still held, returned to its maker, in `sellToken`:
@@ -139,18 +152,6 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin, EscrowPull {
         _consumeKycAndFee(maker, uint8(Action.MakeOffer), 0, att, feeAtt);
 
         id = _storeOffer(orderId, maker, taker, makerToken, makerAmount, takerToken, takerAmount, expireTs, feeAtt);
-        // The maker escrows their leg, plus their own fee when that leg is the
-        // settlement currency — they are then the currency payer (AC-833). When the
-        // maker owns the linked order, the leg is already escrowed there (AO-746) and
-        // only the shortfall and the fee come out of their wallet.
-        _escrowLeg(
-            orderId,
-            id,
-            maker,
-            makerToken,
-            makerAmount,
-            _proposerFee(makerToken, makerAmount, feeAtt.feeToken, feeAtt.makerFeeBps)
-        );
         emit OfferMade(
             id,
             maker,
@@ -165,6 +166,21 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin, EscrowPull {
             feeAtt.feeCollector,
             feeAtt.feeToken,
             orderId
+        );
+        // The maker escrows their leg, plus their own fee when that leg is the
+        // settlement currency — they are then the currency payer (AC-833). When the
+        // maker owns the linked order, the leg is already escrowed there (AO-746) and
+        // only the shortfall and the fee come out of their wallet. The leg is booked
+        // as what arrived (4.4.0), after `OfferMade` so the correction follows the
+        // placement in the log.
+        _offers[id].makerAmount = _escrowLeg(
+            orderId,
+            id,
+            maker,
+            makerToken,
+            makerAmount,
+            _proposerFee(makerToken, makerAmount, feeAtt.feeToken, feeAtt.makerFeeBps),
+            true
         );
     }
 
@@ -187,7 +203,8 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin, EscrowPull {
     }
 
     /// @dev Escrow `amount` of `proposer`'s leg plus their `fee`, funding as much of the leg as
-    ///      possible out of the linked order's escrow rather than their wallet (AO-746).
+    ///      possible out of the linked order's escrow rather than their wallet (AO-746), and
+    ///      return what was booked.
     ///
     ///      The venue holds ONE pooled balance per token: an order's `remainingQuantity` and an
     ///      offer's escrowed leg are two claims on it, never two piles. So a draw moves no
@@ -206,14 +223,18 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin, EscrowPull {
     ///      restoring the listing. Restoring would have to decide what to do when the order has
     ///      since been cancelled or swept, and a listing that silently reappears is worse than
     ///      one the maker re-lists deliberately.
+    /// @param mayCredit Whether a short asset delivery is booked (a proposal) or refused (an
+    ///                  acceptance).
+    /// @return credited The leg as booked: `amount` when the delivery was whole.
     function _escrowLeg(
         uint256 orderId,
         uint256 offerId,
         address proposer,
         address legToken,
         uint256 amount,
-        uint256 fee
-    ) private {
+        uint256 fee,
+        bool mayCredit
+    ) private returns (uint256 credited) {
         uint256 drawn;
         if (orderId != 0) {
             Order storage ord = _orders[orderId];
@@ -229,16 +250,22 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin, EscrowPull {
                 }
             }
         }
-        // The single point where a proposer's leg enters escrow. Whatever the order funded is
+        // The single point where a party's leg enters escrow. Whatever the order funded is
         // already inside the venue, so only the shortfall and the fee come out of their wallet.
         //
-        // What arrives is measured, and an offer refuses a short delivery rather than crediting
-        // it: the two legs are a negotiated pair, and scaling one of them would settle a trade
-        // neither party agreed to. An order can absorb a shortfall because its price is a ratio
-        // that survives a smaller quantity; an offer cannot.
+        // What arrives is measured. A PROPOSER's asset leg is booked as what arrived (4.4.0):
+        // the counterparty sees the booked amount before accepting, so a smaller leg is a
+        // smaller proposal, not a trade nobody agreed to. Two cases still refuse a short
+        // delivery with `EscrowPullShort`, and both are the rule that a party delivering at the
+        // moment of a trade must arrive whole: the ACCEPTING leg (`mayCredit == false`), and
+        // a proposer's leg that carries a fee, which makes it the settlement currency and its
+        // fee sized on the proposed amount.
         uint256 requested = amount - drawn + fee;
         uint256 received = _pullEscrow(legToken, proposer, requested);
-        if (received < requested) revert EscrowPullShort(requested, received);
+        if (received >= requested) return amount;
+        if (!mayCredit || fee != 0) revert EscrowPullShort(requested, received);
+        credited = drawn + received;
+        emit OfferEscrowShort(offerId, legToken, requested, received, credited);
     }
 
     /// @dev Close the linked order once an accepted offer has consumed it (AO-746). Leaves a
@@ -384,19 +411,24 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin, EscrowPull {
             IERC20(prevTakerToken).safeTransfer(o.taker, prevTakerAmount + prevEscrowedFee);
         }
 
+        emit OfferReplaced(offerId, caller, newMakerAmount, newTakerAmount, expireTs);
+
         // Escrow caller's side at the new amounts, plus their own fee if it's the currency.
         // A caller who owns the linked order funds their leg from it (AO-746), so countering
-        // your own listing no longer needs a second copy of the asset in your wallet.
-        _escrowLeg(
+        // your own listing no longer needs a second copy of the asset in your wallet. The
+        // leg is booked as what arrived (4.4.0), after `OfferReplaced` so the correction
+        // follows the proposal in the log.
+        uint256 credited = _escrowLeg(
             o.orderId,
             offerId,
             caller,
             callerIsMaker ? o.makerToken : o.takerToken,
             callerIsMaker ? newMakerAmount : newTakerAmount,
-            newEscrowedFee
+            newEscrowedFee,
+            true
         );
-
-        emit OfferReplaced(offerId, caller, newMakerAmount, newTakerAmount, expireTs);
+        if (callerIsMaker) o.makerAmount = credited;
+        else o.takerAmount = credited;
     }
 
     /// @notice Either party cancels the offer while it is Open or Countered.
@@ -515,7 +547,8 @@ abstract contract OfferBook is KycGate, FeeGate, ExchangeAdmin, EscrowPull {
             caller,
             acceptorIsTaker ? takerToken : makerToken,
             acceptorIsTaker ? takerAmount : makerAmount,
-            acceptorIsTaker ? (makerLegIsCurrency ? 0 : takerFeeAmount) : (makerLegIsCurrency ? makerFeeAmount : 0)
+            acceptorIsTaker ? (makerLegIsCurrency ? 0 : takerFeeAmount) : (makerLegIsCurrency ? makerFeeAmount : 0),
+            false
         );
 
         // Release: currency net to its receiver, both fees to the collector, asset gross.

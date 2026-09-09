@@ -10,6 +10,7 @@ import {GateStorage} from "../../src/gates/GateStorage.sol";
 import {ISettlementLimits} from "../../src/primary/interfaces/ISettlementLimits.sol";
 import {PrimarySalesHarness} from "./mocks/PrimarySalesHarness.sol";
 import {PrimarySalesTestBase} from "./PrimarySalesTestBase.sol";
+import {AttestationVerifier} from "../../src/gates/AttestationVerifier.sol";
 
 /// @notice `AsseteraPrimarySales` with the settlement seam filled by a stub that moves nothing,
 ///         plus the internal hook exposed for direct assertion.
@@ -37,7 +38,9 @@ contract SettlementCapsHarness is AsseteraPrimarySales {
     uint256 public constant STUB_REFUND = 10e6;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address trustedForwarder) AsseteraPrimarySales(trustedForwarder) {}
+    constructor(address trustedForwarder, address attestationVerifier)
+        AsseteraPrimarySales(trustedForwarder, attestationVerifier)
+    {}
 
     /// @dev Moves no tokens and charges nothing: the cap has already been charged by the shared
     ///      preamble by the time a family runs. Reports the four numbers the entry point puts
@@ -99,7 +102,7 @@ abstract contract SettlementLimitsTestBase is PrimarySalesTestBase {
         _mockDecimals(CURRENCY, 6);
         _mockDecimals(CURRENCY_18, 18);
 
-        SettlementCapsHarness impl = new SettlementCapsHarness(address(forwarder));
+        SettlementCapsHarness impl = new SettlementCapsHarness(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData =
             abi.encodeCall(AsseteraPrimarySales.initialize, (admin, kycSigner, feeSigner, settlementSigner));
         caps = SettlementCapsHarness(address(new ERC1967Proxy(address(impl), initData)));

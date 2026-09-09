@@ -85,6 +85,8 @@ contract Verify is Script {
         _check("version() readable", bytes(ver).length > 0, "  version() reverted");
         console2.log("  version:", ver);
 
+        _verifyAttestationVerifier(json, "exchange", liveImpl);
+
         bytes32 adminRole = exchange.DEFAULT_ADMIN_ROLE();
         _check(
             "recorded admin holds DEFAULT_ADMIN_ROLE",
@@ -163,6 +165,8 @@ contract Verify is Script {
         string memory ver = router.version();
         _check("primary version() readable", bytes(ver).length > 0, "  version() reverted");
         console2.log("  version:", ver);
+
+        _verifyAttestationVerifier(json, "primary", liveImpl);
 
         bytes32 adminRole = router.DEFAULT_ADMIN_ROLE();
         _check(
@@ -270,6 +274,40 @@ contract Verify is Script {
                 "  NOT allowlisted - a fee naming this recipient is refused"
             );
         }
+    }
+
+    /// @dev The recorded attestation verifier must hold code and must be the one baked into the live
+    ///      implementation. The implementation exposes no getter (bytecode headroom), so the address is
+    ///      looked up as an immutable in the implementation's runtime code: a 20-byte needle that occurs
+    ///      once per use site. An implementation older than the verifier does not contain it, which is
+    ///      the right outcome for a record that claims otherwise.
+    function _verifyAttestationVerifier(string memory json, string memory label, address impl) private {
+        string memory key = ".contracts.AttestationVerifier";
+        bool recorded = vm.keyExistsJson(json, key);
+        _check(string.concat(label, " attestation verifier recorded"), recorded, "  no contracts.AttestationVerifier");
+        if (!recorded) return;
+        address expected = json.readAddress(key);
+        _check(string.concat(label, " attestation verifier has code"), expected.code.length > 0, "  empty account");
+        _check(
+            string.concat(label, " impl code contains the recorded verifier"),
+            _codeContains(impl.code, expected),
+            "  the live implementation was not built against the recorded verifier"
+        );
+    }
+
+    /// @dev Whether `code` contains the 20 bytes of `needle`.
+    function _codeContains(bytes memory code, address needle) private pure returns (bool) {
+        bytes20 n = bytes20(needle);
+        if (code.length < 20) return false;
+        for (uint256 i = 0; i + 20 <= code.length; i++) {
+            bytes20 window;
+            // solhint-disable-next-line no-inline-assembly
+            assembly {
+                window := mload(add(add(code, 0x20), i))
+            }
+            if (window == n) return true;
+        }
+        return false;
     }
 
     /// @dev Read the ERC-1967 implementation slot of a proxy.

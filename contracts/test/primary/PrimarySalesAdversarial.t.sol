@@ -22,6 +22,7 @@ import {
     TruthyWallet
 } from "./mocks/HostileWallets.sol";
 import {VenueSettlerTestBase} from "./VenueSettlerTestBase.sol";
+import {AttestationVerifier} from "../../src/gates/AttestationVerifier.sol";
 
 /// @title PrimarySalesReplayTest
 /// @notice 🔴 Replay, on every axis a settlement can be moved along: the same intent again, the
@@ -394,7 +395,7 @@ contract PrimarySalesReplayTest is VenueSettlerTestBase {
     // ── fixtures ──────────────────────────────────────────────────────────────────────────
 
     function _deployTwin() internal returns (AsseteraPrimarySales) {
-        AsseteraPrimarySales impl = new AsseteraPrimarySales(address(forwarder));
+        AsseteraPrimarySales impl = new AsseteraPrimarySales(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData =
             abi.encodeCall(AsseteraPrimarySales.initialize, (admin, kycSigner, feeSigner, settlementSigner));
         AsseteraPrimarySales twin = AsseteraPrimarySales(address(new ERC1967Proxy(address(impl), initData)));
@@ -404,7 +405,7 @@ contract PrimarySalesReplayTest is VenueSettlerTestBase {
     }
 
     function _deployExchange() internal returns (AsseteraECS) {
-        AsseteraECS impl = new AsseteraECS(address(forwarder));
+        AsseteraECS impl = new AsseteraECS(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData = abi.encodeCall(AsseteraECS.initialize, (admin, kycSigner, feeSigner));
         AsseteraECS exchange = AsseteraECS(address(new ERC1967Proxy(address(impl), initData)));
         vm.prank(admin);
@@ -633,7 +634,7 @@ contract PrimarySalesBuyerConsentReplayTest is VenueSettlerTestBase {
     /// because the verifying contract is inside the digest the buyer signed. A signature
     /// harvested from a staging router is not a consent on production.
     function test_BuyerConsent_ASignatureForOneProxyDoesNotAuthoriseTheSameTermsOnAnother() public {
-        AsseteraPrimarySales impl = new AsseteraPrimarySales(address(forwarder));
+        AsseteraPrimarySales impl = new AsseteraPrimarySales(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData =
             abi.encodeCall(AsseteraPrimarySales.initialize, (admin, kycSigner, feeSigner, settlementSigner));
         AsseteraPrimarySales twin = AsseteraPrimarySales(address(new ERC1967Proxy(address(impl), initData)));

@@ -125,6 +125,7 @@ abstract contract DeployBase is CreateXScript {
     address internal primarySalesProxy;
     address internal primarySalesImpl;
     address internal forwarder;
+    address internal attestationVerifier;
     address internal usdc;
     address internal rwa;
     address internal kycSigner;
@@ -251,6 +252,7 @@ abstract contract DeployBase is CreateXScript {
         if (usdc != address(0)) vm.serializeAddress(c, "MockUSDC", usdc);
         if (rwa != address(0)) vm.serializeAddress(c, "MockRWA", rwa);
         vm.serializeAddress(c, "Forwarder", forwarder);
+        vm.serializeAddress(c, "AttestationVerifier", attestationVerifier);
         vm.serializeAddress(c, "AsseteraPrimarySales", primarySalesProxy);
         string memory cJson = vm.serializeAddress(c, "AsseteraECS", exchangeProxy);
 

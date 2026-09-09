@@ -6,6 +6,7 @@ import {stdJson} from "forge-std/StdJson.sol";
 import {VmSafe} from "forge-std/Vm.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {AsseteraECS} from "../src/AsseteraECS.sol";
+import {AttestationVerifier} from "../src/gates/AttestationVerifier.sol";
 import {AsseteraPrimarySales} from "../src/primary/AsseteraPrimarySales.sol";
 import {DeployBase} from "./DeployBase.sol";
 import {DeploymentFile} from "./DeploymentFile.sol";
@@ -62,11 +63,27 @@ contract UpgradeCalldata is DeployBase {
         address currentImpl = address(uint160(uint256(raw)));
         console2.log("Current impl:", currentImpl);
 
-        // 2. Deploy the new implementation (deployer pays gas for this part).
+        // 2. The attestation verifier the new implementation is built against. Reuse the recorded one when
+        //    the record has it; otherwise deploy it the way `Deploy.s.sol` does (CREATE2 keyed on its own
+        //    initcode, salt scoped to the recorded deployer, so the broadcaster must BE that deployer or
+        //    CreateX refuses). A record without the key is the pre-verifier shape, which is expected on the
+        //    first upgrade that introduces it.
+        string memory verifierKey = ".contracts.AttestationVerifier";
+        address verifier = vm.keyExistsJson(json, verifierKey) ? json.readAddress(verifierKey) : address(0);
+        bool verifierCreated;
+
+        // 3. Deploy the new implementation (deployer pays gas for this part).
         vm.startBroadcast();
-        address newImpl =
-            isPrimary ? address(new AsseteraPrimarySales(forwarderAddr)) : address(new AsseteraECS(forwarderAddr));
+        if (verifier == address(0)) {
+            address recordedDeployer = json.readAddress(".metadata.deployer");
+            (verifier, verifierCreated) =
+                _deploy2(recordedDeployer, "AttestationVerifier", type(AttestationVerifier).creationCode);
+        }
+        address newImpl = isPrimary
+            ? address(new AsseteraPrimarySales(forwarderAddr, verifier))
+            : address(new AsseteraECS(forwarderAddr, verifier));
         vm.stopBroadcast();
+        console2.log(verifierCreated ? "AttestationVerifier deployed:" : "AttestationVerifier:", verifier);
         console2.log("New impl deployed:", newImpl);
 
         // 🔴 RECORD IT, or the deployment file keeps naming the OLD implementation forever.
@@ -93,10 +110,16 @@ contract UpgradeCalldata is DeployBase {
             console2.log("DRY RUN - the deployment record was NOT modified.");
             console2.log("  would have set:", implKey);
             console2.log("  to:            ", newImpl);
+            if (verifierCreated) {
+                console2.log("  would have set:", verifierKey);
+                console2.log("  to:            ", verifier);
+            }
         } else {
             vm.writeJson(vm.toString(newImpl), path, implKey);
+            if (verifierCreated) vm.writeJson(vm.toString(verifier), path, verifierKey);
             console2.log("Deployment record updated:", path);
             console2.log("  %s = %s", implKey, vm.toString(newImpl));
+            if (verifierCreated) console2.log("  %s = %s", verifierKey, vm.toString(verifier));
             console2.log("  NOTE: commit this file, and re-run `npm run generate` so the SDK picks it up.");
         }
 

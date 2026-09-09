@@ -21,6 +21,7 @@ import {
     SilentTransferToken
 } from "./mocks/PrimaryWeirdTokens.sol";
 import {VenueSettlerTestBase} from "./VenueSettlerTestBase.sol";
+import {AttestationVerifier} from "../../src/gates/AttestationVerifier.sol";
 
 /// @title HostileSettlementBase
 /// @notice The fixture the adversarial venue suites share: `VenueSettlerTestBase`'s two real
@@ -1135,7 +1136,7 @@ contract VenueSettlerCapBoundaryTest is HostileSettlementBase {
     function setUp() public virtual override {
         super.setUp();
 
-        AsseteraPrimarySales impl = new AsseteraPrimarySales(address(forwarder));
+        AsseteraPrimarySales impl = new AsseteraPrimarySales(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData =
             abi.encodeCall(AsseteraPrimarySales.initialize, (admin, kycSigner, feeSigner, settlementSigner));
         realCaps = AsseteraPrimarySales(address(new ERC1967Proxy(address(impl), initData)));

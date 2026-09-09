@@ -7,6 +7,7 @@ import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.s
 import {ERC2771Forwarder} from "@openzeppelin/contracts/metatx/ERC2771Forwarder.sol";
 import {DeployBase} from "./DeployBase.sol";
 import {AsseteraECS} from "../src/AsseteraECS.sol";
+import {AttestationVerifier} from "../src/gates/AttestationVerifier.sol";
 import {AsseteraPrimarySales} from "../src/primary/AsseteraPrimarySales.sol";
 import {FaucetToken} from "../test/mocks/FaucetToken.sol";
 
@@ -86,6 +87,16 @@ contract Deploy is DeployBase {
         );
         console2.log(created ? "Forwarder deployed:" : "Forwarder reused: ", forwarder);
 
+        // 1b. Attestation verifier — the stateless contract both implementations check attestations
+        //     with, wired in as a constructor immutable like the forwarder. CREATE2 keyed on its own
+        //     initcode: unchanged verifier bytecode maps to the same address, so a re-run reuses it, and a
+        //     changed verifier yields a new address, which changes both implementations' initcode and
+        //     therefore rolls both of them (the upgrade path below). Deployed before the implementations
+        //     because its address is part of theirs.
+        (attestationVerifier, created) =
+            _deploy2(deployer, "AttestationVerifier", type(AttestationVerifier).creationCode);
+        console2.log(created ? "AttestationVerifier deployed:" : "AttestationVerifier reused: ", attestationVerifier);
+
         // 2. Faucet tokens — CREATE3 stable addresses. Testnet-only (see `deployMocks` above); left
         //    unset (address(0), omitted from the deployment record) on chains where they don't deploy.
         if (deployMocks) {
@@ -110,7 +121,9 @@ contract Deploy is DeployBase {
         //    below). The forwarder is baked in as an immutable; the impl address is not consumer-facing.
         //    ⚠️ The salt label below is FROZEN from the first deploy that uses it — see the proxy salt note.
         (exchangeImpl, created) = _deploy2(
-            deployer, "AsseteraECS.impl", abi.encodePacked(type(AsseteraECS).creationCode, abi.encode(forwarder))
+            deployer,
+            "AsseteraECS.impl",
+            abi.encodePacked(type(AsseteraECS).creationCode, abi.encode(forwarder, attestationVerifier))
         );
         console2.log(created ? "AsseteraECS impl deployed:" : "AsseteraECS impl reused: ", exchangeImpl);
 
@@ -156,11 +169,12 @@ contract Deploy is DeployBase {
         }
 
         // 5. Primary-sales implementation — CREATE2 keyed on the initcode, exactly as the exchange impl
-        //    above. Same forwarder immutable, so the two share one ERC-2771 trust root.
+        //    above. Same forwarder and verifier immutables, so the two share one ERC-2771 trust root and one
+        //    attestation verifier.
         (primarySalesImpl, created) = _deploy2(
             deployer,
             "AsseteraPrimarySales.impl",
-            abi.encodePacked(type(AsseteraPrimarySales).creationCode, abi.encode(forwarder))
+            abi.encodePacked(type(AsseteraPrimarySales).creationCode, abi.encode(forwarder, attestationVerifier))
         );
         console2.log(
             created ? "AsseteraPrimarySales impl deployed:" : "AsseteraPrimarySales impl reused: ", primarySalesImpl

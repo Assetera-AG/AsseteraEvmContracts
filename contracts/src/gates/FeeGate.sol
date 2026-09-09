@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {AttestationSig} from "../libs/AttestationSig.sol";
 import {KycGate} from "./KycGate.sol";
 import {IFeeGate} from "../interfaces/IFeeGate.sol";
 
@@ -54,7 +53,7 @@ abstract contract FeeGate is KycGate, IFeeGate {
     ///      remains reachable the honest way: the fee service signs `makerFeeBps ==
     ///      takerFeeBps == 0` (`_validateFees` explicitly permits that, collector included).
     function _verifyFee(address account, uint8 action, FeeAttestation calldata att) internal view {
-        address signer = AttestationSig.verifyFee(_domainSeparatorV4(), account, action, MAX_FEE_TTL, att);
+        address signer = _ATTESTATION_VERIFIER.verifyFee(_domainSeparatorV4(), account, action, MAX_FEE_TTL, att);
         if (usedFeeNonce(account, att.nonce)) revert FeeNonceUsed();
         if (!hasRole(FEE_OPERATOR_ROLE, signer)) revert FeeBadSigner();
     }

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {AttestationSig} from "../libs/AttestationSig.sol";
 import {GateStorage} from "./GateStorage.sol";
 import {IKycGate} from "../interfaces/IKycGate.sol";
 
@@ -47,7 +46,7 @@ abstract contract KycGate is GateStorage, IKycGate {
     ///      attestations can be verified before either nonce is burned.
     function _verifyKyc(address account, uint8 action, uint256 orderId, KycAttestation calldata att) internal view {
         if (!complianceRequired(action)) return;
-        address signer = AttestationSig.verifyKyc(
+        address signer = _ATTESTATION_VERIFIER.verifyKyc(
             _domainSeparatorV4(), account, action, orderId, _paramsHashAllowed(action), MAX_KYC_TTL, att
         );
         if (usedNonce(account, att.nonce)) revert KycNonceUsed();
