@@ -21,6 +21,7 @@ import {AsseteraECSV2} from "./mocks/AsseteraECSV2.sol";
 import {ReentrantToken} from "./mocks/ReentrantToken.sol";
 import {DivergentDomainToken} from "./mocks/DivergentDomainToken.sol";
 import {FeeOnTransferToken} from "./mocks/FeeOnTransferToken.sol";
+import {ExchangeExemptFeeToken} from "./mocks/ExchangeExemptFeeToken.sol";
 import {RebasingToken} from "./mocks/RebasingToken.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
@@ -312,7 +313,7 @@ contract AsseteraECSTest is Test {
         // OPERATOR_ROLE is parked (AC-246) — not granted, no getter to assert against.
         assertTrue(exchange.hasRole(KYC_OPERATOR_ROLE, kycSigner));
         assertTrue(exchange.hasRole(FEE_OPERATOR_ROLE, feeSigner));
-        assertEq(exchange.version(), "4.2.0");
+        assertEq(exchange.version(), "4.3.0");
         assertEq(exchange.trustedForwarder(), address(forwarder));
     }
 
@@ -1049,7 +1050,7 @@ contract AsseteraECSTest is Test {
         vm.prank(admin);
         exchange.upgradeToAndCall(address(implV2), "");
 
-        assertEq(exchange.version(), "4.3.0");
+        assertEq(exchange.version(), "4.4.0");
         assertTrue(AsseteraECSV2(address(exchange)).isUpgraded());
         assertEq(exchange.getOrder(id).maker, alice);
         assertEq(exchange.trustedForwarder(), address(forwarder));
@@ -1116,7 +1117,7 @@ contract AsseteraECSTest is Test {
         vm.prank(admin);
         exchange.upgradeToAndCall(address(implV2), "");
         AsseteraECSV2 v2 = AsseteraECSV2(address(exchange));
-        assertEq(v2.version(), "4.3.0", "impl not swapped");
+        assertEq(v2.version(), "4.4.0", "impl not swapped");
         assertTrue(v2.isUpgraded(), "V2 logic not live");
 
         // ---- 4. Every pre-upgrade slot survived unchanged ------------------ //
@@ -3930,6 +3931,59 @@ contract AsseteraECSTest is Test {
             abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, address(exchange), 800e18, 1_000e18)
         );
         exchange.cancelOrder(bobId);
+    }
+
+    function test_TokenSafety_FeeOnTransfer_BuySideAssetRoutedThroughExemptExchange() public {
+        // The asset a buy order receives moves seller -> exchange -> maker, not seller -> maker.
+        // When the token exempts the exchange (as OilXCoin does), both hops are untaxed and the
+        // maker receives the full amount. Before the routing fix, the single seller -> maker
+        // transfer was taxed even with the exemption, because the exchange was not on it.
+        ExchangeExemptFeeToken fot = new ExchangeExemptFeeToken("Exempt Fee", "XFT", 100, address(exchange));
+        uint256 usdcAmt = 1_000e6;
+        uint256 fotWant = 100e18;
+        usdc.mint(alice, usdcAmt);
+        fot.mint(bob, fotWant);
+
+        AsseteraECS.KycAttestation memory att = _attestPlace(alice, address(usdc), usdcAmt, address(fot), fotWant);
+        AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(usdc), usdcAmt, address(fot), fotWant);
+        vm.startPrank(alice);
+        usdc.approve(address(exchange), usdcAmt);
+        uint256 id = exchange.placeOrder(address(usdc), usdcAmt, address(fot), fotWant, 0, att, feeAtt);
+        vm.stopPrank();
+
+        uint256 bobUsdcBefore = usdc.balanceOf(bob);
+        vm.startPrank(bob);
+        fot.approve(address(exchange), fotWant);
+        exchange.fillOrder(id, usdcAmt, _attest(bob, ExchangeTypes.Action.Fill, id));
+        vm.stopPrank();
+
+        assertEq(fot.balanceOf(alice), fotWant, "maker receives the asset gross");
+        assertEq(fot.balanceOf(address(exchange)), 0, "asset only transits the exchange");
+        assertEq(usdc.balanceOf(bob) - bobUsdcBefore, usdcAmt, "taker receives the currency");
+    }
+
+    function test_TokenSafety_FeeOnTransfer_BuySideFillRefusesTaxedAsset() public {
+        // A token that taxes everyone cannot deliver the full asset the maker's buy order asked
+        // for. The fill is refused rather than handing the maker less than agreed.
+        FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 100); // 1%, no exemption
+        uint256 usdcAmt = 1_000e6;
+        uint256 fotWant = 100e18;
+        usdc.mint(alice, usdcAmt);
+        fot.mint(bob, fotWant);
+
+        AsseteraECS.KycAttestation memory att = _attestPlace(alice, address(usdc), usdcAmt, address(fot), fotWant);
+        AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(usdc), usdcAmt, address(fot), fotWant);
+        vm.startPrank(alice);
+        usdc.approve(address(exchange), usdcAmt);
+        uint256 id = exchange.placeOrder(address(usdc), usdcAmt, address(fot), fotWant, 0, att, feeAtt);
+        vm.stopPrank();
+
+        uint256 arrived = fotWant - (fotWant * 100) / 10_000;
+        vm.startPrank(bob);
+        fot.approve(address(exchange), fotWant);
+        vm.expectRevert(abi.encodeWithSelector(EscrowPull.EscrowPullShort.selector, fotWant, arrived));
+        exchange.fillOrder(id, usdcAmt, _attest(bob, ExchangeTypes.Action.Fill, id));
+        vm.stopPrank();
     }
 
     function test_TokenSafety_FeeOnTransfer_MakeOfferRefusesShortDelivery() public {

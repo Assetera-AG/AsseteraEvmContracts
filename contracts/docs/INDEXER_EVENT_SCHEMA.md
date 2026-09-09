@@ -462,6 +462,8 @@ event OrderFilled(uint256 indexed id, address indexed maker, address indexed tak
 
 ⚠️ An earlier revision of this section deducted `makerFeeAmount` from the buy leg **and** `takerFeeAmount` from the sell leg on every fill. That reading predates AC-833 and only ever held when both legs happened to be the settlement currency.
 
+**On a buy-side fill (`feeToken == sellToken`) the asset leg is routed THROUGH the exchange (4.3.0):** the taker's asset is pulled into the exchange and forwarded to the maker in the same call, rather than transferred taker to maker directly. This changes no amount and emits no extra event on a standard token, but it means a token that exempts the exchange from a transfer fee covers this leg too, and a token that taxes it makes the fill revert `EscrowPullShort(requested, received)` rather than delivering the maker short. The `filledBuyAmount` in the event is the amount the maker actually receives.
+
 ---
 
 ### `OrderPartiallyFilled` (partial fill — `remainingQuantity` > 0 after)
