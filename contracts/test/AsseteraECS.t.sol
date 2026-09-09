@@ -312,7 +312,7 @@ contract AsseteraECSTest is Test {
         // OPERATOR_ROLE is parked (AC-246) — not granted, no getter to assert against.
         assertTrue(exchange.hasRole(KYC_OPERATOR_ROLE, kycSigner));
         assertTrue(exchange.hasRole(FEE_OPERATOR_ROLE, feeSigner));
-        assertEq(exchange.version(), "4.1.0");
+        assertEq(exchange.version(), "4.2.0");
         assertEq(exchange.trustedForwarder(), address(forwarder));
     }
 
@@ -1049,7 +1049,7 @@ contract AsseteraECSTest is Test {
         vm.prank(admin);
         exchange.upgradeToAndCall(address(implV2), "");
 
-        assertEq(exchange.version(), "4.1.0");
+        assertEq(exchange.version(), "4.3.0");
         assertTrue(AsseteraECSV2(address(exchange)).isUpgraded());
         assertEq(exchange.getOrder(id).maker, alice);
         assertEq(exchange.trustedForwarder(), address(forwarder));
@@ -1116,7 +1116,7 @@ contract AsseteraECSTest is Test {
         vm.prank(admin);
         exchange.upgradeToAndCall(address(implV2), "");
         AsseteraECSV2 v2 = AsseteraECSV2(address(exchange));
-        assertEq(v2.version(), "4.1.0", "impl not swapped");
+        assertEq(v2.version(), "4.3.0", "impl not swapped");
         assertTrue(v2.isUpgraded(), "V2 logic not live");
 
         // ---- 4. Every pre-upgrade slot survived unchanged ------------------ //
