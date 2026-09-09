@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {AttestationSig} from "../libs/AttestationSig.sol";
 import {GateStorage} from "./GateStorage.sol";
 import {IKycGate} from "../interfaces/IKycGate.sol";
 
@@ -47,19 +47,10 @@ abstract contract KycGate is GateStorage, IKycGate {
     ///      attestations can be verified before either nonce is burned.
     function _verifyKyc(address account, uint8 action, uint256 orderId, KycAttestation calldata att) internal view {
         if (!complianceRequired(action)) return;
-        if (att.account != account) revert KycAccountMismatch();
-        if (att.action != action) revert KycActionMismatch();
-        if (att.orderId != orderId) revert KycOrderMismatch();
-        // paramsHash is only allowed for actions that bind extra parameters; content is checked by callers.
-        if (!_paramsHashAllowed(action) && att.paramsHash != bytes32(0)) revert ParamsHashMismatch();
-        if (block.timestamp > att.deadline) revert KycExpired();
-        if (att.deadline > block.timestamp + MAX_KYC_TTL) revert KycTtlTooLong();
-        if (usedNonce(account, att.nonce)) revert KycNonceUsed();
-
-        bytes32 structHash = keccak256(
-            abi.encode(KYC_TYPEHASH, att.account, att.action, att.orderId, att.nonce, att.deadline, att.paramsHash)
+        address signer = AttestationSig.verifyKyc(
+            _domainSeparatorV4(), account, action, orderId, _paramsHashAllowed(action), MAX_KYC_TTL, att
         );
-        address signer = ECDSA.recover(_hashTypedDataV4(structHash), att.signature);
+        if (usedNonce(account, att.nonce)) revert KycNonceUsed();
         if (!hasRole(KYC_OPERATOR_ROLE, signer)) revert KycBadSigner();
     }
 

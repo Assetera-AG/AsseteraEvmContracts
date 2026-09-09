@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {AttestationSig} from "../libs/AttestationSig.sol";
 import {KycGate} from "./KycGate.sol";
 import {IFeeGate} from "../interfaces/IFeeGate.sol";
 
@@ -54,27 +54,8 @@ abstract contract FeeGate is KycGate, IFeeGate {
     ///      remains reachable the honest way: the fee service signs `makerFeeBps ==
     ///      takerFeeBps == 0` (`_validateFees` explicitly permits that, collector included).
     function _verifyFee(address account, uint8 action, FeeAttestation calldata att) internal view {
-        if (att.account != account) revert FeeAccountMismatch();
-        if (att.action != action) revert FeeActionMismatch();
-        if (block.timestamp > att.deadline) revert FeeExpired();
-        if (att.deadline > block.timestamp + MAX_FEE_TTL) revert FeeTtlTooLong();
+        address signer = AttestationSig.verifyFee(_domainSeparatorV4(), account, action, MAX_FEE_TTL, att);
         if (usedFeeNonce(account, att.nonce)) revert FeeNonceUsed();
-
-        bytes32 structHash = keccak256(
-            abi.encode(
-                FEE_TYPEHASH,
-                att.account,
-                att.action,
-                att.nonce,
-                att.deadline,
-                att.paramsHash,
-                att.makerFeeBps,
-                att.takerFeeBps,
-                att.feeCollector,
-                att.feeToken
-            )
-        );
-        address signer = ECDSA.recover(_hashTypedDataV4(structHash), att.signature);
         if (!hasRole(FEE_OPERATOR_ROLE, signer)) revert FeeBadSigner();
     }
 
