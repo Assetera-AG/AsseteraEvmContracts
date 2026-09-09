@@ -346,8 +346,14 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay, Esc
         // ---- Interactions ---------------------------------------------------- //
         if (makerSellsCurrency) {
             // Buy-side order: maker is the currency payer (already escrowed notional +
-            // fee); taker is the currency receiver. Asset moves gross to the maker.
-            IERC20(o.buyToken).safeTransferFrom(taker, maker, buyAmountDue);
+            // fee); taker is the currency receiver. Asset moves gross to the maker, THROUGH
+            // this contract rather than straight from taker to maker: a token that exempts
+            // the exchange from its transfer fee then covers this leg too, and the delivery
+            // is measured. The maker agreed to receive `buyAmountDue`, so a short delivery is
+            // refused rather than passed on.
+            uint256 got = _pullEscrow(o.buyToken, taker, buyAmountDue);
+            if (got < buyAmountDue) revert EscrowPullShort(buyAmountDue, got);
+            IERC20(o.buyToken).safeTransfer(maker, buyAmountDue);
             IERC20(o.sellToken).safeTransfer(taker, fillSellAmount - takerFeeAmount);
             if (collectorTake > 0) IERC20(o.sellToken).safeTransfer(collector, collectorTake);
             if (feeDust > 0) IERC20(o.sellToken).safeTransfer(maker, feeDust);

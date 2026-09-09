@@ -38,7 +38,15 @@ jobs:
         run: npx --yes solhint@5.2.0 'src/**/*.sol' 'script/**/*.sol' 'test/**/*.sol'
 
       - name: Build
-        run: forge build --sizes
+        # `--sizes` fails the build on any contract over the EIP-170 24,576-byte runtime limit, but
+        # `--skip test/**` excludes the test tree from THIS build so the size check covers only the
+        # contracts that actually deploy (src/ and script/). A test-only upgrade fixture such as
+        # AsseteraECSV2 inherits AsseteraECS plus a little, so it can sit just over the limit while the
+        # real exchange is under it; it is never deployed to a chain, and forge's test VM builds and
+        # deploys it regardless. Gating CI on it blocked a production fix that kept AsseteraECS itself
+        # under the limit. AsseteraECS and AsseteraPrimarySales are in src/ and stay fully size-gated.
+        run: forge build --sizes --skip 'test/**'
+      # The test tree still has to compile; that happens in the test job. This step is the size gate only.
 
       - name: Storage layout (upgrade-safety guard)
         # Fails if EITHER proxy's storage layout drifts from its committed snapshot —

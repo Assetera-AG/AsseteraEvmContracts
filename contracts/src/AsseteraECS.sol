@@ -153,8 +153,13 @@ contract AsseteraECS is ExchangeTypes, Initializable, UUPSUpgradeable, OrderBook
     ///      quantity that actually arrived and emits `OrderEscrowShort` when that is less than it asked
     ///      for; an offer refuses a short delivery with `EscrowPullShort`. No storage moved, no existing
     ///      event changed, so this too installs over a live 4.x proxy with a plain `upgradeToAndCall`.
+    ///
+    ///      MINOR bumped to 4.3.0: a buy-side fill routes the asset leg through the exchange (pull from the
+    ///      taker, forward to the maker) instead of transferring it taker to maker directly, so a token
+    ///      that exempts the exchange from a transfer fee covers this leg too, and a taxed asset reverts
+    ///      the fill rather than delivering the maker short. No storage moved, no event changed.
     function version() external pure virtual returns (string memory) {
-        return "4.2.0";
+        return "4.3.0";
     }
 
     function _msgSender() internal view override(ContextUpgradeable, ERC2771ContextUpgradeable) returns (address) {
