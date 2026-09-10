@@ -14,6 +14,7 @@ import {IIntentGate} from "../../src/primary/interfaces/IIntentGate.sol";
 import {AsseteraECS} from "../../src/AsseteraECS.sol";
 import {ContractWalletBuyer} from "./mocks/ContractWalletBuyer.sol";
 import {PrimarySalesTestBase} from "./PrimarySalesTestBase.sol";
+import {AttestationVerifier} from "../../src/gates/AttestationVerifier.sol";
 
 /// @title PrimarySalesInitTest
 /// @notice What the initializer must have done before a single settlement is possible.
@@ -94,7 +95,7 @@ contract PrimarySalesInitTest is PrimarySalesTestBase {
     }
 
     function test_Initialize_RevertsOnAnyZeroSigner() public {
-        AsseteraPrimarySales impl = new AsseteraPrimarySales(address(forwarder));
+        AsseteraPrimarySales impl = new AsseteraPrimarySales(address(forwarder), address(new AttestationVerifier()));
 
         vm.expectRevert(GateStorage.ZeroAddress.selector);
         new ERC1967Proxy(
@@ -233,7 +234,7 @@ contract PrimarySalesDomainTest is PrimarySalesTestBase {
     }
 
     function _deployExchange() internal returns (AsseteraECS) {
-        AsseteraECS impl = new AsseteraECS(address(forwarder));
+        AsseteraECS impl = new AsseteraECS(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData = abi.encodeCall(AsseteraECS.initialize, (admin, kycSigner, feeSigner));
         return AsseteraECS(address(new ERC1967Proxy(address(impl), initData)));
     }
@@ -1149,7 +1150,7 @@ contract PrimarySalesAdminTest is PrimarySalesTestBase {
     }
 
     function test_Upgrade_OnlyAdmin() public {
-        AsseteraPrimarySales newImpl = new AsseteraPrimarySales(address(forwarder));
+        AsseteraPrimarySales newImpl = new AsseteraPrimarySales(address(forwarder), address(new AttestationVerifier()));
 
         // Read the role BEFORE the prank: it is a call too, and would otherwise consume it.
         bytes32 adminRole = sales.DEFAULT_ADMIN_ROLE();

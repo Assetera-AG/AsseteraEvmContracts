@@ -48,6 +48,14 @@ GateStorage ─ KycGate ─ FeeGate ─────────────┴�
 enumerated in the secondary document because that is where they were written. **A finding in any of them
 lands on both proxies**, and a per-surface engagement should say so explicitly in the finding.
 
+**One contract is deployed on its own and called by both implementations:** `src/gates/AttestationVerifier.sol`
+(interface `src/interfaces/IAttestationVerifier.sol`). It holds the stateless part of the gates — attestation
+field checks, EIP-712 struct hash and digest, ECDSA recovery, fee bounds and denomination — and is reached by
+STATICCALL through an immutable each implementation takes in its constructor, exactly like the ERC-2771
+forwarder. It reads no storage; the gates keep every storage-backed fact (gating enabled, nonce spent, role
+held, collector allowlisted) and pass the answers in. It exists because the exchange sits at the EIP-170 size
+limit. **A finding in it lands on both proxies**, and its address is part of every implementation's initcode.
+
 ## Audit target (frozen commit)
 
 Please audit a **single frozen commit**. We tag a dedicated release for the engagement (e.g. `audit-v1`);
@@ -195,27 +203,32 @@ This is the first thing an auditor will ask about, so it is stated here rather t
 
 | | Secondary (`AsseteraECS`) | Primary (`AsseteraPrimarySales`) |
 |---|---|---|
-| Balance-delta accounting | **None.** There is no `balanceOf` measurement anywhere in `src/core/OrderBook.sol` or `src/core/OfferBook.sol` — confirmed on this commit by `grep -rn 'balanceOf' src/core src/gates src/admin src/AsseteraECS.sol src/storage src/libs`, which returns nothing | **Yes.** `VenueSettler` snapshots its own balances and the buyer's asset balance, and measures deltas across the venue call |
-| Fee-on-transfer settlement token | **Not detected.** Escrow is overstated and the pool can go insolvent — exchange finding **M-1** | **Refused on-chain.** `SettlementPullMismatch(requested, received)` if the pull delivers anything other than the exact amount |
-| Enforcement of the policy | **Off-chain only** — token addresses are bound into the signed `paramsHash`, so the backend token allowlist gates what can enter escrow. No on-chain tradable-token allowlist | On-chain for the currency leg; the zero-standing-balance assertion covers the asset leg |
+| Balance-delta accounting | **Yes, since 4.2.0.** Every pull goes through `src/core/EscrowPull.sol`, which measures this contract's balance before and after `safeTransferFrom` | **Yes.** `VenueSettler` snapshots its own balances and the buyer's asset balance, and measures deltas across the venue call |
+| Fee-on-transfer token | **Credited where a party escrows ahead of a trade, refused where a party delivers at the moment of a trade.** An order opens with the quantity that arrived and emits `OrderEscrowShort`; an offer proposer's asset leg is booked the same way and emits `OfferEscrowShort` (4.4.0). The accepting leg, the asset on a buy-side fill (routed through the exchange since 4.3.0) and a fee-bearing proposer's currency leg revert `EscrowPullShort(requested, received)`. A currency leg carries a fee only when the fee basis points are non-zero, and at zero the leg is credited like an asset leg, because there is then no fee sized on the proposed amount to fall out of step with it. The pool always equals the sum of its claims — exchange finding **M-1**, fixed 2026-09-08 and 2026-09-09 | **Refused on-chain.** `SettlementPullMismatch(requested, received)` if the pull delivers anything other than the exact amount |
+| Enforcement of the policy | **On-chain for the pull; policy for rebasing.** Token addresses are also bound into the signed `paramsHash`, so the backend decides what can enter escrow. No on-chain tradable-token allowlist | On-chain for the currency leg; the zero-standing-balance assertion covers the asset leg |
 | Freezable / blacklistable (USDC) | **Supported but hazardous** — escrow can be stranded (finding L-1) | **Supported but hazardous** |
 
-**Why they differ: history, not a considered symmetry.** The exchange shipped first and finding M-1 was
+**Why they differed: history, not a considered symmetry.** The exchange shipped first and finding M-1 was
 formally **accepted on 2026-07-15 as documentation-only** — recommendation #3, balance-delta accounting,
 was explicitly declined, on the reasoning that standard ERC-20 semantics are a downstream
 legal/compliance/risk control rather than an engineering fix. The primary settler was written afterwards,
 and **both** its settlement-leg measurement and its asset-side zero-standing-balance assertion were added
 on review of PR #58 — the first version measured only the asset leg and failed *dirty*, settling while
-misreporting on a fee-on-transfer currency.
+misreporting on a fee-on-transfer currency. **On 2026-09-08 a listed fee-on-transfer token hit the exchange
+in production** (7,940 of a nominal 8,000 arrived, the maker's cancel reverted), the off-chain allowlist
+turned out never to have been built, and 4.2.0 adopted the measurement on the exchange too. The one
+remaining asymmetry is intended: the router refuses any shortfall, the exchange absorbs it on an order,
+because an order's price is a ratio that survives a smaller quantity.
 
-**The exchange's weird-token tests document the insolvency rather than prevent it.** Named here so nothing
-looks hidden — all four are in `test/AsseteraECS.t.sol` and all four **pass**, by asserting the bad outcome
-happens:
+**The exchange's weird-token tests now pin the measurement**, in `test/AsseteraECS.t.sol`:
 
-- `test_TokenSafety_FeeOnTransfer_EscrowOverstatedAtPlacement`
-- `test_TokenSafety_FeeOnTransfer_PoolInsolvency_LastCancellerReverts`
-- `test_TokenSafety_Rebasing_NegativeRebaseCausesInsolvency`
-- `test_TokenSafety_FeeOnTransfer_AcceptOfferShortfall`
+- `test_TokenSafety_FeeOnTransfer_OrderCreditsWhatArrived`
+- `test_TokenSafety_FeeOnTransfer_BothMakersCanCancel`
+- `test_TokenSafety_FeeOnTransfer_FillPaysListedPriceOnCreditedQuantity`
+- `test_TokenSafety_FeeOnTransfer_NothingArrivesReverts`
+- `test_TokenSafety_FeeOnTransfer_MakeOfferRefusesShortDelivery`
+- `test_TokenSafety_Rebasing_NegativeRebaseCausesInsolvency` — unchanged, and still asserts the bad
+  outcome: a balance that moves after placement is invisible to a pull measurement
 
 ⚠️ **Production settlement will be real USDC on Polygon mainnet, which is neither fee-on-transfer nor
 rebasing but is freezable and blacklistable.** So the M-1 assumption is one we hold off-chain, and L-1 is a
@@ -301,8 +314,10 @@ it has had no review; its known open items are listed in
 
 Two items apply to **both** proxies and are therefore recorded here:
 
-1. **Standard-ERC-20-only (exchange finding M-1). Status: accepted 2026-07-15, documentation only.** See
-   the token-limitations section above, including the divergence in how the two contracts enforce it.
+1. **Standard-ERC-20-only (exchange finding M-1). Status: accepted 2026-07-15, documentation only; the
+   fee-on-transfer half fixed 2026-09-08 in exchange 4.2.0, rebasing still policy-only.** See the
+   token-limitations section above, including the one intended difference in how the two contracts
+   treat a short pull.
 2. **Centralized signer and upgrade authority (exchange finding L-3). Status: OPEN, accepted as an
    operational item, not a code defect.** There is **no `TimelockController` anywhere in this repository**
    — verified on this commit by grep over `src/`, `script/` and `test/` — and `DEFAULT_ADMIN_ROLE` on each

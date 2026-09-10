@@ -14,15 +14,18 @@ import {IFeeGate} from "../src/interfaces/IFeeGate.sol";
 import {OrderBook} from "../src/core/OrderBook.sol";
 import {OfferBook} from "../src/core/OfferBook.sol";
 import {PermitRelay} from "../src/core/PermitRelay.sol";
+import {EscrowPull} from "../src/core/EscrowPull.sol";
 import {ExchangeAdmin} from "../src/admin/ExchangeAdmin.sol";
 import {FaucetToken} from "./mocks/FaucetToken.sol";
 import {AsseteraECSV2} from "./mocks/AsseteraECSV2.sol";
 import {ReentrantToken} from "./mocks/ReentrantToken.sol";
 import {DivergentDomainToken} from "./mocks/DivergentDomainToken.sol";
 import {FeeOnTransferToken} from "./mocks/FeeOnTransferToken.sol";
+import {ExchangeExemptFeeToken} from "./mocks/ExchangeExemptFeeToken.sol";
 import {RebasingToken} from "./mocks/RebasingToken.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
+import {AttestationVerifier} from "../src/gates/AttestationVerifier.sol";
 
 contract AsseteraECSTest is Test {
     AsseteraECS internal exchange;
@@ -83,7 +86,7 @@ contract AsseteraECSTest is Test {
         rwa = new FaucetToken("Mock RWA Token", "mRWA", 18);
         forwarder = new ERC2771Forwarder("AsseteraForwarder");
 
-        AsseteraECS impl = new AsseteraECS(address(forwarder));
+        AsseteraECS impl = new AsseteraECS(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData = abi.encodeCall(AsseteraECS.initialize, (admin, kycSigner, feeSigner));
         exchange = AsseteraECS(address(new ERC1967Proxy(address(impl), initData)));
 
@@ -311,7 +314,7 @@ contract AsseteraECSTest is Test {
         // OPERATOR_ROLE is parked (AC-246) — not granted, no getter to assert against.
         assertTrue(exchange.hasRole(KYC_OPERATOR_ROLE, kycSigner));
         assertTrue(exchange.hasRole(FEE_OPERATOR_ROLE, feeSigner));
-        assertEq(exchange.version(), "4.1.0");
+        assertEq(exchange.version(), "4.4.0");
         assertEq(exchange.trustedForwarder(), address(forwarder));
     }
 
@@ -331,15 +334,28 @@ contract AsseteraECSTest is Test {
         assertFalse(exchange.complianceRequired(uint8(ExchangeTypes.Action.SettleOffer)), "SettleOffer");
     }
 
+    /// An implementation built against an address that holds no code would deploy cleanly and
+    /// then revert on every gated action once a proxy pointed at it, so the constructor refuses
+    /// it. The check lives in initcode, which EIP-170 does not measure, so it costs no runtime
+    /// bytecode on a contract that has 393 bytes of room.
+    function test_Constructor_RevertsIfTheVerifierHoldsNoCode() public {
+        vm.expectRevert(GateStorage.VerifierNotDeployed.selector);
+        new AsseteraECS(address(forwarder), address(0));
+
+        address neverDeployed = makeAddr("neverDeployed");
+        vm.expectRevert(GateStorage.VerifierNotDeployed.selector);
+        new AsseteraECS(address(forwarder), neverDeployed);
+    }
+
     function test_Initialize_RevertsOnZeroKycSigner() public {
-        AsseteraECS impl = new AsseteraECS(address(forwarder));
+        AsseteraECS impl = new AsseteraECS(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData = abi.encodeCall(AsseteraECS.initialize, (admin, address(0), feeSigner));
         vm.expectRevert(GateStorage.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initData);
     }
 
     function test_Initialize_RevertsOnZeroFeeSigner() public {
-        AsseteraECS impl = new AsseteraECS(address(forwarder));
+        AsseteraECS impl = new AsseteraECS(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData = abi.encodeCall(AsseteraECS.initialize, (admin, kycSigner, address(0)));
         vm.expectRevert(GateStorage.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initData);
@@ -1044,11 +1060,11 @@ contract AsseteraECSTest is Test {
 
     function test_Upgrade_PreservesStateAndForwarder() public {
         uint256 id = _placeRwaForUsdc(alice);
-        AsseteraECSV2 implV2 = new AsseteraECSV2(address(forwarder));
+        AsseteraECSV2 implV2 = new AsseteraECSV2(address(forwarder), address(new AttestationVerifier()));
         vm.prank(admin);
         exchange.upgradeToAndCall(address(implV2), "");
 
-        assertEq(exchange.version(), "4.1.0");
+        assertEq(exchange.version(), "4.5.0");
         assertTrue(AsseteraECSV2(address(exchange)).isUpgraded());
         assertEq(exchange.getOrder(id).maker, alice);
         assertEq(exchange.trustedForwarder(), address(forwarder));
@@ -1111,11 +1127,11 @@ contract AsseteraECSTest is Test {
         ExchangeTypes.Offer memory snapOffer = exchange.getOffer(offerId);
 
         // ---- 3. Upgrade the implementation --------------------------------- //
-        AsseteraECSV2 implV2 = new AsseteraECSV2(address(forwarder));
+        AsseteraECSV2 implV2 = new AsseteraECSV2(address(forwarder), address(new AttestationVerifier()));
         vm.prank(admin);
         exchange.upgradeToAndCall(address(implV2), "");
         AsseteraECSV2 v2 = AsseteraECSV2(address(exchange));
-        assertEq(v2.version(), "4.1.0", "impl not swapped");
+        assertEq(v2.version(), "4.5.0", "impl not swapped");
         assertTrue(v2.isUpgraded(), "V2 logic not live");
 
         // ---- 4. Every pre-upgrade slot survived unchanged ------------------ //
@@ -1171,7 +1187,7 @@ contract AsseteraECSTest is Test {
     }
 
     function test_Upgrade_RevertsIfNotAdmin() public {
-        AsseteraECSV2 implV2 = new AsseteraECSV2(address(forwarder));
+        AsseteraECSV2 implV2 = new AsseteraECSV2(address(forwarder), address(new AttestationVerifier()));
         vm.prank(operator);
         vm.expectRevert(
             abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", operator, ADMIN_ROLE)
@@ -1275,7 +1291,7 @@ contract AsseteraECSTest is Test {
     // ===================================================================== //
 
     function test_Initialize_RevertsOnZeroAdmin() public {
-        AsseteraECS impl = new AsseteraECS(address(forwarder));
+        AsseteraECS impl = new AsseteraECS(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData = abi.encodeCall(AsseteraECS.initialize, (address(0), kycSigner, feeSigner));
         vm.expectRevert(GateStorage.ZeroAddress.selector);
         new ERC1967Proxy(address(impl), initData);
@@ -3768,35 +3784,43 @@ contract AsseteraECSTest is Test {
     // ===================================================================== //
     //         token safety — fee-on-transfer / rebasing (M-1 / I-2)         //
     // ===================================================================== //
-    // These tests document and prove the M-1 security-review finding: the
-    // pooled OrderBook/OfferBook escrow assumes a token's transferFrom/
-    // transfer delivers exactly the nominal amount requested. They are
-    // expected to demonstrate insolvency/reverts with non-standard tokens —
-    // that is the point, not a bug in these tests. A standard FaucetToken
-    // never hits these paths (see the escrow-conservation invariant suite in
-    // test/invariants/ for the positive-case regression guard).
+    // The pooled OrderBook/OfferBook escrow used to record the NOMINAL amount a maker asked
+    // the token to move (security-review finding M-1). A fee-on-transfer token delivers
+    // less, the pool ends up short, and the last maker out could not withdraw. Escrow is now
+    // measured at the pull: an order opens with what actually arrived, an offer refuses a
+    // short delivery. These tests pin that. The rebasing case below is unchanged: a balance
+    // that moves AFTER placement is not something a pull measurement can see, and it still
+    // ends in the token's own insufficient-balance revert on the last claimant.
 
-    function test_TokenSafety_FeeOnTransfer_EscrowOverstatedAtPlacement() public {
+    event OrderEscrowShort(
+        uint256 indexed id, address indexed sellToken, uint256 requested, uint256 received, uint256 credited
+    );
+
+    function test_TokenSafety_FeeOnTransfer_OrderCreditsWhatArrived() public {
         FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 100); // 1%
         fot.mint(alice, 10_000e18);
 
         uint256 sellAmt = 1_000e18;
+        uint256 arrived = sellAmt - (sellAmt * 100) / 10_000; // 990e18
         AsseteraECS.KycAttestation memory att = _attestPlace(alice, address(fot), sellAmt, address(usdc), WANT_USDC);
         AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(fot), sellAmt, address(usdc), WANT_USDC);
         vm.startPrank(alice);
         fot.approve(address(exchange), sellAmt);
+        vm.expectEmit(true, true, false, true, address(exchange));
+        emit OrderEscrowShort(1, address(fot), sellAmt, arrived, arrived);
         uint256 id = exchange.placeOrder(address(fot), sellAmt, address(usdc), WANT_USDC, 0, att, feeAtt);
         vm.stopPrank();
 
-        // Order records the full nominal sellAmount as escrowed...
-        assertEq(exchange.getOrder(id).remainingQuantity, sellAmt, "records nominal amount");
-        // ...but the contract actually received 1% less: recorded escrow overstates real holdings.
-        uint256 actualHeld = sellAmt - (sellAmt * 100) / 10_000;
-        assertEq(fot.balanceOf(address(exchange)), actualHeld, "actual balance short by the transfer fee");
-        assertLt(fot.balanceOf(address(exchange)), exchange.getOrder(id).remainingQuantity);
+        ExchangeTypes.Order memory o = exchange.getOrder(id);
+        // The order opens with the measured delta, and the pool holds exactly that.
+        assertEq(o.remainingQuantity, arrived, "credits what arrived");
+        assertEq(fot.balanceOf(address(exchange)), arrived, "pool equals the recorded claim");
+        // The listed price is untouched: sellAmount : buyAmount is still the maker's ratio.
+        assertEq(o.sellAmount, sellAmt, "price basis unchanged");
+        assertEq(o.buyAmount, WANT_USDC);
     }
 
-    function test_TokenSafety_FeeOnTransfer_PoolInsolvency_LastCancellerReverts() public {
+    function test_TokenSafety_FeeOnTransfer_BothMakersCanCancel() public {
         FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 100); // 1%
         fot.mint(alice, 10_000e18);
         fot.mint(bob, 10_000e18);
@@ -3817,25 +3841,68 @@ contract AsseteraECSTest is Test {
         uint256 bobId = exchange.placeOrder(address(fot), sellAmt, address(usdc), WANT_USDC, 0, bAtt, bFeeAtt);
         vm.stopPrank();
 
-        // Pool actually holds 2 * 990e18 = 1_980e18, but recorded escrow already sums to 2_000e18.
+        // Pool holds 2 * 990e18 and the two recorded claims sum to exactly that.
         assertEq(fot.balanceOf(address(exchange)), 1_980e18);
+        assertEq(exchange.getOrder(aliceId).remainingQuantity + exchange.getOrder(bobId).remainingQuantity, 1_980e18);
 
-        // Alice cancels first: the contract is debited the full recorded 1_000e18 (she nets 990e18
-        // after her own incoming-transfer haircut is re-applied on the way out).
+        // Each cancel pays the recorded claim. The token taxes the way out too, so a maker
+        // nets 980.1e18 of the 990e18 the pool pays, and that tax is theirs to bear: nothing
+        // is paid out of the other maker's escrow.
+        uint256 aliceBefore = fot.balanceOf(alice);
         vm.prank(alice);
         exchange.cancelOrder(aliceId);
-        assertEq(fot.balanceOf(address(exchange)), 980e18);
+        assertEq(fot.balanceOf(address(exchange)), 990e18, "bob's claim is still fully backed");
+        assertEq(fot.balanceOf(alice) - aliceBefore, 990e18 - (990e18 * 100) / 10_000);
 
-        // Bob's cancel requests his full recorded 1_000e18 — Alice's cancel already drew down the
-        // shared pool below what's needed to cover Bob's nominal escrow, so his cancel reverts. The
-        // FOT mock itself splits that 1_000e18 transfer into a 990e18 payout leg + a 10e18 burn leg
-        // (each its own balance check), so the shortfall surfaces on the payout leg at 990e18, not
-        // the full nominal 1_000e18.
         vm.prank(bob);
-        vm.expectRevert(
-            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, address(exchange), 980e18, 990e18)
-        );
         exchange.cancelOrder(bobId);
+        assertEq(fot.balanceOf(address(exchange)), 0, "pool is empty once both claims are paid");
+    }
+
+    function test_TokenSafety_FeeOnTransfer_FillPaysListedPriceOnCreditedQuantity() public {
+        FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 100); // 1%
+        fot.mint(alice, 10_000e18);
+        usdc.mint(bob, 10_000e6);
+
+        uint256 sellAmt = 1_000e18;
+        uint256 arrived = 990e18;
+        AsseteraECS.KycAttestation memory att = _attestPlace(alice, address(fot), sellAmt, address(usdc), WANT_USDC);
+        AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(fot), sellAmt, address(usdc), WANT_USDC);
+        vm.startPrank(alice);
+        fot.approve(address(exchange), sellAmt);
+        uint256 id = exchange.placeOrder(address(fot), sellAmt, address(usdc), WANT_USDC, 0, att, feeAtt);
+        vm.stopPrank();
+
+        // A fill of the full credited quantity pays the LISTED price per unit: 990 of the
+        // 1000-for-1000 listing costs 990 USDC, not the 1000 USDC the nominal order named.
+        uint256 aliceUsdcBefore = usdc.balanceOf(alice);
+        vm.startPrank(bob);
+        usdc.approve(address(exchange), WANT_USDC);
+        exchange.fillOrder(id, arrived, _attest(bob, ExchangeTypes.Action.Fill, id));
+        vm.stopPrank();
+
+        assertEq(uint8(exchange.getOrder(id).status), uint8(ExchangeTypes.OrderStatus.Filled));
+        assertEq(usdc.balanceOf(alice) - aliceUsdcBefore, 990e6, "maker is paid at the listed unit price");
+        // The asset leg moves gross from a pool that holds exactly the claim, so the pool is
+        // whole afterwards. The taker bears the token's tax on the way out.
+        assertEq(fot.balanceOf(address(exchange)), 0, "pool is exactly consumed");
+        assertEq(fot.balanceOf(bob), arrived - (arrived * 100) / 10_000);
+    }
+
+    function test_TokenSafety_FeeOnTransfer_NothingArrivesReverts() public {
+        // A token that keeps the whole transfer delivers nothing; there is no quantity to open
+        // an order with, and the placement refuses rather than recording a zero-sized claim.
+        FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 10_000); // 100%
+        fot.mint(alice, 10_000e18);
+
+        uint256 sellAmt = 1_000e18;
+        AsseteraECS.KycAttestation memory att = _attestPlace(alice, address(fot), sellAmt, address(usdc), WANT_USDC);
+        AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(fot), sellAmt, address(usdc), WANT_USDC);
+        vm.startPrank(alice);
+        fot.approve(address(exchange), sellAmt);
+        vm.expectRevert(abi.encodeWithSelector(EscrowPull.EscrowPullShort.selector, sellAmt, 0));
+        exchange.placeOrder(address(fot), sellAmt, address(usdc), WANT_USDC, 0, att, feeAtt);
+        vm.stopPrank();
     }
 
     function test_TokenSafety_Rebasing_NegativeRebaseCausesInsolvency() public {
@@ -3880,12 +3947,77 @@ contract AsseteraECSTest is Test {
         exchange.cancelOrder(bobId);
     }
 
-    function test_TokenSafety_FeeOnTransfer_AcceptOfferShortfall() public {
+    function test_TokenSafety_FeeOnTransfer_BuySideAssetRoutedThroughExemptExchange() public {
+        // The asset a buy order receives moves seller -> exchange -> maker, not seller -> maker.
+        // When the token exempts the exchange (as OilXCoin does), both hops are untaxed and the
+        // maker receives the full amount. Before the routing fix, the single seller -> maker
+        // transfer was taxed even with the exemption, because the exchange was not on it.
+        ExchangeExemptFeeToken fot = new ExchangeExemptFeeToken("Exempt Fee", "XFT", 100, address(exchange));
+        uint256 usdcAmt = 1_000e6;
+        uint256 fotWant = 100e18;
+        usdc.mint(alice, usdcAmt);
+        fot.mint(bob, fotWant);
+
+        AsseteraECS.KycAttestation memory att = _attestPlace(alice, address(usdc), usdcAmt, address(fot), fotWant);
+        AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(usdc), usdcAmt, address(fot), fotWant);
+        vm.startPrank(alice);
+        usdc.approve(address(exchange), usdcAmt);
+        uint256 id = exchange.placeOrder(address(usdc), usdcAmt, address(fot), fotWant, 0, att, feeAtt);
+        vm.stopPrank();
+
+        uint256 bobUsdcBefore = usdc.balanceOf(bob);
+        vm.startPrank(bob);
+        fot.approve(address(exchange), fotWant);
+        exchange.fillOrder(id, usdcAmt, _attest(bob, ExchangeTypes.Action.Fill, id));
+        vm.stopPrank();
+
+        assertEq(fot.balanceOf(alice), fotWant, "maker receives the asset gross");
+        assertEq(fot.balanceOf(address(exchange)), 0, "asset only transits the exchange");
+        assertEq(usdc.balanceOf(bob) - bobUsdcBefore, usdcAmt, "taker receives the currency");
+    }
+
+    function test_TokenSafety_FeeOnTransfer_BuySideFillRefusesTaxedAsset() public {
+        // A token that taxes everyone cannot deliver the full asset the maker's buy order asked
+        // for. The fill is refused rather than handing the maker less than agreed.
+        FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 100); // 1%, no exemption
+        uint256 usdcAmt = 1_000e6;
+        uint256 fotWant = 100e18;
+        usdc.mint(alice, usdcAmt);
+        fot.mint(bob, fotWant);
+
+        AsseteraECS.KycAttestation memory att = _attestPlace(alice, address(usdc), usdcAmt, address(fot), fotWant);
+        AsseteraECS.FeeAttestation memory feeAtt = _feePlace(alice, address(usdc), usdcAmt, address(fot), fotWant);
+        vm.startPrank(alice);
+        usdc.approve(address(exchange), usdcAmt);
+        uint256 id = exchange.placeOrder(address(usdc), usdcAmt, address(fot), fotWant, 0, att, feeAtt);
+        vm.stopPrank();
+
+        uint256 arrived = fotWant - (fotWant * 100) / 10_000;
+        vm.startPrank(bob);
+        fot.approve(address(exchange), fotWant);
+        vm.expectRevert(abi.encodeWithSelector(EscrowPull.EscrowPullShort.selector, fotWant, arrived));
+        exchange.fillOrder(id, usdcAmt, _attest(bob, ExchangeTypes.Action.Fill, id));
+        vm.stopPrank();
+    }
+
+    event OfferEscrowShort(
+        uint256 indexed id, address indexed legToken, uint256 requested, uint256 received, uint256 credited
+    );
+    event OfferReplaced(
+        uint256 indexed id, address indexed by, uint256 newMakerAmount, uint256 newTakerAmount, uint64 expireTs
+    );
+
+    /// A proposer's asset leg that arrives short is booked as what arrived (4.4.0), and the
+    /// acceptor trades against the booked amount, which the attestation binds.
+    function test_TokenSafety_FeeOnTransfer_MakeOfferCreditsShortAssetLeg() public {
         FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 100); // 1%
         fot.mint(alice, 10_000e18);
+        usdc.mint(bob, WANT_USDC);
+        uint256 aliceUsdcBefore = usdc.balanceOf(alice);
 
         uint256 makerAmt = 1_000e18;
         uint256 takerAmt = WANT_USDC;
+        uint256 arrived = makerAmt - (makerAmt * 100) / 10_000;
 
         AsseteraECS.KycAttestation memory att =
             _attestMakeOffer(alice, bob, address(fot), makerAmt, address(usdc), takerAmt);
@@ -3893,27 +4025,119 @@ contract AsseteraECSTest is Test {
             _feeMakeOffer(alice, bob, address(fot), makerAmt, address(usdc), takerAmt);
         vm.startPrank(alice);
         fot.approve(address(exchange), makerAmt);
+        vm.expectEmit(true, true, false, true, address(exchange));
+        emit OfferEscrowShort(1, address(fot), makerAmt, arrived, arrived);
         uint256 id = exchange.makeOffer(0, bob, address(fot), makerAmt, address(usdc), takerAmt, 0, att, feeAtt);
         vm.stopPrank();
 
-        // The offer records the nominal makerAmount, but the contract only ever received 99% of it.
-        uint256 actualHeld = makerAmt - (makerAmt * 100) / 10_000;
-        assertEq(fot.balanceOf(address(exchange)), actualHeld);
+        ExchangeTypes.Offer memory o = exchange.getOffer(id);
+        assertEq(o.makerAmount, arrived, "the proposer's leg is booked as what arrived");
+        assertEq(o.takerAmount, takerAmt, "the counterparty's leg is untouched");
+        assertEq(fot.balanceOf(address(exchange)), arrived, "pool equals the recorded claim");
 
-        AsseteraECS.KycAttestation memory acceptAtt = _attestAcceptOffer(bob, id, makerAmt, takerAmt);
+        // The acceptor's attestation binds the BOOKED amounts, so an attestation minted on the
+        // proposed amount is refused and one minted on what the chain holds settles.
+        AsseteraECS.KycAttestation memory stale = _attestAcceptOffer(bob, id, makerAmt, takerAmt);
         vm.startPrank(bob);
         usdc.approve(address(exchange), takerAmt);
-        // acceptOffer tries to release the full nominal makerAmount (zero protocol taker fee here) to
-        // bob. The FOT mock splits that payout into a (makerAmt - transferFee) leg to bob — which
-        // exactly drains the contract's actualHeld balance to zero and succeeds — followed by a
-        // transferFee burn leg that then reverts against a zero balance, instead of silently
-        // under-paying the taker.
-        uint256 transferFee = makerAmt - actualHeld;
-        vm.expectRevert(
-            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, address(exchange), 0, transferFee)
-        );
-        exchange.acceptOffer(id, acceptAtt);
+        vm.expectRevert(GateStorage.ParamsHashMismatch.selector);
+        exchange.acceptOffer(id, stale);
+        exchange.acceptOffer(id, _attestAcceptOffer(bob, id, arrived, takerAmt));
         vm.stopPrank();
+
+        // The asset leg moves gross out of the pool; the token taxes that payout too.
+        assertEq(fot.balanceOf(bob), arrived - (arrived * 100) / 10_000, "buyer receives the booked leg, taxed");
+        assertEq(fot.balanceOf(address(exchange)), 0, "nothing stays behind");
+        assertEq(usdc.balanceOf(alice) - aliceUsdcBefore, takerAmt, "seller receives the currency leg");
+    }
+
+    /// A counter-proposal books the same way, and the correction follows `OfferReplaced`.
+    function test_TokenSafety_FeeOnTransfer_ReplaceOfferCreditsShortAssetLeg() public {
+        FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 100); // 1%
+        fot.mint(alice, 10_000e18);
+
+        uint256 makerAmt = 1_000e18;
+        AsseteraECS.KycAttestation memory att =
+            _attestMakeOffer(alice, bob, address(fot), makerAmt, address(usdc), WANT_USDC);
+        AsseteraECS.FeeAttestation memory feeAtt =
+            _feeMakeOffer(alice, bob, address(fot), makerAmt, address(usdc), WANT_USDC);
+        vm.startPrank(alice);
+        fot.approve(address(exchange), makerAmt);
+        uint256 id = exchange.makeOffer(0, bob, address(fot), makerAmt, address(usdc), WANT_USDC, 0, att, feeAtt);
+        vm.stopPrank();
+        uint256 firstArrived = fot.balanceOf(address(exchange));
+
+        uint256 newAmt = 2_000e18;
+        uint256 arrived = newAmt - (newAmt * 100) / 10_000;
+        AsseteraECS.KycAttestation memory rep = _attestReplaceOffer(alice, id, newAmt, WANT_USDC);
+        vm.startPrank(alice);
+        fot.approve(address(exchange), newAmt);
+        vm.expectEmit(true, true, false, true, address(exchange));
+        emit OfferReplaced(id, alice, newAmt, WANT_USDC, 0);
+        vm.expectEmit(true, true, false, true, address(exchange));
+        emit OfferEscrowShort(id, address(fot), newAmt, arrived, arrived);
+        exchange.replaceOffer(id, newAmt, WANT_USDC, 0, rep);
+        vm.stopPrank();
+
+        ExchangeTypes.Offer memory o = exchange.getOffer(id);
+        assertEq(o.makerAmount, arrived, "the re-proposed leg is booked as what arrived");
+        // The previous escrow went back to the proposer (taxed on the way out) and the pool holds
+        // exactly the new claim.
+        assertEq(fot.balanceOf(address(exchange)), arrived, "pool equals the new claim");
+        assertGt(firstArrived, 0);
+    }
+
+    /// The accepting leg is a delivery at the moment of a trade and must arrive whole.
+    function test_TokenSafety_FeeOnTransfer_AcceptRefusesShortDelivery() public {
+        FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 100); // 1%
+        fot.mint(bob, 10_000e18);
+        usdc.mint(alice, WANT_USDC);
+
+        uint256 takerAmt = 1_000e18;
+        uint256 arrived = takerAmt - (takerAmt * 100) / 10_000;
+        // Alice proposes the currency leg; Bob would deliver the asset when he accepts.
+        AsseteraECS.KycAttestation memory att =
+            _attestMakeOffer(alice, bob, address(usdc), WANT_USDC, address(fot), takerAmt);
+        AsseteraECS.FeeAttestation memory feeAtt =
+            _feeMakeOffer(alice, bob, address(usdc), WANT_USDC, address(fot), takerAmt);
+        vm.startPrank(alice);
+        usdc.approve(address(exchange), WANT_USDC);
+        uint256 id = exchange.makeOffer(0, bob, address(usdc), WANT_USDC, address(fot), takerAmt, 0, att, feeAtt);
+        vm.stopPrank();
+
+        AsseteraECS.KycAttestation memory acc = _attestAcceptOffer(bob, id, WANT_USDC, takerAmt);
+        vm.startPrank(bob);
+        fot.approve(address(exchange), takerAmt);
+        vm.expectRevert(abi.encodeWithSelector(EscrowPull.EscrowPullShort.selector, takerAmt, arrived));
+        exchange.acceptOffer(id, acc);
+        vm.stopPrank();
+        assertEq(fot.balanceOf(address(exchange)), 0, "nothing stays behind after the refusal");
+    }
+
+    /// A proposer's CURRENCY leg is not credited: its fee is sized on the proposed amount, so a
+    /// short delivery is refused at placement rather than booked with a fee that no longer fits.
+    function test_TokenSafety_FeeOnTransfer_MakeOfferRefusesShortCurrencyLeg() public {
+        FeeOnTransferToken fot = new FeeOnTransferToken("Fee Token", "FOT", 100); // 1%
+        fot.mint(alice, 10_000e18);
+        vm.prank(admin);
+        exchange.setAllowedCollector(carol, true);
+
+        uint256 makerAmt = 1_000e18;
+        uint256 fee = (makerAmt * 50) / 10_000; // 0.5% maker fee, in the fee-on-transfer currency
+        uint256 requested = makerAmt + fee;
+        uint256 arrived = requested - (requested * 100) / 10_000;
+
+        AsseteraECS.KycAttestation memory att =
+            _attestMakeOffer(alice, bob, address(fot), makerAmt, address(rwa), SELL_RWA);
+        AsseteraECS.FeeAttestation memory feeAtt = _feeMakeOfferWithFeeToken(
+            alice, bob, address(fot), makerAmt, address(rwa), SELL_RWA, 50, 0, carol, address(fot)
+        );
+        vm.startPrank(alice);
+        fot.approve(address(exchange), requested);
+        vm.expectRevert(abi.encodeWithSelector(EscrowPull.EscrowPullShort.selector, requested, arrived));
+        exchange.makeOffer(0, bob, address(fot), makerAmt, address(rwa), SELL_RWA, 0, att, feeAtt);
+        vm.stopPrank();
+        assertEq(fot.balanceOf(address(exchange)), 0, "nothing stays behind after the refusal");
     }
 
     // ===================================================================== //

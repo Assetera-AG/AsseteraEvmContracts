@@ -6,7 +6,16 @@ test = "test"
 script = "script"
 solc = "0.8.28"
 optimizer = true
-optimizer_runs = 200
+# 200 until the exchange measured escrow at the pull (EscrowPull.sol); 100 since. The exchange sits at the
+# EIP-170 limit and the test upgrade fixture AsseteraECSV2, which inherits it, gates CI through
+# `forge build --sizes`. The via-IR optimizer is not monotonic here: folding call sites, moving code out to
+# a called contract, or changing this number can grow or shrink either contract independently, so every
+# change is measured on both, never reasoned about. Stateless gate code lives in
+# src/gates/AttestationVerifier.sol, a separately deployed contract, which is where the next cut goes.
+# Last measured (2026-09-09): AsseteraECS 24,183, AsseteraECSV2 24,297, AsseteraPrimarySales 19,957.
+# A router rebuilt at 100 runs differs from the implementations deployed at 200 only by this setting,
+# which is not a reason to upgrade it.
+optimizer_runs = 100
 via_ir = true
 
 # Deploy scripts write the per-network deployment artifact into the SDK (its source of truth, ADR-0026 D4).

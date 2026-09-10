@@ -65,7 +65,9 @@ find src -name '*.sol' -not -path 'src/primary/*' | xargs wc -l
 | `src/core/PermitRelay.sol` | 138 | `permitAndCall`: ERC-2612 permit + one self-`delegatecall`, so approve-then-trade is one transaction (AO-298). ⚠️ Since AO-713 this file is compiled into the **primary-sales proxy too**; a finding here lands on both |
 | `src/gates/KycGate.sol` | 75 | EIP-712 KYC attestation verification + nonce burn |
 | `src/gates/FeeGate.sol` | 141 | EIP-712 fee attestation verification + fee bounds / denomination / collector allowlist |
-| `src/gates/GateStorage.sol` | 130 | Gate state in ERC-7201 namespaced storage (`assetera.storage.Gate`) + the OZ bases the gates need (AO-514) |
+| `src/gates/GateStorage.sol` | 130 | Gate state in ERC-7201 namespaced storage (`assetera.storage.Gate`) + the OZ bases the gates need (AO-514); holds the immutable `AttestationVerifier` address |
+| `src/gates/AttestationVerifier.sol` | 119 | **Separately deployed, stateless.** Attestation field checks, EIP-712 struct hash + digest, ECDSA recovery, fee bounds / denomination. Reached by STATICCALL from `KycGate` / `FeeGate` through an immutable; reads no storage. Exists because the exchange sits at the EIP-170 limit. A finding here lands on both proxies |
+| `src/interfaces/IAttestationVerifier.sol` | 56 | The verifier's interface |
 | `src/admin/ExchangeAdmin.sol` | 118 | Admin surface: pause, compliance toggles, collector allowlist, force-cancel |
 | `src/storage/ExchangeStorage.sol` | 61 | Order-book storage base behind `__gap` |
 | `src/types/ExchangeTypes.sol` | 119 | Order/Offer structs, enums (`Action`, statuses) |
@@ -248,7 +250,7 @@ Dependencies are **frozen for the duration of an external audit**.
 | Behaviour | This surface |
 |---|---|
 | Standard ERC-20 (`transfer` / `transferFrom` move exactly the requested amount) | **Supported** — the only supported class |
-| Fee-on-transfer / deflationary | **Refused by policy, not by code.** Nothing on-chain detects it; the escrow becomes overstated and the pool can go insolvent (finding M-1) |
+| Fee-on-transfer / deflationary | **Measured at the pull since 4.2.0** (`core/EscrowPull.sol`). An order opens with the quantity that arrived and emits `OrderEscrowShort`; an offer proposer's asset leg is booked the same way and emits `OfferEscrowShort` (4.4.0). The accepting leg, the asset on a buy-side fill (routed through the exchange, 4.3.0) and a fee-bearing proposer's currency leg refuse a short delivery with `EscrowPullShort`. A zero-fee currency leg is credited like an asset leg, since no fee was sized on the proposed amount. The pool always equals the sum of its claims. The token still taxes every payout, so such a token is a poor fit, but it can no longer strand other makers' escrow (finding M-1, fixed) |
 | Rebasing (positive or negative) | **Refused by policy, not by code.** A negative rebase desyncs recorded escrow from the real balance (finding M-1) |
 | Non-standard `decimals()` / missing `decimals()` | Never read by this surface |
 | Freezable / blacklistable (USDC and friends) | **Supported but hazardous** — escrow can be permanently stranded (finding L-1). This is what production actually uses |
@@ -596,16 +598,24 @@ safe default rather than an absolute bar.
 
 Fully described in the internal review; the load-bearing ones, re-read against the current code:
 
-1. **M-1 — standard-ERC-20-only. Status: accepted 2026-07-15, documentation only.** The pooled escrow
-   assumes tokens transfer exactly the requested amount. **Only standard, non-rebasing,
-   non-fee-on-transfer ERC-20 tokens may trade.** Enforced off-chain (attestation-gated token addresses);
-   no on-chain tradable-token allowlist, and recommendation #3 (balance-delta accounting) was explicitly
-   declined for this surface. See `FUNCTIONAL_SPEC.md §9` and the token-limitations section above.
-   **The assumption still holds after AC-833, with a slightly larger blast radius:** the escrowed fee is
-   pulled in the *same* `safeTransferFrom` as the notional (`OrderBook.sol:204`, `OfferBook.sol:99`), so a
-   fee-on-transfer token now overstates recorded escrow by the transfer tax on `notional + fee`, not just
-   on `notional`, and the refund paths pay out that overstated figure. The failure mode is unchanged —
-   last-out insolvency.
+1. **M-1 — standard-ERC-20-only. Status: accepted 2026-07-15, documentation only; fixed 2026-09-08 in
+   4.2.0 for the fee-on-transfer half.** The pooled escrow used to assume tokens transfer exactly the
+   requested amount, and the off-chain allowlist that was supposed to keep such tokens out was never
+   built; a listed fee-on-transfer token then stranded a maker's cancel in production. Every pull now goes
+   through `core/EscrowPull.sol`, which measures the balance delta. An order opens with
+   `remainingQuantity = received - escrowedFee` (the escrowed fee stays whole, the maker bears the tax on
+   their own quantity, `sellAmount` stays the price basis) and emits `OrderEscrowShort`; since 4.4.0 an
+   offer proposer's asset leg is booked the same way and emits `OfferEscrowShort`, while the accepting
+   leg, the asset on a buy-side fill (routed through the exchange, 4.3.0) and a proposer's currency leg
+   that carries a fee refuse a short delivery with `EscrowPullShort(requested, received)`: a party
+   escrowing ahead of a trade is credited what arrived, visibly; a party delivering at the moment of a
+   trade must arrive whole, and so must a leg whose fee was sized on the amount proposed. A currency leg
+   at zero fee basis points has no such fee and is credited like an asset leg.
+   Payouts still move the nominal recorded figure and the token taxes them again, so the recipient of a
+   fill or refund nets less than the pool paid; that is the token's behaviour, not a solvency problem.
+   **Rebasing tokens remain policy-only:** a balance that moves after placement is invisible to a pull
+   measurement, and a negative rebase still ends in last-out insolvency. See `FUNCTIONAL_SPEC.md §9` and
+   the token-limitations section above.
 2. **L-1 — freezable tokens** (e.g. USDC) can strand escrow if a party or the exchange is blacklisted. Now
    also applies to the escrowed fee, which is denominated in the settlement currency — precisely the leg
    most likely to be a freezable stablecoin, and precisely what production will settle in.

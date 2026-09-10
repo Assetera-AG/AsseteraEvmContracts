@@ -8,6 +8,7 @@ import {FaucetToken} from "../mocks/FaucetToken.sol";
 import {DinariLikeVenue} from "../mocks/DinariLikeVenue.sol";
 import {CappedPrimarySalesHarness} from "./mocks/CappedPrimarySalesHarness.sol";
 import {PrimarySalesTestBase} from "./PrimarySalesTestBase.sol";
+import {AttestationVerifier} from "../../src/gates/AttestationVerifier.sol";
 
 /// @title VenueSettlerTestBase
 /// @notice The fixture `VenueSettler` needs and `PrimarySalesTestBase` deliberately does not
@@ -52,7 +53,8 @@ abstract contract VenueSettlerTestBase is PrimarySalesTestBase {
         asset = new FaucetToken("Mock Tokenised Equity", "mEQ", 18);
         venue = new DinariLikeVenue();
 
-        CappedPrimarySalesHarness impl = new CappedPrimarySalesHarness(address(forwarder));
+        CappedPrimarySalesHarness impl =
+            new CappedPrimarySalesHarness(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData =
             abi.encodeCall(AsseteraPrimarySales.initialize, (admin, kycSigner, feeSigner, settlementSigner));
         router = CappedPrimarySalesHarness(address(new ERC1967Proxy(address(impl), initData)));

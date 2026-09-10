@@ -9,6 +9,7 @@ import {PrimaryTypes} from "../../src/primary/types/PrimaryTypes.sol";
 import {GateTypes} from "../../src/types/GateTypes.sol";
 import {ISettlementLimits} from "../../src/primary/interfaces/ISettlementLimits.sol";
 import {PrimarySalesHarness} from "./mocks/PrimarySalesHarness.sol";
+import {AttestationVerifier} from "../../src/gates/AttestationVerifier.sol";
 
 /// @title PrimarySalesTestBase
 /// @notice Fixtures and signing helpers shared by the primary-sale test contracts.
@@ -116,10 +117,11 @@ abstract contract PrimarySalesTestBase is Test {
         bytes memory initData =
             abi.encodeCall(AsseteraPrimarySales.initialize, (admin, kycSigner, feeSigner, settlementSigner));
 
-        AsseteraPrimarySales impl = new AsseteraPrimarySales(address(forwarder));
+        AsseteraPrimarySales impl = new AsseteraPrimarySales(address(forwarder), address(new AttestationVerifier()));
         sales = AsseteraPrimarySales(address(new ERC1967Proxy(address(impl), initData)));
 
-        PrimarySalesHarness harnessImpl = new PrimarySalesHarness(address(forwarder));
+        PrimarySalesHarness harnessImpl =
+            new PrimarySalesHarness(address(forwarder), address(new AttestationVerifier()));
         harness = PrimarySalesHarness(address(new ERC1967Proxy(address(harnessImpl), initData)));
 
         // `CURRENCY` needs code and a `decimals()` answer before a cap can be sized against it.

@@ -56,12 +56,17 @@ for CONTRACT in "${CONTRACTS[@]}"; do
   # gitignored build directory, so this costs a rebuild of one file and nothing else.
   rm -rf "out/${CONTRACT}.sol"
 
+  # The type names solc prints carry its AST node id, e.g. `t_struct(Order)12061_storage` or
+  # `t_enum(OrderStatus)12005`. That id is the position of the declaration in the compilation
+  # unit, so adding ANY source file ahead of it in the unit (a stateless helper contract, a new
+  # mock) renumbers every type and the diff lights up with slots that did not move. The id says
+  # nothing about layout; the name, slot, offset and member order say everything. Strip it.
   {
     forge inspect "$CONTRACT" storage-layout
     echo
     echo "=== struct members (slot/offset within each struct) ==="
     forge inspect "$CONTRACT" storage-layout --json | python3 script/struct-layout.py
-  } >"$CURRENT"
+  } | sed -E 's/\)[0-9]+(_storage)?/)\1/g' >"$CURRENT"
 
   if [[ "$MODE" == "write" ]]; then
     cp "$CURRENT" "$SNAPSHOT"

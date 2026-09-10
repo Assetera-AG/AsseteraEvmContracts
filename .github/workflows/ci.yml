@@ -38,6 +38,11 @@ jobs:
         run: npx --yes solhint@5.2.0 'src/**/*.sol' 'script/**/*.sol' 'test/**/*.sol'
 
       - name: Build
+        # `--sizes` fails the build on any contract over the EIP-170 24,576-byte runtime limit. That
+        # includes the test tree on purpose: the upgrade fixture AsseteraECSV2 inherits AsseteraECS plus
+        # a little, so it going over is the earliest warning that the exchange itself is out of room.
+        # The attestation verifier (src/gates/AttestationVerifier.sol) is where stateless gate code
+        # goes when that warning fires.
         run: forge build --sizes
 
       - name: Storage layout (upgrade-safety guard)

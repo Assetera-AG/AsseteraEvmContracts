@@ -13,6 +13,7 @@ export const asseteraEcsAbi = [
     type: 'constructor',
     inputs: [
       { name: 'trustedForwarder', internalType: 'address', type: 'address' },
+      { name: 'attestationVerifier', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -801,6 +802,38 @@ export const asseteraEcsAbi = [
     inputs: [
       { name: 'id', internalType: 'uint256', type: 'uint256', indexed: true },
       {
+        name: 'legToken',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'requested',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'received',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'credited',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'OfferEscrowShort',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'id', internalType: 'uint256', type: 'uint256', indexed: true },
+      {
         name: 'proposedBy',
         internalType: 'address',
         type: 'address',
@@ -1074,6 +1107,38 @@ export const asseteraEcsAbi = [
       },
     ],
     name: 'OrderEscrowDrawn',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'id', internalType: 'uint256', type: 'uint256', indexed: true },
+      {
+        name: 'sellToken',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'requested',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'received',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'credited',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'OrderEscrowShort',
   },
   {
     type: 'event',
@@ -1425,17 +1490,6 @@ export const asseteraEcsAbi = [
     inputs: [{ name: 'target', internalType: 'address', type: 'address' }],
     name: 'AddressEmptyCode',
   },
-  { type: 'error', inputs: [], name: 'ECDSAInvalidSignature' },
-  {
-    type: 'error',
-    inputs: [{ name: 'length', internalType: 'uint256', type: 'uint256' }],
-    name: 'ECDSAInvalidSignatureLength',
-  },
-  {
-    type: 'error',
-    inputs: [{ name: 's', internalType: 'bytes32', type: 'bytes32' }],
-    name: 'ECDSAInvalidSignatureS',
-  },
   {
     type: 'error',
     inputs: [
@@ -1445,6 +1499,14 @@ export const asseteraEcsAbi = [
   },
   { type: 'error', inputs: [], name: 'ERC1967NonPayable' },
   { type: 'error', inputs: [], name: 'EnforcedPause' },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'requested', internalType: 'uint256', type: 'uint256' },
+      { name: 'received', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'EscrowPullShort',
+  },
   { type: 'error', inputs: [], name: 'ExpectedPause' },
   { type: 'error', inputs: [], name: 'FailedCall' },
   { type: 'error', inputs: [], name: 'FeeAccountMismatch' },
@@ -1553,6 +1615,7 @@ export const asseteraEcsAbi = [
     inputs: [{ name: 'slot', internalType: 'bytes32', type: 'bytes32' }],
     name: 'UUPSUnsupportedProxiableUUID',
   },
+  { type: 'error', inputs: [], name: 'VerifierNotDeployed' },
   { type: 'error', inputs: [], name: 'ZeroAddress' },
   { type: 'error', inputs: [], name: 'ZeroAmount' },
 ] as const
@@ -2194,6 +2257,7 @@ export const asseteraPrimarySalesAbi = [
     type: 'constructor',
     inputs: [
       { name: 'trustedForwarder', internalType: 'address', type: 'address' },
+      { name: 'attestationVerifier', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -3264,6 +3328,7 @@ export const asseteraPrimarySalesAbi = [
   },
   { type: 'error', inputs: [], name: 'VenueCallFailed' },
   { type: 'error', inputs: [], name: 'VenueIsASettledToken' },
+  { type: 'error', inputs: [], name: 'VerifierNotDeployed' },
   { type: 'error', inputs: [], name: 'ZeroAddress' },
   { type: 'error', inputs: [], name: 'ZeroAmount' },
   { type: 'error', inputs: [], name: 'ZeroRedemptionQuote' },
@@ -3293,6 +3358,163 @@ export const asseteraPrimarySalesConfig = {
   address: asseteraPrimarySalesAddress,
   abi: asseteraPrimarySalesAbi,
 } as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// AttestationVerifier
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const attestationVerifierAbi = [
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'att',
+        internalType: 'struct GateTypes.FeeAttestation',
+        type: 'tuple',
+        components: [
+          { name: 'account', internalType: 'address', type: 'address' },
+          { name: 'action', internalType: 'uint8', type: 'uint8' },
+          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+          { name: 'deadline', internalType: 'uint256', type: 'uint256' },
+          { name: 'paramsHash', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'makerFeeBps', internalType: 'uint16', type: 'uint16' },
+          { name: 'takerFeeBps', internalType: 'uint16', type: 'uint16' },
+          { name: 'feeCollector', internalType: 'address', type: 'address' },
+          { name: 'feeToken', internalType: 'address', type: 'address' },
+          { name: 'signature', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+      { name: 'legA', internalType: 'address', type: 'address' },
+      { name: 'legB', internalType: 'address', type: 'address' },
+      { name: 'collectorAllowed', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'validateFees',
+    outputs: [],
+    stateMutability: 'pure',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'domainSeparator', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'account', internalType: 'address', type: 'address' },
+      { name: 'action', internalType: 'uint8', type: 'uint8' },
+      { name: 'maxTtl', internalType: 'uint256', type: 'uint256' },
+      {
+        name: 'att',
+        internalType: 'struct GateTypes.FeeAttestation',
+        type: 'tuple',
+        components: [
+          { name: 'account', internalType: 'address', type: 'address' },
+          { name: 'action', internalType: 'uint8', type: 'uint8' },
+          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+          { name: 'deadline', internalType: 'uint256', type: 'uint256' },
+          { name: 'paramsHash', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'makerFeeBps', internalType: 'uint16', type: 'uint16' },
+          { name: 'takerFeeBps', internalType: 'uint16', type: 'uint16' },
+          { name: 'feeCollector', internalType: 'address', type: 'address' },
+          { name: 'feeToken', internalType: 'address', type: 'address' },
+          { name: 'signature', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+    ],
+    name: 'verifyFee',
+    outputs: [{ name: 'signer', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'domainSeparator', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'account', internalType: 'address', type: 'address' },
+      { name: 'action', internalType: 'uint8', type: 'uint8' },
+      { name: 'maxTtl', internalType: 'uint256', type: 'uint256' },
+      {
+        name: 'att',
+        internalType: 'struct GateTypes.FeeAttestation',
+        type: 'tuple',
+        components: [
+          { name: 'account', internalType: 'address', type: 'address' },
+          { name: 'action', internalType: 'uint8', type: 'uint8' },
+          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+          { name: 'deadline', internalType: 'uint256', type: 'uint256' },
+          { name: 'paramsHash', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'makerFeeBps', internalType: 'uint16', type: 'uint16' },
+          { name: 'takerFeeBps', internalType: 'uint16', type: 'uint16' },
+          { name: 'feeCollector', internalType: 'address', type: 'address' },
+          { name: 'feeToken', internalType: 'address', type: 'address' },
+          { name: 'signature', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+      { name: 'legA', internalType: 'address', type: 'address' },
+      { name: 'legB', internalType: 'address', type: 'address' },
+      { name: 'collectorAllowed', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'verifyFeeTerms',
+    outputs: [{ name: 'signer', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'domainSeparator', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'account', internalType: 'address', type: 'address' },
+      { name: 'action', internalType: 'uint8', type: 'uint8' },
+      { name: 'orderId', internalType: 'uint256', type: 'uint256' },
+      { name: 'paramsHashAllowed', internalType: 'bool', type: 'bool' },
+      { name: 'maxTtl', internalType: 'uint256', type: 'uint256' },
+      {
+        name: 'att',
+        internalType: 'struct GateTypes.KycAttestation',
+        type: 'tuple',
+        components: [
+          { name: 'account', internalType: 'address', type: 'address' },
+          { name: 'action', internalType: 'uint8', type: 'uint8' },
+          { name: 'orderId', internalType: 'uint256', type: 'uint256' },
+          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+          { name: 'deadline', internalType: 'uint256', type: 'uint256' },
+          { name: 'paramsHash', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'signature', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+    ],
+    name: 'verifyKyc',
+    outputs: [{ name: 'signer', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  { type: 'error', inputs: [], name: 'ECDSAInvalidSignature' },
+  {
+    type: 'error',
+    inputs: [{ name: 'length', internalType: 'uint256', type: 'uint256' }],
+    name: 'ECDSAInvalidSignatureLength',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 's', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'ECDSAInvalidSignatureS',
+  },
+  { type: 'error', inputs: [], name: 'FeeAccountMismatch' },
+  { type: 'error', inputs: [], name: 'FeeActionMismatch' },
+  {
+    type: 'error',
+    inputs: [{ name: 'collector', internalType: 'address', type: 'address' }],
+    name: 'FeeCollectorNotAllowed',
+  },
+  { type: 'error', inputs: [], name: 'FeeExpired' },
+  {
+    type: 'error',
+    inputs: [{ name: 'feeToken', internalType: 'address', type: 'address' }],
+    name: 'FeeTokenNotALeg',
+  },
+  { type: 'error', inputs: [], name: 'FeeTtlTooLong' },
+  { type: 'error', inputs: [], name: 'InvalidFee' },
+  { type: 'error', inputs: [], name: 'KycAccountMismatch' },
+  { type: 'error', inputs: [], name: 'KycActionMismatch' },
+  { type: 'error', inputs: [], name: 'KycExpired' },
+  { type: 'error', inputs: [], name: 'KycOrderMismatch' },
+  { type: 'error', inputs: [], name: 'KycTtlTooLong' },
+  { type: 'error', inputs: [], name: 'ParamsHashMismatch' },
+  { type: 'error', inputs: [], name: 'ZeroAddress' },
+] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ERC2771Forwarder

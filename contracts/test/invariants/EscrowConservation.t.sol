@@ -7,6 +7,7 @@ import {AsseteraECS} from "../../src/AsseteraECS.sol";
 import {ExchangeTypes} from "../../src/types/ExchangeTypes.sol";
 import {FaucetToken} from "../mocks/FaucetToken.sol";
 import {EscrowHandler} from "./EscrowHandler.sol";
+import {AttestationVerifier} from "../../src/gates/AttestationVerifier.sol";
 
 /// @notice I-2(b): escrow-conservation invariant/fuzz suite for the security
 ///         review's funds-custody branch-coverage gap. Proves that for
@@ -31,7 +32,7 @@ contract EscrowConservationInvariantTest is Test {
         tokenA = new FaucetToken("Token A", "TKA", 18);
         tokenB = new FaucetToken("Token B", "TKB", 6);
 
-        AsseteraECS impl = new AsseteraECS(address(0)); // no meta-tx forwarder needed
+        AsseteraECS impl = new AsseteraECS(address(0), address(new AttestationVerifier())); // no meta-tx forwarder needed
         bytes memory initData =
             abi.encodeCall(AsseteraECS.initialize, (admin, makeAddr("invariant-kyc"), vm.addr(feeSignerPk)));
         exchange = AsseteraECS(address(new ERC1967Proxy(address(impl), initData)));

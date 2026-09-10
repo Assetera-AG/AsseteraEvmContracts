@@ -10,6 +10,7 @@ import {ISettlementLimits} from "../../src/primary/interfaces/ISettlementLimits.
 import {VenueSettler} from "../../src/primary/settle/VenueSettler.sol";
 import {FeeMath} from "../../src/libs/FeeMath.sol";
 import {VenueSettlerTestBase} from "./VenueSettlerTestBase.sol";
+import {AttestationVerifier} from "../../src/gates/AttestationVerifier.sol";
 
 /// @title VenueSettlerHappyPathTest
 /// @notice What a settlement against a Dinari-shaped venue does when everything works, asserted
@@ -293,7 +294,7 @@ contract VenueSettlerLimitsTest is VenueSettlerTestBase {
     function setUp() public virtual override {
         super.setUp();
 
-        AsseteraPrimarySales impl = new AsseteraPrimarySales(address(forwarder));
+        AsseteraPrimarySales impl = new AsseteraPrimarySales(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData =
             abi.encodeCall(AsseteraPrimarySales.initialize, (admin, kycSigner, feeSigner, settlementSigner));
         realCaps = AsseteraPrimarySales(address(new ERC1967Proxy(address(impl), initData)));

@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {GateTypes} from "../types/GateTypes.sol";
+import {IAttestationVerifier} from "../interfaces/IAttestationVerifier.sol";
 
 /// @title GateStorage
 /// @notice Universal base of the attestation gates: their state, the OZ
@@ -26,6 +27,34 @@ import {GateTypes} from "../types/GateTypes.sol";
 ///         shares this base without either contract constraining the other, and
 ///         no `__gap` is needed here — the struct can grow in place.
 abstract contract GateStorage is GateTypes, AccessControlUpgradeable, EIP712Upgradeable {
+    /// @dev The attestation verifier (see `AttestationVerifier`). Immutable, so it lives in
+    ///      the implementation's bytecode and not in the proxy's storage; an upgrade that
+    ///      replaces the verifier is an implementation redeploy with a new constructor
+    ///      argument, the same as a forwarder change.
+    ///
+    ///      No getter, on purpose: the exchange has no bytecode to spare and the post-deploy
+    ///      verify script reads the address back out of the implementation's code instead.
+    ///      The constructor check below is free by comparison, because constructor code is
+    ///      initcode and EIP-170 only measures the runtime half.
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
+    IAttestationVerifier internal immutable _ATTESTATION_VERIFIER;
+
+    /// @notice The implementation was built against an address that holds no code, so every
+    ///         gated action would revert once it went live. Raised at construction, which is
+    ///         before the implementation can be pointed at by a proxy.
+    error VerifierNotDeployed();
+
+    /// @dev Rejects the zero address and any address that is not deployed yet. Without it, an
+    ///      implementation built against a mistyped or not-yet-deployed verifier deploys
+    ///      cleanly and then halts trading on the first gated call, recoverable only by
+    ///      another upgrade. Deploying the verifier first is already the order both scripts
+    ///      use; this makes it impossible to get wrong.
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(address verifier_) {
+        if (verifier_.code.length == 0) revert VerifierNotDeployed();
+        _ATTESTATION_VERIFIER = IAttestationVerifier(verifier_);
+    }
+
     // --------------------------------------------------------------------- //
     //                       Namespaced gate state                            //
     // --------------------------------------------------------------------- //

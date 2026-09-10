@@ -106,6 +106,25 @@ on-chain invariant**, and `fillOrder` inherits whatever token the order already 
 > and #3 (balance-delta accounting) declined for now; if rebasing-token support is ever required, that needs
 > a contract upgrade first. Original finding text above left unmodified for the audit trail.
 
+> **Status update 2026-09-08: recommendation #3 adopted after the finding materialised in production.** A
+> listed fee-on-transfer token delivered 7,940 of a nominal 8,000 to the exchange; the order booked 8,000 and
+> the maker's cancel reverted with the token's `ERC20InsufficientBalance`. The off-chain allowlist that #1
+> relied on had never been built. Exchange 4.2.0 measures the balance delta at every pull (`core/EscrowPull.sol`):
+> an order opens with `remainingQuantity = received - escrowedFee` and emits `OrderEscrowShort`; an offer refuses
+> a short leg with `EscrowPullShort`, because its two legs are a negotiated pair. The pool now always equals the
+> sum of its claims at placement. The rebasing half of this finding is unchanged: a balance that moves after
+> placement is not something a pull measurement can see, and stays a policy exclusion.
+>
+> **Status update 2026-09-09 (4.3.0, 4.4.0).** A buy-side fill now routes the asset through the exchange
+> (pull from the taker, forward to the maker), so a token that exempts the exchange from its fee covers that
+> leg too and a taxed delivery reverts rather than shorting the maker. An offer proposer's asset leg is now
+> booked as what arrived and emits `OfferEscrowShort`, the same rule an order follows; the accepting leg and a
+> proposer's currency leg that carries a fee (sized on the proposed amount) still refuse a short delivery. A
+> currency leg at zero fee basis points has no such fee and is credited like an asset leg. The rule these
+> settle: a party escrowing ahead of a trade is credited what arrived, visibly; a party delivering at the
+> moment of a trade must arrive whole. The attestation validation moved to a separately deployed
+> `AttestationVerifier` reached by STATICCALL to make room; see the audit scope.
+
 ---
 
 ### L-1 · Blacklistable / freezable settlement tokens can permanently lock escrow
@@ -259,14 +278,14 @@ falls through to `safeTransferFrom`. No action.
 | Decentralization | **Moderate** | Intentionally centralized compliance/upgrade — regulatory mandate. |
 | Documentation | **Strong** | Thorough NatSpec + `FUNCTIONAL_SPEC.md`; drift resolved (I-1). |
 | Testing & verification | **Satisfactory (gap)** | 129 passing, high line cov; branch cov + weird-token/invariant/fuzz gap (I-2). |
-| Token handling | **Needs improvement** | M-1: no on-chain allowlist / balance-delta accounting. |
+| Token handling | **Satisfactory (since 4.2.0)** | M-1: balance-delta accounting at every pull; no on-chain allowlist; rebasing still policy-only. |
 | Low-level code | **Strong** | No assembly in scope; `SafeERC20` throughout. |
 
 ---
 
 ## 6. Recommended next steps (priority order)
 
-1. ~~**M-1**~~ — **Accepted 2026-07-15**, documentation-only (see finding).
+1. ~~**M-1**~~ — **Accepted 2026-07-15**, documentation-only; **fixed 2026-09-08** by balance-delta accounting in 4.2.0 (see finding).
 2. ~~**I-2**~~ — **Resolved 2026-07-15** (see finding).
 3. **L-3** — before mainnet: Safe multisig admin + upgrade timelock + hardened signer key management.
    **Accepted 2026-07-15, documentation-only for now** — checklist captured in `FUNCTIONAL_SPEC.md §2`;

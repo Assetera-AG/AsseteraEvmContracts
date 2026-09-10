@@ -36,7 +36,9 @@ contract CappedPrimarySalesHarness is AsseteraPrimarySales {
     mapping(address token => uint256 cap) public mockPerTxCap;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address trustedForwarder) AsseteraPrimarySales(trustedForwarder) {}
+    constructor(address trustedForwarder, address attestationVerifier)
+        AsseteraPrimarySales(trustedForwarder, attestationVerifier)
+    {}
 
     /// @notice Set the mock per-transaction cap for one settlement token.
     /// @param token The settlement currency.

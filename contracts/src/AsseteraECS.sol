@@ -9,6 +9,7 @@ pragma solidity 0.8.28;
 //  ╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝
 //        E X E C U T I O N  ·  C L E A R I N G  ·  S E T T L E M E N T
 
+import {GateStorage} from "./gates/GateStorage.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
@@ -61,7 +62,12 @@ contract AsseteraECS is ExchangeTypes, Initializable, UUPSUpgradeable, OrderBook
     /// @param trustedForwarder ERC-2771 forwarder (relayer). Immutable in impl
     ///        bytecode — proxy-safe. Set to address(0) to disable meta-tx.
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address trustedForwarder) ERC2771ContextUpgradeable(trustedForwarder) {
+    /// @param trustedForwarder The ERC-2771 forwarder, baked in as an immutable.
+    /// @param attestationVerifier The `AttestationVerifier` this implementation checks attestations with.
+    constructor(address trustedForwarder, address attestationVerifier)
+        ERC2771ContextUpgradeable(trustedForwarder)
+        GateStorage(attestationVerifier)
+    {
         _disableInitializers();
     }
 
@@ -148,8 +154,26 @@ contract AsseteraECS is ExchangeTypes, Initializable, UUPSUpgradeable, OrderBook
     ///      which lives in a mapping, so every existing entry keeps its slots and reads back with
     ///      `orderId == 0`. This IS installable over a live 4.0.0 proxy with a plain `upgradeToAndCall`,
     ///      and the MAJOR digit is what says so. Off-chain consumers move in lockstep regardless.
+    ///
+    ///      MINOR bumped to 4.2.0: escrow is measured at the pull (`EscrowPull`). An order opens with the
+    ///      quantity that actually arrived and emits `OrderEscrowShort` when that is less than it asked
+    ///      for; an offer refuses a short delivery with `EscrowPullShort`. No storage moved, no existing
+    ///      event changed, so this too installs over a live 4.x proxy with a plain `upgradeToAndCall`.
+    ///
+    ///      MINOR bumped to 4.3.0: a buy-side fill routes the asset leg through the exchange (pull from the
+    ///      taker, forward to the maker) instead of transferring it taker to maker directly, so a token
+    ///      that exempts the exchange from a transfer fee covers this leg too, and a taxed asset reverts
+    ///      the fill rather than delivering the maker short. No storage moved, no event changed.
+    ///
+    ///      MINOR bumped to 4.4.0: an offer proposer's asset leg is booked as what arrived and emits
+    ///      `OfferEscrowShort` (the accepting leg, and a proposer's currency leg whenever it carries a
+    ///      fee, still must arrive whole),
+    ///      and the stateless part of the gates moved to a separately deployed `AttestationVerifier`
+    ///      that the implementation takes as a constructor immutable. No storage moved; the new event is
+    ///      additive. Installs over a live 4.x proxy with a plain `upgradeToAndCall` once the verifier is
+    ///      deployed on that chain (`script/UpgradeCalldata.s.sol` does both).
     function version() external pure virtual returns (string memory) {
-        return "4.1.0";
+        return "4.4.0";
     }
 
     function _msgSender() internal view override(ContextUpgradeable, ERC2771ContextUpgradeable) returns (address) {

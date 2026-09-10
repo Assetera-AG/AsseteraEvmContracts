@@ -28,7 +28,9 @@ contract PrimarySalesHarness is AsseteraPrimarySales {
     uint256 public constant STUB_FEE = 5e6;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address trustedForwarder) AsseteraPrimarySales(trustedForwarder) {}
+    constructor(address trustedForwarder, address attestationVerifier)
+        AsseteraPrimarySales(trustedForwarder, attestationVerifier)
+    {}
 
     /// @dev The settlement seam, stubbed. Moves no tokens; returns the four numbers the entry
     ///      point puts into `PrimarySettled` so the event's field mapping can be pinned exactly.

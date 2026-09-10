@@ -21,6 +21,11 @@ const include = [
   // `deployments` below (that map assumes exactly one address per chain id). Callers resolve a specific
   // offering's address from the per-offering deployment manifest, not from this package.
   "AsseteraIssuanceVenue.json",
+  // Not a contract anyone calls directly. It is here for its ERRORS: the exchange's attestation
+  // checks run inside it, so `ECDSAInvalidSignature{,Length,S}` and the gate errors it raises are
+  // no longer declared on `asseteraEcsAbi`, even though a failed staticcall bubbles them up to the
+  // caller unchanged. A consumer decoding a revert needs both ABIs in its error set.
+  "AttestationVerifier.json",
   "FaucetToken.json",
   "ERC2771Forwarder.json",
 ];
@@ -44,10 +49,14 @@ const deployments = {
   AsseteraPrimarySales: addressesByChain("AsseteraPrimarySales"),
 };
 
+// `forge build` runs in the `generate` script, not inside the plugin. The plugin captures the build's
+// output through a 1 MB pipe (execSync with stdio "pipe"), and forge 1.8.1 stable overflowed it in CI
+// ("spawnSync /bin/sh ENOBUFS") with nothing in the log to say why. Building first puts the output in
+// the terminal and leaves the plugin to read artifacts only.
 export default defineConfig([
   {
     out: "src/generated/contracts.ts",
-    plugins: [foundry({ project: "../../contracts", forge: { build: true }, include, deployments })],
+    plugins: [foundry({ project: "../../contracts", forge: { build: false }, include, deployments })],
   },
   {
     out: "src/generated/react.ts",

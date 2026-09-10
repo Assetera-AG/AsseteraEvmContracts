@@ -9,6 +9,7 @@ import {GateTypes} from "../src/types/GateTypes.sol";
 import {GateStorage} from "../src/gates/GateStorage.sol";
 import {IKycGate} from "../src/interfaces/IKycGate.sol";
 import {GateOnlyVenue} from "./mocks/GateOnlyVenue.sol";
+import {AttestationVerifier} from "../src/gates/AttestationVerifier.sol";
 
 /// @title GateStorageNamespaceTest
 /// @notice Pins WHERE the gate state lives (AO-514).
@@ -45,7 +46,7 @@ contract GateStorageNamespaceTest is Test {
     address internal feeSigner = makeAddr("feeSigner");
 
     function setUp() public {
-        AsseteraECS impl = new AsseteraECS(address(0));
+        AsseteraECS impl = new AsseteraECS(address(0), address(new AttestationVerifier()));
         bytes memory initData = abi.encodeCall(AsseteraECS.initialize, (admin, kycSigner, feeSigner));
         exchange = AsseteraECS(address(new ERC1967Proxy(address(impl), initData)));
     }
@@ -137,7 +138,7 @@ contract GateReuseTest is Test {
     }
 
     function _deployVenue() internal returns (GateOnlyVenue) {
-        GateOnlyVenue impl = new GateOnlyVenue();
+        GateOnlyVenue impl = new GateOnlyVenue(address(new AttestationVerifier()));
         bytes memory initData =
             abi.encodeCall(GateOnlyVenue.initialize, (admin, vm.addr(kycSignerPk), vm.addr(feeSignerPk)));
         return GateOnlyVenue(address(new ERC1967Proxy(address(impl), initData)));

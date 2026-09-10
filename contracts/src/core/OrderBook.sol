@@ -7,13 +7,14 @@ import {KycGate} from "../gates/KycGate.sol";
 import {FeeGate} from "../gates/FeeGate.sol";
 import {ExchangeAdmin} from "../admin/ExchangeAdmin.sol";
 import {PermitRelay} from "./PermitRelay.sol";
+import {EscrowPull} from "./EscrowPull.sol";
 import {FeeMath} from "../libs/FeeMath.sol";
 
 /// @title OrderBook
 /// @notice Order lifecycle: place, self-cancel, fill, and permissionless sweep
 ///         of expired orders. Operator-only settle/refund are parked — see
 ///         docs/parked/OperatorFunctions.sol (AC-246).
-abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
+abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay, EscrowPull {
     using SafeERC20 for IERC20;
 
     /// @dev Emitted when a new order is placed. Includes the fee terms snapshotted onto the
@@ -67,6 +68,14 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
     );
     /// @dev `refunded` is remaining escrow plus any unconsumed escrowed fee (AC-833).
     event OrderExpired(uint256 indexed id, address indexed maker, uint256 refunded);
+    /// @dev Emitted right after `OrderPlaced` when the sell token delivered less than it was asked
+    ///      to move (a fee on transfer). `requested` is `sellAmount + escrowedFee`, `received` the
+    ///      measured balance delta, and `credited` the `remainingQuantity` the order opened with.
+    ///      `OrderPlaced.sellAmount` stays the price basis; consumers that mirror escrow must take
+    ///      the quantity from here when this event is present.
+    event OrderEscrowShort(
+        uint256 indexed id, address indexed sellToken, uint256 requested, uint256 received, uint256 credited
+    );
 
     /// @dev An order placed before the AC-833 upgrade carries no settlement currency
     ///      (`feeToken == address(0)`), so its fees cannot be denominated correctly.
@@ -106,11 +115,10 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
         _bindParamsHash(
             uint8(Action.Place), att, feeAtt, keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount))
         );
-        // Fee bounds + denomination — always enforced (defence in depth) so a compromised
-        // fee signer cannot set extreme fees, route to an unlisted collector, or
+        // Fee bounds + denomination are enforced in the same call (defence in depth) so a
+        // compromised fee signer cannot set extreme fees, route to an unlisted collector, or
         // denominate the fees in a token that isn't part of this trade.
-        _validateFees(feeAtt, sellToken, buyToken);
-        _consumeKycAndFee(_msgSender(), uint8(Action.Place), 0, att, feeAtt);
+        _consumeKycAndFee(_msgSender(), uint8(Action.Place), 0, att, feeAtt, sellToken, buyToken);
         return _placeOrder(sellToken, sellAmount, buyToken, buyAmount, expireTs, feeAtt);
     }
 
@@ -141,8 +149,7 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
         _bindParamsHash(
             uint8(Action.Place), att, feeAtt, keccak256(abi.encode(sellToken, sellAmount, buyToken, buyAmount))
         );
-        _validateFees(feeAtt, sellToken, buyToken);
-        _consumeKycAndFee(_msgSender(), uint8(Action.Place), 0, att, feeAtt);
+        _consumeKycAndFee(_msgSender(), uint8(Action.Place), 0, att, feeAtt, sellToken, buyToken);
         // Permit must cover the FULL escrow, which on a buy-side order is
         // sellAmount + the maker's escrowed fee — see `_placeOrder`.
         _tryPermit(sellToken, _escrowTotal(sellToken, sellAmount, feeAtt), permitDeadline, v, r, s);
@@ -202,7 +209,8 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
             boughtQuantity: 0
         });
 
-        IERC20(sellToken).safeTransferFrom(maker, address(this), sellAmount + escrowedFee);
+        uint256 requested = sellAmount + escrowedFee;
+        uint256 received = _pullEscrow(sellToken, maker, requested);
         emit OrderPlaced(
             id,
             maker,
@@ -216,6 +224,18 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
             feeAtt.feeCollector,
             feeAtt.feeToken
         );
+        if (received < requested) {
+            // The token kept part of the pull (fee on transfer). The order opens with what
+            // actually arrived, so the pool can always pay it back. The escrowed fee stays
+            // whole, because it is the collector's money once a fill earns it; the shortfall
+            // comes off the maker's quantity, and the maker bears the tax on their own token.
+            // `sellAmount` is untouched: with `buyAmount` it is the listed price, and a fill
+            // still pays that price per unit on whatever quantity remains.
+            if (received <= escrowedFee) revert EscrowPullShort(requested, received);
+            uint256 credited = received - escrowedFee;
+            _orders[id].remainingQuantity = credited;
+            emit OrderEscrowShort(id, sellToken, requested, received, credited);
+        }
     }
 
     /// @notice Maker self-cancel. Never requires a KYC attestation — a user must
@@ -324,8 +344,14 @@ abstract contract OrderBook is KycGate, FeeGate, ExchangeAdmin, PermitRelay {
         // ---- Interactions ---------------------------------------------------- //
         if (makerSellsCurrency) {
             // Buy-side order: maker is the currency payer (already escrowed notional +
-            // fee); taker is the currency receiver. Asset moves gross to the maker.
-            IERC20(o.buyToken).safeTransferFrom(taker, maker, buyAmountDue);
+            // fee); taker is the currency receiver. Asset moves gross to the maker, THROUGH
+            // this contract rather than straight from taker to maker: a token that exempts
+            // the exchange from its transfer fee then covers this leg too, and the delivery
+            // is measured. The maker agreed to receive `buyAmountDue`, so a short delivery is
+            // refused rather than passed on.
+            uint256 got = _pullEscrow(o.buyToken, taker, buyAmountDue);
+            if (got < buyAmountDue) revert EscrowPullShort(buyAmountDue, got);
+            IERC20(o.buyToken).safeTransfer(maker, buyAmountDue);
             IERC20(o.sellToken).safeTransfer(taker, fillSellAmount - takerFeeAmount);
             if (collectorTake > 0) IERC20(o.sellToken).safeTransfer(collector, collectorTake);
             if (feeDust > 0) IERC20(o.sellToken).safeTransfer(maker, feeDust);

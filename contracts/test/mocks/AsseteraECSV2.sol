@@ -20,10 +20,12 @@ contract AsseteraECSV2 is AsseteraECS {
     uint256 public upgradeNote;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address trustedForwarder) AsseteraECS(trustedForwarder) {}
+    constructor(address trustedForwarder, address attestationVerifier)
+        AsseteraECS(trustedForwarder, attestationVerifier)
+    {}
 
     function version() external pure override returns (string memory) {
-        return "4.1.0";
+        return "4.5.0";
     }
 
     function isUpgraded() external pure returns (bool) {
