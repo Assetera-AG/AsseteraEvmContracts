@@ -334,6 +334,19 @@ contract AsseteraECSTest is Test {
         assertFalse(exchange.complianceRequired(uint8(ExchangeTypes.Action.SettleOffer)), "SettleOffer");
     }
 
+    /// An implementation built against an address that holds no code would deploy cleanly and
+    /// then revert on every gated action once a proxy pointed at it, so the constructor refuses
+    /// it. The check lives in initcode, which EIP-170 does not measure, so it costs no runtime
+    /// bytecode on a contract that has 393 bytes of room.
+    function test_Constructor_RevertsIfTheVerifierHoldsNoCode() public {
+        vm.expectRevert(GateStorage.VerifierNotDeployed.selector);
+        new AsseteraECS(address(forwarder), address(0));
+
+        address neverDeployed = makeAddr("neverDeployed");
+        vm.expectRevert(GateStorage.VerifierNotDeployed.selector);
+        new AsseteraECS(address(forwarder), neverDeployed);
+    }
+
     function test_Initialize_RevertsOnZeroKycSigner() public {
         AsseteraECS impl = new AsseteraECS(address(forwarder), address(new AttestationVerifier()));
         bytes memory initData = abi.encodeCall(AsseteraECS.initialize, (admin, address(0), feeSigner));

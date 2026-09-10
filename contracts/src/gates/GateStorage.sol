@@ -32,15 +32,26 @@ abstract contract GateStorage is GateTypes, AccessControlUpgradeable, EIP712Upgr
     ///      replaces the verifier is an implementation redeploy with a new constructor
     ///      argument, the same as a forwarder change.
     ///
-    ///      No getter and no zero check, on purpose: the exchange has no bytecode to spare.
-    ///      A wrong or empty verifier makes every gated action revert on the first call,
-    ///      which the test suite and the post-deploy verify script both exercise; the
-    ///      verify script reads the address back out of the implementation's code.
+    ///      No getter, on purpose: the exchange has no bytecode to spare and the post-deploy
+    ///      verify script reads the address back out of the implementation's code instead.
+    ///      The constructor check below is free by comparison, because constructor code is
+    ///      initcode and EIP-170 only measures the runtime half.
     /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     IAttestationVerifier internal immutable _ATTESTATION_VERIFIER;
 
+    /// @notice The implementation was built against an address that holds no code, so every
+    ///         gated action would revert once it went live. Raised at construction, which is
+    ///         before the implementation can be pointed at by a proxy.
+    error VerifierNotDeployed();
+
+    /// @dev Rejects the zero address and any address that is not deployed yet. Without it, an
+    ///      implementation built against a mistyped or not-yet-deployed verifier deploys
+    ///      cleanly and then halts trading on the first gated call, recoverable only by
+    ///      another upgrade. Deploying the verifier first is already the order both scripts
+    ///      use; this makes it impossible to get wrong.
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address verifier_) {
+        if (verifier_.code.length == 0) revert VerifierNotDeployed();
         _ATTESTATION_VERIFIER = IAttestationVerifier(verifier_);
     }
 

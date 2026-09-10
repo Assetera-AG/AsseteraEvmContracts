@@ -21,6 +21,11 @@ const include = [
   // `deployments` below (that map assumes exactly one address per chain id). Callers resolve a specific
   // offering's address from the per-offering deployment manifest, not from this package.
   "AsseteraIssuanceVenue.json",
+  // Not a contract anyone calls directly. It is here for its ERRORS: the exchange's attestation
+  // checks run inside it, so `ECDSAInvalidSignature{,Length,S}` and the gate errors it raises are
+  // no longer declared on `asseteraEcsAbi`, even though a failed staticcall bubbles them up to the
+  // caller unchanged. A consumer decoding a revert needs both ABIs in its error set.
+  "AttestationVerifier.json",
   "FaucetToken.json",
   "ERC2771Forwarder.json",
 ];

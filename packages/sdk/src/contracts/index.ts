@@ -17,6 +17,10 @@ export {
   asseteraEcsAbi,
   asseteraIssuanceVenueAbi,
   asseteraPrimarySalesAbi,
+  // Nothing calls this contract directly. It is exported for its ERRORS: the exchange runs its
+  // attestation checks inside it, so a failed check bubbles up a selector that `asseteraEcsAbi` no
+  // longer declares. Decode a revert against both ABIs, not just the exchange's.
+  attestationVerifierAbi,
   erc2771ForwarderAbi,
   faucetTokenAbi,
 } from "../generated/contracts.js";

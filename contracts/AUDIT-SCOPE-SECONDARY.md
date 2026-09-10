@@ -250,7 +250,7 @@ Dependencies are **frozen for the duration of an external audit**.
 | Behaviour | This surface |
 |---|---|
 | Standard ERC-20 (`transfer` / `transferFrom` move exactly the requested amount) | **Supported** — the only supported class |
-| Fee-on-transfer / deflationary | **Measured at the pull since 4.2.0** (`core/EscrowPull.sol`). An order opens with the quantity that arrived and emits `OrderEscrowShort`; an offer proposer's asset leg is booked the same way and emits `OfferEscrowShort` (4.4.0). The accepting leg, the asset on a buy-side fill (routed through the exchange, 4.3.0) and a proposer's currency leg refuse a short delivery with `EscrowPullShort`. The pool always equals the sum of its claims. The token still taxes every payout, so such a token is a poor fit, but it can no longer strand other makers' escrow (finding M-1, fixed) |
+| Fee-on-transfer / deflationary | **Measured at the pull since 4.2.0** (`core/EscrowPull.sol`). An order opens with the quantity that arrived and emits `OrderEscrowShort`; an offer proposer's asset leg is booked the same way and emits `OfferEscrowShort` (4.4.0). The accepting leg, the asset on a buy-side fill (routed through the exchange, 4.3.0) and a fee-bearing proposer's currency leg refuse a short delivery with `EscrowPullShort`. A zero-fee currency leg is credited like an asset leg, since no fee was sized on the proposed amount. The pool always equals the sum of its claims. The token still taxes every payout, so such a token is a poor fit, but it can no longer strand other makers' escrow (finding M-1, fixed) |
 | Rebasing (positive or negative) | **Refused by policy, not by code.** A negative rebase desyncs recorded escrow from the real balance (finding M-1) |
 | Non-standard `decimals()` / missing `decimals()` | Never read by this surface |
 | Freezable / blacklistable (USDC and friends) | **Supported but hazardous** — escrow can be permanently stranded (finding L-1). This is what production actually uses |
@@ -607,8 +607,10 @@ Fully described in the internal review; the load-bearing ones, re-read against t
    their own quantity, `sellAmount` stays the price basis) and emits `OrderEscrowShort`; since 4.4.0 an
    offer proposer's asset leg is booked the same way and emits `OfferEscrowShort`, while the accepting
    leg, the asset on a buy-side fill (routed through the exchange, 4.3.0) and a proposer's currency leg
-   refuse a short delivery with `EscrowPullShort(requested, received)`: a party escrowing ahead of a
-   trade is credited what arrived, visibly; a party delivering at the moment of a trade must arrive whole.
+   that carries a fee refuse a short delivery with `EscrowPullShort(requested, received)`: a party
+   escrowing ahead of a trade is credited what arrived, visibly; a party delivering at the moment of a
+   trade must arrive whole, and so must a leg whose fee was sized on the amount proposed. A currency leg
+   at zero fee basis points has no such fee and is credited like an asset leg.
    Payouts still move the nominal recorded figure and the token taxes them again, so the recipient of a
    fill or refund nets less than the pool paid; that is the token's behaviour, not a solvency problem.
    **Rebasing tokens remain policy-only:** a balance that moves after placement is invisible to a pull

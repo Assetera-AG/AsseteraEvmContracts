@@ -119,7 +119,8 @@ on-chain invariant**, and `fillOrder` inherits whatever token the order already 
 > (pull from the taker, forward to the maker), so a token that exempts the exchange from its fee covers that
 > leg too and a taxed delivery reverts rather than shorting the maker. An offer proposer's asset leg is now
 > booked as what arrived and emits `OfferEscrowShort`, the same rule an order follows; the accepting leg and a
-> proposer's currency leg (fee sized on the proposed amount) still refuse a short delivery. The rule these
+> proposer's currency leg that carries a fee (sized on the proposed amount) still refuse a short delivery. A
+> currency leg at zero fee basis points has no such fee and is credited like an asset leg. The rule these
 > settle: a party escrowing ahead of a trade is credited what arrived, visibly; a party delivering at the
 > moment of a trade must arrive whole. The attestation validation moved to a separately deployed
 > `AttestationVerifier` reached by STATICCALL to make room; see the audit scope.

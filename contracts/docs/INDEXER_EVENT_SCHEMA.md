@@ -646,7 +646,9 @@ event OfferEscrowShort(uint256 indexed id, address indexed legToken, uint256 req
 | `received` | the measured balance delta |
 | `credited` | the leg as booked: what the linked order funded plus what arrived |
 
-Only a proposer's ASSET leg is credited. A proposer's CURRENCY leg (the leg that carries a fee) and the ACCEPTING leg at settlement must arrive whole; a short delivery there reverts `EscrowPullShort` (see [§7](#7-errors-for-revert-reason-decoding)).
+A proposer's ASSET leg is always credited. The ACCEPTING leg at settlement must always arrive whole, and so must a proposer's CURRENCY leg whenever it carries a fee, because that fee was sized on the amount proposed; a short delivery there reverts `EscrowPullShort` (see [§7](#7-errors-for-revert-reason-decoding)).
+
+At zero fee basis points a currency leg carries no fee and is credited like an asset leg, so do not assume `legToken` on this event is always the asset. Read it from the event.
 
 ---
 
