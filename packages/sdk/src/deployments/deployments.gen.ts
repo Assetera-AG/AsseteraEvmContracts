@@ -7,10 +7,11 @@ export const deployments = {
     "contracts": {
       "AsseteraECS": "0xf045d3FE81C14d8c13DbaB0b03a4Ea1505e499ad",
       "AsseteraPrimarySales": "0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc",
-      "Forwarder": "0x2244B33a97f91284D53d0A12d42F237927C3DBf7"
+      "Forwarder": "0x2244B33a97f91284D53d0A12d42F237927C3DBf7",
+      "AttestationVerifier": "0xb0A8bcEbf4b28fae719a8c9feC0bCC19535c1245"
     },
     "implementations": {
-      "AsseteraECS": "0xF2f8Dfd9bbc1AD2A78447A0196deC84e3397737B",
+      "AsseteraECS": "0xF79D371958A6aC79123eF75B6eD879dAb9ceE82b",
       "AsseteraPrimarySales": "0xf58cF2421e39a572F821cDDF08Bdf6dce673dc74"
     },
     "metadata": {
@@ -32,10 +33,11 @@ export const deployments = {
     "contracts": {
       "AsseteraECS": "0xf045d3FE81C14d8c13DbaB0b03a4Ea1505e499ad",
       "AsseteraPrimarySales": "0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc",
-      "Forwarder": "0x2244B33a97f91284D53d0A12d42F237927C3DBf7"
+      "Forwarder": "0x2244B33a97f91284D53d0A12d42F237927C3DBf7",
+      "AttestationVerifier": "0xb0A8bcEbf4b28fae719a8c9feC0bCC19535c1245"
     },
     "implementations": {
-      "AsseteraECS": "0xB6De6C29f039ed53e993f916961A758D32C13c11",
+      "AsseteraECS": "0xf58cF2421e39a572F821cDDF08Bdf6dce673dc74",
       "AsseteraPrimarySales": "0xF2f8Dfd9bbc1AD2A78447A0196deC84e3397737B"
     },
     "metadata": {
@@ -59,10 +61,11 @@ export const deployments = {
       "AsseteraPrimarySales": "0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc",
       "Forwarder": "0x2244B33a97f91284D53d0A12d42F237927C3DBf7",
       "MockRWA": "0xECe9f75Eb6af58B7c70773BbC5922E49fD65F3E0",
-      "MockUSDC": "0x85D7B2569b3d69320F05A4FFB140Ca4521989A15"
+      "MockUSDC": "0x85D7B2569b3d69320F05A4FFB140Ca4521989A15",
+      "AttestationVerifier": "0xb0A8bcEbf4b28fae719a8c9feC0bCC19535c1245"
     },
     "implementations": {
-      "AsseteraECS": "0xB6De6C29f039ed53e993f916961A758D32C13c11",
+      "AsseteraECS": "0x9d04a06CE45cE278660C8B442D60500EaBA112AE",
       "AsseteraPrimarySales": "0xF2f8Dfd9bbc1AD2A78447A0196deC84e3397737B"
     },
     "metadata": {
@@ -86,10 +89,11 @@ export const deployments = {
       "AsseteraPrimarySales": "0xF62757dd232DC7582A5d46F62aAcDb6B739223Dc",
       "Forwarder": "0x2244B33a97f91284D53d0A12d42F237927C3DBf7",
       "MockRWA": "0xECe9f75Eb6af58B7c70773BbC5922E49fD65F3E0",
-      "MockUSDC": "0x85D7B2569b3d69320F05A4FFB140Ca4521989A15"
+      "MockUSDC": "0x85D7B2569b3d69320F05A4FFB140Ca4521989A15",
+      "AttestationVerifier": "0xb0A8bcEbf4b28fae719a8c9feC0bCC19535c1245"
     },
     "implementations": {
-      "AsseteraECS": "0xB6De6C29f039ed53e993f916961A758D32C13c11",
+      "AsseteraECS": "0xf58cF2421e39a572F821cDDF08Bdf6dce673dc74",
       "AsseteraPrimarySales": "0xF2f8Dfd9bbc1AD2A78447A0196deC84e3397737B"
     },
     "metadata": {
