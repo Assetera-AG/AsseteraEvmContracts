@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.3.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v8.2.1...evm-contracts-v8.3.0) (2026-09-10)
+
+
+### Features
+
+* **exchange:** credit what the token delivered, not what the maker asked it to move ([#97](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/97)) ([c850a16](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/c850a163f121b3f5cac1e611a7ae5f5000b4b25b))
+
 ## [8.2.1](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v8.2.0...evm-contracts-v8.2.1) (2026-09-08)
 
 
