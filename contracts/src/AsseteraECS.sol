@@ -166,7 +166,8 @@ contract AsseteraECS is ExchangeTypes, Initializable, UUPSUpgradeable, OrderBook
     ///      the fill rather than delivering the maker short. No storage moved, no event changed.
     ///
     ///      MINOR bumped to 4.4.0: an offer proposer's asset leg is booked as what arrived and emits
-    ///      `OfferEscrowShort` (the accepting leg and a proposer's currency leg still must arrive whole),
+    ///      `OfferEscrowShort` (the accepting leg, and a proposer's currency leg whenever it carries a
+    ///      fee, still must arrive whole),
     ///      and the stateless part of the gates moved to a separately deployed `AttestationVerifier`
     ///      that the implementation takes as a constructor immutable. No storage moved; the new event is
     ///      additive. Installs over a live 4.x proxy with a plain `upgradeToAndCall` once the verifier is
