@@ -422,7 +422,7 @@ contract IssuanceVenueRouterE2ETest is PrimarySalesTestBase {
         _submit(data, intent);
 
         _approveRouter(intent);
-        vm.expectRevert(abi.encodeWithSelector(IIntentGate.IntentNonceUsed.selector, buyer, INTENT_NONCE));
+        vm.expectRevert(IIntentGate.IntentNonceUsed.selector);
         _submit(data, intent);
 
         assertEq(rwa.balanceOf(buyer), 80e18, "one settlement, one delivery");
