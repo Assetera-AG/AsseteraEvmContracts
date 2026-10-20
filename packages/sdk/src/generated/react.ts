@@ -3972,6 +3972,383 @@ export const faucetTokenAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// MockRFQVenue
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const mockRfqVenueAbi = [
+  {
+    type: 'constructor',
+    inputs: [
+      { name: 'quoteSigner_', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'QUOTE_TYPE',
+    outputs: [{ name: '', internalType: 'string', type: 'string' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'QUOTE_TYPEHASH',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'SIDE_BUY',
+    outputs: [{ name: '', internalType: 'uint8', type: 'uint8' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'SIDE_SELL',
+    outputs: [{ name: '', internalType: 'uint8', type: 'uint8' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'acceptOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MockRFQVenue.Quote',
+        type: 'tuple',
+        components: [
+          { name: 'side', internalType: 'uint8', type: 'uint8' },
+          { name: 'paymentToken', internalType: 'address', type: 'address' },
+          { name: 'paymentAmount', internalType: 'uint256', type: 'uint256' },
+          { name: 'assetToken', internalType: 'address', type: 'address' },
+          { name: 'assetAmount', internalType: 'uint256', type: 'uint256' },
+          { name: 'recipient', internalType: 'address', type: 'address' },
+          { name: 'quoteId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'expiry', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      { name: 'signature', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'buy',
+    outputs: [
+      { name: 'paymentIn', internalType: 'uint256', type: 'uint256' },
+      { name: 'assetOut', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'eip712Domain',
+    outputs: [
+      { name: 'fields', internalType: 'bytes1', type: 'bytes1' },
+      { name: 'name', internalType: 'string', type: 'string' },
+      { name: 'version', internalType: 'string', type: 'string' },
+      { name: 'chainId', internalType: 'uint256', type: 'uint256' },
+      { name: 'verifyingContract', internalType: 'address', type: 'address' },
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'extensions', internalType: 'uint256[]', type: 'uint256[]' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MockRFQVenue.Quote',
+        type: 'tuple',
+        components: [
+          { name: 'side', internalType: 'uint8', type: 'uint8' },
+          { name: 'paymentToken', internalType: 'address', type: 'address' },
+          { name: 'paymentAmount', internalType: 'uint256', type: 'uint256' },
+          { name: 'assetToken', internalType: 'address', type: 'address' },
+          { name: 'assetAmount', internalType: 'uint256', type: 'uint256' },
+          { name: 'recipient', internalType: 'address', type: 'address' },
+          { name: 'quoteId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'expiry', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    name: 'hashQuote',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'owner',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'pendingOwner',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'quoteSigner',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'quoteId', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'quoteUsed',
+    outputs: [{ name: 'used', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'renounceOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MockRFQVenue.Quote',
+        type: 'tuple',
+        components: [
+          { name: 'side', internalType: 'uint8', type: 'uint8' },
+          { name: 'paymentToken', internalType: 'address', type: 'address' },
+          { name: 'paymentAmount', internalType: 'uint256', type: 'uint256' },
+          { name: 'assetToken', internalType: 'address', type: 'address' },
+          { name: 'assetAmount', internalType: 'uint256', type: 'uint256' },
+          { name: 'recipient', internalType: 'address', type: 'address' },
+          { name: 'quoteId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'expiry', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      { name: 'signature', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'sell',
+    outputs: [
+      { name: 'assetIn', internalType: 'uint256', type: 'uint256' },
+      { name: 'paymentOut', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newSigner', internalType: 'address', type: 'address' }],
+    name: 'setQuoteSigner',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
+    name: 'transferOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  { type: 'event', anonymous: false, inputs: [], name: 'EIP712DomainChanged' },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'previousOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferStarted',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'previousOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferred',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'quoteId',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+      { name: 'side', internalType: 'uint8', type: 'uint8', indexed: true },
+      {
+        name: 'caller',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'recipient',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'assetToken',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'assetAmount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'paymentToken',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'paymentAmount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'QuoteFilled',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'previousSigner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newSigner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'QuoteSignerSet',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'expected', internalType: 'uint256', type: 'uint256' },
+      { name: 'received', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'AssetPullMismatch',
+  },
+  { type: 'error', inputs: [], name: 'InvalidQuoteSignature' },
+  { type: 'error', inputs: [], name: 'InvalidShortString' },
+  {
+    type: 'error',
+    inputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
+    name: 'OwnableInvalidOwner',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'account', internalType: 'address', type: 'address' }],
+    name: 'OwnableUnauthorizedAccount',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'expected', internalType: 'uint256', type: 'uint256' },
+      { name: 'received', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'PaymentPullMismatch',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'quoteId', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'QuoteAlreadyUsed',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'expiry', internalType: 'uint256', type: 'uint256' }],
+    name: 'QuoteExpired',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'token', internalType: 'address', type: 'address' }],
+    name: 'SafeERC20FailedOperation',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'str', internalType: 'string', type: 'string' }],
+    name: 'StringTooLong',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'expected', internalType: 'uint8', type: 'uint8' },
+      { name: 'supplied', internalType: 'uint8', type: 'uint8' },
+    ],
+    name: 'WrongQuoteSide',
+  },
+  { type: 'error', inputs: [], name: 'ZeroAddress' },
+] as const
+
+/**
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const mockRfqVenueAddress = {
+  80002: '0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf',
+  11155111: '0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf',
+} as const
+
+/**
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const mockRfqVenueConfig = {
+  address: mockRfqVenueAddress,
+  abi: mockRfqVenueAbi,
+} as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // React
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -7554,4 +7931,398 @@ export const useWatchFaucetTokenTransferEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
     abi: faucetTokenAbi,
     eventName: 'Transfer',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mockRfqVenueAbi}__
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useReadMockRfqVenue = /*#__PURE__*/ createUseReadContract({
+  abi: mockRfqVenueAbi,
+  address: mockRfqVenueAddress,
+})
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"QUOTE_TYPE"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useReadMockRfqVenueQuoteType = /*#__PURE__*/ createUseReadContract(
+  {
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'QUOTE_TYPE',
+  },
+)
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"QUOTE_TYPEHASH"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useReadMockRfqVenueQuoteTypehash =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'QUOTE_TYPEHASH',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"SIDE_BUY"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useReadMockRfqVenueSideBuy = /*#__PURE__*/ createUseReadContract({
+  abi: mockRfqVenueAbi,
+  address: mockRfqVenueAddress,
+  functionName: 'SIDE_BUY',
+})
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"SIDE_SELL"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useReadMockRfqVenueSideSell = /*#__PURE__*/ createUseReadContract({
+  abi: mockRfqVenueAbi,
+  address: mockRfqVenueAddress,
+  functionName: 'SIDE_SELL',
+})
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"eip712Domain"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useReadMockRfqVenueEip712Domain =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'eip712Domain',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"hashQuote"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useReadMockRfqVenueHashQuote = /*#__PURE__*/ createUseReadContract(
+  {
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'hashQuote',
+  },
+)
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"owner"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useReadMockRfqVenueOwner = /*#__PURE__*/ createUseReadContract({
+  abi: mockRfqVenueAbi,
+  address: mockRfqVenueAddress,
+  functionName: 'owner',
+})
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"pendingOwner"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useReadMockRfqVenuePendingOwner =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'pendingOwner',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"quoteSigner"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useReadMockRfqVenueQuoteSigner =
+  /*#__PURE__*/ createUseReadContract({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'quoteSigner',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"quoteUsed"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useReadMockRfqVenueQuoteUsed = /*#__PURE__*/ createUseReadContract(
+  {
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'quoteUsed',
+  },
+)
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mockRfqVenueAbi}__
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useWriteMockRfqVenue = /*#__PURE__*/ createUseWriteContract({
+  abi: mockRfqVenueAbi,
+  address: mockRfqVenueAddress,
+})
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"acceptOwnership"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useWriteMockRfqVenueAcceptOwnership =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'acceptOwnership',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"buy"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useWriteMockRfqVenueBuy = /*#__PURE__*/ createUseWriteContract({
+  abi: mockRfqVenueAbi,
+  address: mockRfqVenueAddress,
+  functionName: 'buy',
+})
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"renounceOwnership"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useWriteMockRfqVenueRenounceOwnership =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'renounceOwnership',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"sell"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useWriteMockRfqVenueSell = /*#__PURE__*/ createUseWriteContract({
+  abi: mockRfqVenueAbi,
+  address: mockRfqVenueAddress,
+  functionName: 'sell',
+})
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"setQuoteSigner"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useWriteMockRfqVenueSetQuoteSigner =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'setQuoteSigner',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"transferOwnership"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useWriteMockRfqVenueTransferOwnership =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'transferOwnership',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mockRfqVenueAbi}__
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useSimulateMockRfqVenue = /*#__PURE__*/ createUseSimulateContract({
+  abi: mockRfqVenueAbi,
+  address: mockRfqVenueAddress,
+})
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"acceptOwnership"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useSimulateMockRfqVenueAcceptOwnership =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'acceptOwnership',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"buy"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useSimulateMockRfqVenueBuy =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'buy',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"renounceOwnership"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useSimulateMockRfqVenueRenounceOwnership =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'renounceOwnership',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"sell"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useSimulateMockRfqVenueSell =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'sell',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"setQuoteSigner"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useSimulateMockRfqVenueSetQuoteSigner =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'setQuoteSigner',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `functionName` set to `"transferOwnership"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useSimulateMockRfqVenueTransferOwnership =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    functionName: 'transferOwnership',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mockRfqVenueAbi}__
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useWatchMockRfqVenueEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `eventName` set to `"EIP712DomainChanged"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useWatchMockRfqVenueEip712DomainChangedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    eventName: 'EIP712DomainChanged',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `eventName` set to `"OwnershipTransferStarted"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useWatchMockRfqVenueOwnershipTransferStartedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    eventName: 'OwnershipTransferStarted',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `eventName` set to `"OwnershipTransferred"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useWatchMockRfqVenueOwnershipTransferredEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    eventName: 'OwnershipTransferred',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `eventName` set to `"QuoteFilled"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useWatchMockRfqVenueQuoteFilledEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    eventName: 'QuoteFilled',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link mockRfqVenueAbi}__ and `eventName` set to `"QuoteSignerSet"`
+ *
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const useWatchMockRfqVenueQuoteSignerSetEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: mockRfqVenueAbi,
+    address: mockRfqVenueAddress,
+    eventName: 'QuoteSignerSet',
   })

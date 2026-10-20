@@ -53,6 +53,29 @@ export const deployments = {
     },
     "namespace": "eip155"
   },
+  31337: {
+    "caip2": "eip155:31337",
+    "chainId": 31337,
+    "contracts": {
+      "AsseteraExchange": "0x6ca2201048f152d74e543F1Bd90Dad22dF3f6B67",
+      "Forwarder": "0xa35aD44D293e79E15920503ae3A2413057e26df3",
+      "MockRWA": "0x347Dd74cD9fFd43652b65913054DfDe228F40396",
+      "MockUSDC": "0xfdd2E3c553Ca1b401c127A435aC641299d182937"
+    },
+    "implementations": {
+      "AsseteraExchange": "0x44F0d60B32af1BE9E8F47d7c9739BC0b5625bf99"
+    },
+    "metadata": {
+      "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "deployBlock": 2,
+      "deployTimestamp": 1783428424,
+      "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "kycSigner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "operator": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "relayer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    },
+    "namespace": "eip155"
+  },
   80002: {
     "caip2": "eip155:80002",
     "chainId": 80002,
@@ -62,6 +85,8 @@ export const deployments = {
       "Forwarder": "0x2244B33a97f91284D53d0A12d42F237927C3DBf7",
       "MockRWA": "0xECe9f75Eb6af58B7c70773BbC5922E49fD65F3E0",
       "MockUSDC": "0x85D7B2569b3d69320F05A4FFB140Ca4521989A15",
+      "mAAPL": "0x0ac4366F374f1f5e81f514BEaB5132CE2F357c6e",
+      "mockRfqVenue": "0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf",
       "AttestationVerifier": "0xb0A8bcEbf4b28fae719a8c9feC0bCC19535c1245"
     },
     "implementations": {
@@ -90,6 +115,8 @@ export const deployments = {
       "Forwarder": "0x2244B33a97f91284D53d0A12d42F237927C3DBf7",
       "MockRWA": "0xECe9f75Eb6af58B7c70773BbC5922E49fD65F3E0",
       "MockUSDC": "0x85D7B2569b3d69320F05A4FFB140Ca4521989A15",
+      "mAAPL": "0x0ac4366F374f1f5e81f514BEaB5132CE2F357c6e",
+      "mockRfqVenue": "0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf",
       "AttestationVerifier": "0xb0A8bcEbf4b28fae719a8c9feC0bCC19535c1245"
     },
     "implementations": {

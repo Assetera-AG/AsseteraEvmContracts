@@ -23,6 +23,9 @@ export {
   attestationVerifierAbi,
   erc2771ForwarderAbi,
   faucetTokenAbi,
+  // Testnet fixture. Exported so a consumer can sign a mock RFQ quote against the same ABI the
+  // venue verifies, and decode its named errors (expired, reused, wrong signer, wrong side).
+  mockRfqVenueAbi,
 } from "../generated/contracts.js";
 export {
   getContractAddress,
@@ -30,6 +33,8 @@ export {
   getEcsAddress,
   /** @deprecated use `getEcsAddress` */
   getExchangeAddress,
+  getMockAaplAddress,
+  getMockRfqVenueAddress,
   getPrimarySalesAddress,
   getSupportedChainIds,
   type Deployment,

@@ -28,6 +28,10 @@ const include = [
   "AttestationVerifier.json",
   "FaucetToken.json",
   "ERC2771Forwarder.json",
+  // Testnet-only fixture: the issuer-agnostic mock RFQ venue the primary-sales router settles
+  // against where no real RFQ issuer is deployed. Its per-chain address lives under
+  // `mockRfqVenue` in the deployment artifacts.
+  "MockRFQVenue.json",
 ];
 
 function addressesByChain(contract: string): Record<number, `0x${string}`> {
@@ -47,6 +51,9 @@ const deployments = {
   // Empty on every chain until the deploy script has run (AO-552). The per-chain JSONs are that script's
   // OUTPUT and are never hand-edited, so no address is invented here.
   AsseteraPrimarySales: addressesByChain("AsseteraPrimarySales"),
+  // Testnet-only. Empty on every chain with no mock RFQ venue recorded, which is every mainnet
+  // and any testnet the fixture deploy script has not been run against.
+  MockRFQVenue: addressesByChain("mockRfqVenue"),
 };
 
 // `forge build` runs in the `generate` script, not inside the plugin. The plugin captures the build's

@@ -3963,3 +3963,380 @@ export const faucetTokenAbi = [
     name: 'StringTooLong',
   },
 ] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// MockRFQVenue
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const mockRfqVenueAbi = [
+  {
+    type: 'constructor',
+    inputs: [
+      { name: 'quoteSigner_', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'QUOTE_TYPE',
+    outputs: [{ name: '', internalType: 'string', type: 'string' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'QUOTE_TYPEHASH',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'SIDE_BUY',
+    outputs: [{ name: '', internalType: 'uint8', type: 'uint8' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'SIDE_SELL',
+    outputs: [{ name: '', internalType: 'uint8', type: 'uint8' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'acceptOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MockRFQVenue.Quote',
+        type: 'tuple',
+        components: [
+          { name: 'side', internalType: 'uint8', type: 'uint8' },
+          { name: 'paymentToken', internalType: 'address', type: 'address' },
+          { name: 'paymentAmount', internalType: 'uint256', type: 'uint256' },
+          { name: 'assetToken', internalType: 'address', type: 'address' },
+          { name: 'assetAmount', internalType: 'uint256', type: 'uint256' },
+          { name: 'recipient', internalType: 'address', type: 'address' },
+          { name: 'quoteId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'expiry', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      { name: 'signature', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'buy',
+    outputs: [
+      { name: 'paymentIn', internalType: 'uint256', type: 'uint256' },
+      { name: 'assetOut', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'eip712Domain',
+    outputs: [
+      { name: 'fields', internalType: 'bytes1', type: 'bytes1' },
+      { name: 'name', internalType: 'string', type: 'string' },
+      { name: 'version', internalType: 'string', type: 'string' },
+      { name: 'chainId', internalType: 'uint256', type: 'uint256' },
+      { name: 'verifyingContract', internalType: 'address', type: 'address' },
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'extensions', internalType: 'uint256[]', type: 'uint256[]' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MockRFQVenue.Quote',
+        type: 'tuple',
+        components: [
+          { name: 'side', internalType: 'uint8', type: 'uint8' },
+          { name: 'paymentToken', internalType: 'address', type: 'address' },
+          { name: 'paymentAmount', internalType: 'uint256', type: 'uint256' },
+          { name: 'assetToken', internalType: 'address', type: 'address' },
+          { name: 'assetAmount', internalType: 'uint256', type: 'uint256' },
+          { name: 'recipient', internalType: 'address', type: 'address' },
+          { name: 'quoteId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'expiry', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    name: 'hashQuote',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'owner',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'pendingOwner',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'quoteSigner',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'quoteId', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'quoteUsed',
+    outputs: [{ name: 'used', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'renounceOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MockRFQVenue.Quote',
+        type: 'tuple',
+        components: [
+          { name: 'side', internalType: 'uint8', type: 'uint8' },
+          { name: 'paymentToken', internalType: 'address', type: 'address' },
+          { name: 'paymentAmount', internalType: 'uint256', type: 'uint256' },
+          { name: 'assetToken', internalType: 'address', type: 'address' },
+          { name: 'assetAmount', internalType: 'uint256', type: 'uint256' },
+          { name: 'recipient', internalType: 'address', type: 'address' },
+          { name: 'quoteId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'expiry', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      { name: 'signature', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'sell',
+    outputs: [
+      { name: 'assetIn', internalType: 'uint256', type: 'uint256' },
+      { name: 'paymentOut', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newSigner', internalType: 'address', type: 'address' }],
+    name: 'setQuoteSigner',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
+    name: 'transferOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  { type: 'event', anonymous: false, inputs: [], name: 'EIP712DomainChanged' },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'previousOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferStarted',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'previousOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferred',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'quoteId',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: true,
+      },
+      { name: 'side', internalType: 'uint8', type: 'uint8', indexed: true },
+      {
+        name: 'caller',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'recipient',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'assetToken',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'assetAmount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'paymentToken',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'paymentAmount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'QuoteFilled',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'previousSigner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newSigner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'QuoteSignerSet',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'expected', internalType: 'uint256', type: 'uint256' },
+      { name: 'received', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'AssetPullMismatch',
+  },
+  { type: 'error', inputs: [], name: 'InvalidQuoteSignature' },
+  { type: 'error', inputs: [], name: 'InvalidShortString' },
+  {
+    type: 'error',
+    inputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
+    name: 'OwnableInvalidOwner',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'account', internalType: 'address', type: 'address' }],
+    name: 'OwnableUnauthorizedAccount',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'expected', internalType: 'uint256', type: 'uint256' },
+      { name: 'received', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'PaymentPullMismatch',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'quoteId', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'QuoteAlreadyUsed',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'expiry', internalType: 'uint256', type: 'uint256' }],
+    name: 'QuoteExpired',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'token', internalType: 'address', type: 'address' }],
+    name: 'SafeERC20FailedOperation',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'str', internalType: 'string', type: 'string' }],
+    name: 'StringTooLong',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'expected', internalType: 'uint8', type: 'uint8' },
+      { name: 'supplied', internalType: 'uint8', type: 'uint8' },
+    ],
+    name: 'WrongQuoteSide',
+  },
+  { type: 'error', inputs: [], name: 'ZeroAddress' },
+] as const
+
+/**
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const mockRfqVenueAddress = {
+  80002: '0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf',
+  11155111: '0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf',
+} as const
+
+/**
+ * - [__View Contract on Polygon Amoy Polygon Scan__](https://amoy.polygonscan.com/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ * - [__View Contract on Sepolia Etherscan__](https://sepolia.etherscan.io/address/0x94E0C188c74ca9DE057D879F9a7a67dbA976AADf)
+ */
+export const mockRfqVenueConfig = {
+  address: mockRfqVenueAddress,
+  abi: mockRfqVenueAbi,
+} as const

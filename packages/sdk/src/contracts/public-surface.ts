@@ -29,10 +29,13 @@ type RequiredExports =
   | "asseteraPrimarySalesAbi"
   | "erc2771ForwarderAbi"
   | "faucetTokenAbi"
+  | "mockRfqVenueAbi"
   | "getContractAddress"
   | "getDeployment"
   | "getEcsAddress"
   | "getExchangeAddress"
+  | "getMockAaplAddress"
+  | "getMockRfqVenueAddress"
   | "getPrimarySalesAddress"
   | "getSupportedChainIds";
 
