@@ -141,7 +141,36 @@ contract DeployMockRFQVenue is DeployBase {
         require(vm.keyExistsJson(json, ".contracts"), "deployment record has no contracts section");
         _writeAddress(".contracts.mAAPL", aapl);
         _writeAddress(".contracts.mockRfqVenue", venue);
+
+        // 🔴 Read the record BACK. The keyed `vm.writeJson` is silently a no-op on older forge
+        // builds (1.0.0 among them), so without this the script would happily print "deployment
+        // written" over a file it never touched, and the SDK would keep publishing an address that
+        // nothing was deployed to. A deployment that is not recorded is not a deployment.
+        _requireRecorded(".contracts.mAAPL", aapl);
+        _requireRecorded(".contracts.mockRfqVenue", venue);
+
         console2.log("Deployment written to:", deploymentPath);
+    }
+
+    /// @dev Refuse unless `key` in the on-disk record holds exactly `expected`.
+    function _requireRecorded(string memory key, address expected) private view {
+        string memory json = vm.readFile(deploymentPath);
+        require(
+            vm.keyExistsJson(json, key),
+            string.concat(
+                "deployment record is missing ",
+                key,
+                " right after writing it: the forge version may be too old (the keyed vm.writeJson does nothing on forge 1.0.0)"
+            )
+        );
+        require(
+            vm.parseJsonAddress(json, key) == expected,
+            string.concat(
+                "deployment record holds the wrong address at ",
+                key,
+                ": the forge version may be too old (the keyed vm.writeJson does nothing on forge 1.0.0)"
+            )
+        );
     }
 
     /// @dev `vm.writeJson`'s keyed form writes a serialized VALUE at the key, so the value is
