@@ -53,29 +53,6 @@ export const deployments = {
     },
     "namespace": "eip155"
   },
-  31337: {
-    "caip2": "eip155:31337",
-    "chainId": 31337,
-    "contracts": {
-      "AsseteraExchange": "0x6ca2201048f152d74e543F1Bd90Dad22dF3f6B67",
-      "Forwarder": "0xa35aD44D293e79E15920503ae3A2413057e26df3",
-      "MockRWA": "0x347Dd74cD9fFd43652b65913054DfDe228F40396",
-      "MockUSDC": "0xfdd2E3c553Ca1b401c127A435aC641299d182937"
-    },
-    "implementations": {
-      "AsseteraExchange": "0x44F0d60B32af1BE9E8F47d7c9739BC0b5625bf99"
-    },
-    "metadata": {
-      "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-      "deployBlock": 2,
-      "deployTimestamp": 1783428424,
-      "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-      "kycSigner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-      "operator": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-      "relayer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-    },
-    "namespace": "eip155"
-  },
   80002: {
     "caip2": "eip155:80002",
     "chainId": 80002,
