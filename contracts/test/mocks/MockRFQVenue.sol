@@ -16,18 +16,21 @@ import {FaucetToken} from "./FaucetToken.sol";
 ///         by the quote, and nothing here is bound to mUSDC, mRWA or any particular issuer.
 ///
 ///         🔴 **NOT for production.** This is a testnet fixture, deployed the same way the
-///         `FaucetToken` mocks are. It has no upgradeability, no pause, no allowlist and no
-///         notion of an eligible counterparty: anyone may call `buy` or `sell` with a correctly
-///         signed quote, and it mints through `FaucetToken`'s permissionless `mint`, which means
-///         the asset supply is not a scarce thing. Never record an address of this contract in a
-///         production deployment record.
+///         `FaucetToken` mocks are. It has no upgradeability, no pause and no allowlist, and its
+///         only notion of an eligible counterparty is the quote's `taker`: the address the
+///         provider signed the quote for may call `buy` or `sell` with it, and nobody else. It
+///         mints through `FaucetToken`'s permissionless `mint`, which means the asset supply is
+///         not a scarce thing. Never record an address of this contract in a production
+///         deployment record.
 ///
 /// @dev    A quote is an EIP-712 message over the `Quote` struct below, signed by the configured
 ///         off-chain test RFQ provider (`quoteSigner`). The domain is name `MockRFQVenue`,
 ///         version `1`, this chain and this contract, so a quote signed for one chain or one
 ///         venue cannot be replayed against another. Every `quoteId` is single-use, and a quote
 ///         expires, so a filled or stale quote is refused with a named error rather than filled
-///         twice.
+///         twice. The signed `taker` binds a quote to the one address that may fill it; on the
+///         Assetera route that is the router, which is the caller and the holder of the approval
+///         the venue pulls.
 ///
 ///         **BUY** — the venue sells the asset to the router's buyer:
 ///           1. pulls exactly `paymentAmount` of `paymentToken` from `msg.sender` (the router,
@@ -60,7 +63,7 @@ contract MockRFQVenue is EIP712, Ownable2Step {
     /// @notice The canonical EIP-712 type of a quote. Kept as a string as well as a hash so an
     ///         off-chain signer can copy it verbatim instead of re-deriving it.
     string public constant QUOTE_TYPE =
-        "Quote(uint8 side,address paymentToken,uint256 paymentAmount,address assetToken,uint256 assetAmount,address recipient,bytes32 quoteId,uint256 expiry)";
+        "Quote(uint8 side,address paymentToken,uint256 paymentAmount,address assetToken,uint256 assetAmount,address recipient,address taker,bytes32 quoteId,uint256 expiry)";
 
     /// @notice `keccak256(QUOTE_TYPE)`, the first word of every quote struct hash.
     bytes32 public constant QUOTE_TYPEHASH = keccak256(bytes(QUOTE_TYPE));
@@ -73,6 +76,9 @@ contract MockRFQVenue is EIP712, Ownable2Step {
     /// @param assetAmount   The exact amount of `assetToken` moved.
     /// @param recipient     Who receives the minted side of the trade. The buyer on a BUY quote,
     ///                      the router on a SELL quote (see the contract NatSpec).
+    /// @param taker         The only address allowed to fill the quote. On the Assetera route that
+    ///                      is always the router, which holds the approval the venue pulls, so a
+    ///                      quote signed for one counterparty cannot be filled by another.
     /// @param quoteId       A unique id, usable once ever.
     /// @param expiry        Last timestamp at which the quote is valid, inclusive.
     struct Quote {
@@ -82,6 +88,7 @@ contract MockRFQVenue is EIP712, Ownable2Step {
         address assetToken;
         uint256 assetAmount;
         address recipient;
+        address taker;
         bytes32 quoteId;
         uint256 expiry;
     }
@@ -128,6 +135,11 @@ contract MockRFQVenue is EIP712, Ownable2Step {
 
     /// @dev The quote is for the other side than the function that was called.
     error WrongQuoteSide(uint8 expected, uint8 supplied);
+
+    /// @dev The caller is not the address the quote was signed for.
+    /// @param expected The `quote.taker` the provider signed.
+    /// @param caller   `msg.sender`.
+    error WrongTaker(address expected, address caller);
 
     /// @dev A configured address is the zero address.
     error ZeroAddress();
@@ -243,14 +255,17 @@ contract MockRFQVenue is EIP712, Ownable2Step {
     /// @dev Validate a quote against the configured signer and burn its id.
     ///
     ///      The id is burned BEFORE any token is touched, so a token callback (or a second quote
-    ///      in the same transaction) cannot fill it twice. Order: side, expiry, replay,
-    ///      signature. Each failure has its own error so an operator can tell a stale quote from
-    ///      a reused one from a misconfigured signer.
+    ///      in the same transaction) cannot fill it twice. Order: taker, side, expiry, replay,
+    ///      signature. The caller check comes first because it is the cheapest one and it is an
+    ///      authorization question, not a validity question: only the address the quote names may
+    ///      fill it, whatever the state of the quote. Each failure has its own error so an operator
+    ///      can tell a stale quote from a reused one from a misconfigured signer.
     ///
     /// @param quote     The quote being filled.
     /// @param signature The provider's signature over `hashQuote(quote)`.
     /// @param expected  The side the calling function implements.
     function _consume(Quote calldata quote, bytes calldata signature, uint8 expected) private {
+        if (msg.sender != quote.taker) revert WrongTaker(quote.taker, msg.sender);
         if (quote.side != expected) revert WrongQuoteSide(expected, quote.side);
         // Inclusive: a quote is valid while `block.timestamp <= quote.expiry`.
         if (block.timestamp > quote.expiry) revert QuoteExpired(quote.expiry);
@@ -276,6 +291,7 @@ contract MockRFQVenue is EIP712, Ownable2Step {
                 quote.assetToken,
                 quote.assetAmount,
                 quote.recipient,
+                quote.taker,
                 quote.quoteId,
                 quote.expiry
             )

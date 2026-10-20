@@ -3984,6 +3984,7 @@ export const mockRfqVenueAbi = [
     type: 'constructor',
     inputs: [
       { name: 'quoteSigner_', internalType: 'address', type: 'address' },
+      { name: 'initialOwner', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -4036,6 +4037,7 @@ export const mockRfqVenueAbi = [
           { name: 'assetToken', internalType: 'address', type: 'address' },
           { name: 'assetAmount', internalType: 'uint256', type: 'uint256' },
           { name: 'recipient', internalType: 'address', type: 'address' },
+          { name: 'taker', internalType: 'address', type: 'address' },
           { name: 'quoteId', internalType: 'bytes32', type: 'bytes32' },
           { name: 'expiry', internalType: 'uint256', type: 'uint256' },
         ],
@@ -4078,6 +4080,7 @@ export const mockRfqVenueAbi = [
           { name: 'assetToken', internalType: 'address', type: 'address' },
           { name: 'assetAmount', internalType: 'uint256', type: 'uint256' },
           { name: 'recipient', internalType: 'address', type: 'address' },
+          { name: 'taker', internalType: 'address', type: 'address' },
           { name: 'quoteId', internalType: 'bytes32', type: 'bytes32' },
           { name: 'expiry', internalType: 'uint256', type: 'uint256' },
         ],
@@ -4136,6 +4139,7 @@ export const mockRfqVenueAbi = [
           { name: 'assetToken', internalType: 'address', type: 'address' },
           { name: 'assetAmount', internalType: 'uint256', type: 'uint256' },
           { name: 'recipient', internalType: 'address', type: 'address' },
+          { name: 'taker', internalType: 'address', type: 'address' },
           { name: 'quoteId', internalType: 'bytes32', type: 'bytes32' },
           { name: 'expiry', internalType: 'uint256', type: 'uint256' },
         ],
@@ -4326,6 +4330,14 @@ export const mockRfqVenueAbi = [
       { name: 'supplied', internalType: 'uint8', type: 'uint8' },
     ],
     name: 'WrongQuoteSide',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'expected', internalType: 'address', type: 'address' },
+      { name: 'caller', internalType: 'address', type: 'address' },
+    ],
+    name: 'WrongTaker',
   },
   { type: 'error', inputs: [], name: 'ZeroAddress' },
 ] as const

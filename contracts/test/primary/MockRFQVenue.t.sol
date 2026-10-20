@@ -37,7 +37,7 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
     /// independently of the code under test. `test_Quote_HashMatchesAnIndependentlyBuiltDigest`
     /// proves the two agree.
     string internal constant QUOTE_TYPE_STRING =
-        "Quote(uint8 side,address paymentToken,uint256 paymentAmount,address assetToken,uint256 assetAmount,address recipient,bytes32 quoteId,uint256 expiry)";
+        "Quote(uint8 side,address paymentToken,uint256 paymentAmount,address assetToken,uint256 assetAmount,address recipient,address taker,bytes32 quoteId,uint256 expiry)";
 
     function setUp() public override {
         super.setUp();
@@ -56,6 +56,7 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
         address assetToken,
         uint256 assetAmount,
         address recipient,
+        address taker,
         bytes32 quoteId,
         uint256 expiry
     ) internal pure returns (MockRFQVenue.Quote memory) {
@@ -66,6 +67,7 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
             assetToken: assetToken,
             assetAmount: assetAmount,
             recipient: recipient,
+            taker: taker,
             quoteId: quoteId,
             expiry: expiry
         });
@@ -95,7 +97,15 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
 
     function _buyHappyPath() internal view returns (bytes memory data, PrimaryTypes.SettlementIntent memory intent) {
         MockRFQVenue.Quote memory quote = _quote(
-            BUY, address(currency), QUOTE, address(asset), ASSET_OUT, buyer, BUY_QUOTE_ID, block.timestamp + 5 minutes
+            BUY,
+            address(currency),
+            QUOTE,
+            address(asset),
+            ASSET_OUT,
+            buyer,
+            address(router),
+            BUY_QUOTE_ID,
+            block.timestamp + 5 minutes
         );
         data = abi.encodeCall(MockRFQVenue.buy, (quote, _signQuote(quote)));
         intent = _buyIntent(data, QUOTE, ASSET_OUT);
@@ -112,6 +122,7 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
             PROCEEDS,
             address(asset),
             SELL_ASSET,
+            address(router),
             address(router),
             SELL_QUOTE_ID,
             block.timestamp + 5 minutes
@@ -152,6 +163,7 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
             address(aapl),
             7e18,
             buyer,
+            address(router),
             keccak256("rfq:buy:aapl"),
             block.timestamp + 5 minutes
         );
@@ -170,7 +182,15 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
     /// the outer error is `VenueCallFailed`; the named venue error is asserted directly below.
     function test_Buy_RevertsWhenTheQuoteIsSignedByAnotherKey() public {
         MockRFQVenue.Quote memory quote = _quote(
-            BUY, address(currency), QUOTE, address(asset), ASSET_OUT, buyer, BUY_QUOTE_ID, block.timestamp + 5 minutes
+            BUY,
+            address(currency),
+            QUOTE,
+            address(asset),
+            ASSET_OUT,
+            buyer,
+            address(router),
+            BUY_QUOTE_ID,
+            block.timestamp + 5 minutes
         );
         bytes memory data = abi.encodeCall(MockRFQVenue.buy, (quote, _signQuoteWith(0xBADBAD, quote)));
         PrimaryTypes.SettlementIntent memory intent = _buyIntent(data, QUOTE, ASSET_OUT);
@@ -182,8 +202,17 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
 
     /// An expired quote is refused. The expiry is inclusive, so `block.timestamp - 1` is stale.
     function test_Buy_RevertsWhenTheQuoteHasExpired() public {
-        MockRFQVenue.Quote memory quote =
-            _quote(BUY, address(currency), QUOTE, address(asset), ASSET_OUT, buyer, BUY_QUOTE_ID, block.timestamp - 1);
+        MockRFQVenue.Quote memory quote = _quote(
+            BUY,
+            address(currency),
+            QUOTE,
+            address(asset),
+            ASSET_OUT,
+            buyer,
+            address(router),
+            BUY_QUOTE_ID,
+            block.timestamp - 1
+        );
         bytes memory data = abi.encodeCall(MockRFQVenue.buy, (quote, _signQuote(quote)));
         PrimaryTypes.SettlementIntent memory intent = _buyIntent(data, QUOTE, ASSET_OUT);
 
@@ -221,6 +250,7 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
             address(asset),
             MIN_OUT - 1e18,
             buyer,
+            address(router),
             BUY_QUOTE_ID,
             block.timestamp + 5 minutes
         );
@@ -237,7 +267,15 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
     /// buy-side amount mismatch the router is designed to absorb.
     function test_Buy_RefundsWhatTheQuoteDidNotConsume() public {
         MockRFQVenue.Quote memory quote = _quote(
-            BUY, address(currency), 900e6, address(asset), ASSET_OUT, buyer, BUY_QUOTE_ID, block.timestamp + 5 minutes
+            BUY,
+            address(currency),
+            900e6,
+            address(asset),
+            ASSET_OUT,
+            buyer,
+            address(router),
+            BUY_QUOTE_ID,
+            block.timestamp + 5 minutes
         );
         bytes memory data = abi.encodeCall(MockRFQVenue.buy, (quote, _signQuote(quote)));
         PrimaryTypes.SettlementIntent memory intent = _buyIntent(data, QUOTE, ASSET_OUT);
@@ -261,6 +299,7 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
             address(asset),
             ASSET_OUT,
             buyer,
+            address(router),
             BUY_QUOTE_ID,
             block.timestamp + 5 minutes
         );
@@ -303,6 +342,7 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
             address(aapl),
             10e18,
             address(router),
+            address(router),
             keccak256("rfq:sell:aapl"),
             block.timestamp + 5 minutes
         );
@@ -327,6 +367,7 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
             address(asset),
             SELL_ASSET,
             address(router),
+            address(router),
             SELL_QUOTE_ID,
             block.timestamp + 5 minutes
         );
@@ -346,6 +387,7 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
             PROCEEDS,
             address(asset),
             SELL_ASSET,
+            address(router),
             address(router),
             SELL_QUOTE_ID,
             block.timestamp - 1
@@ -385,6 +427,7 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
             address(asset),
             SELL_ASSET,
             address(router),
+            address(router),
             SELL_QUOTE_ID,
             block.timestamp + 5 minutes
         );
@@ -408,6 +451,7 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
             address(asset),
             taken,
             address(router),
+            address(router),
             SELL_QUOTE_ID,
             block.timestamp + 5 minutes
         );
@@ -427,7 +471,15 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
 
     function test_Quote_RefusesAWrongSignerWithANamedError() public {
         MockRFQVenue.Quote memory quote = _quote(
-            BUY, address(currency), QUOTE, address(asset), ASSET_OUT, buyer, BUY_QUOTE_ID, block.timestamp + 5 minutes
+            BUY,
+            address(currency),
+            QUOTE,
+            address(asset),
+            ASSET_OUT,
+            buyer,
+            buyer,
+            BUY_QUOTE_ID,
+            block.timestamp + 5 minutes
         );
 
         bytes memory badSignature = _signQuoteWith(0xBADBAD, quote);
@@ -441,7 +493,15 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
 
     function test_Quote_RefusesAMalformedSignatureWithTheSameNamedError() public {
         MockRFQVenue.Quote memory quote = _quote(
-            BUY, address(currency), QUOTE, address(asset), ASSET_OUT, buyer, BUY_QUOTE_ID, block.timestamp + 5 minutes
+            BUY,
+            address(currency),
+            QUOTE,
+            address(asset),
+            ASSET_OUT,
+            buyer,
+            buyer,
+            BUY_QUOTE_ID,
+            block.timestamp + 5 minutes
         );
 
         vm.prank(buyer);
@@ -452,8 +512,9 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
     }
 
     function test_Quote_RefusesAnExpiredQuoteWithANamedError() public {
-        MockRFQVenue.Quote memory quote =
-            _quote(BUY, address(currency), QUOTE, address(asset), ASSET_OUT, buyer, BUY_QUOTE_ID, block.timestamp - 1);
+        MockRFQVenue.Quote memory quote = _quote(
+            BUY, address(currency), QUOTE, address(asset), ASSET_OUT, buyer, buyer, BUY_QUOTE_ID, block.timestamp - 1
+        );
 
         bytes memory signature = _signQuote(quote);
 
@@ -464,7 +525,15 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
 
     function test_Quote_RefusesAReusedIdWithANamedError() public {
         MockRFQVenue.Quote memory quote = _quote(
-            BUY, address(currency), QUOTE, address(asset), ASSET_OUT, buyer, BUY_QUOTE_ID, block.timestamp + 5 minutes
+            BUY,
+            address(currency),
+            QUOTE,
+            address(asset),
+            ASSET_OUT,
+            buyer,
+            buyer,
+            BUY_QUOTE_ID,
+            block.timestamp + 5 minutes
         );
         bytes memory signature = _signQuote(quote);
 
@@ -482,7 +551,15 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
     /// be confused even though both are just venue calldata.
     function test_Quote_RefusesTheOtherSide() public {
         MockRFQVenue.Quote memory quote = _quote(
-            BUY, address(currency), QUOTE, address(asset), ASSET_OUT, buyer, BUY_QUOTE_ID, block.timestamp + 5 minutes
+            BUY,
+            address(currency),
+            QUOTE,
+            address(asset),
+            ASSET_OUT,
+            buyer,
+            address(this),
+            BUY_QUOTE_ID,
+            block.timestamp + 5 minutes
         );
 
         bytes memory signature = _signQuote(quote);
@@ -491,13 +568,39 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
         rfq.sell(quote, signature);
     }
 
+    /// 🔴 A quote is bound to the address the provider signed as its `taker`, which on the router
+    /// path is the router. A correctly signed quote presented by anyone else is refused by name,
+    /// and the id is NOT burned on the way out: the caller check runs before the replay write, so
+    /// the quote is still fillable by the taker afterwards.
+    function test_Quote_RefusesACallerThatIsNotTheTaker() public {
+        MockRFQVenue.Quote memory quote = _quote(
+            BUY,
+            address(currency),
+            QUOTE,
+            address(asset),
+            ASSET_OUT,
+            buyer,
+            address(router),
+            BUY_QUOTE_ID,
+            block.timestamp + 5 minutes
+        );
+        bytes memory signature = _signQuote(quote);
+        address stranger = makeAddr("stranger");
+
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(MockRFQVenue.WrongTaker.selector, address(router), stranger));
+        rfq.buy(quote, signature);
+
+        assertFalse(rfq.quoteUsed(BUY_QUOTE_ID), "a refused caller must not burn the quote id");
+    }
+
     // ── EIP-712 shape and configuration ──────────────────────────────────────────────────
 
     /// Pins the exact type string and the domain, so an off-chain signer that copies the string
     /// from the contract cannot silently diverge from what the contract verifies.
     function test_Quote_HashMatchesAnIndependentlyBuiltDigest() public view {
         MockRFQVenue.Quote memory quote =
-            _quote(BUY, address(currency), QUOTE, address(asset), ASSET_OUT, buyer, BUY_QUOTE_ID, 1_700_000_000);
+            _quote(BUY, address(currency), QUOTE, address(asset), ASSET_OUT, buyer, buyer, BUY_QUOTE_ID, 1_700_000_000);
 
         assertEq(rfq.QUOTE_TYPE(), QUOTE_TYPE_STRING, "the published type string");
         assertEq(rfq.QUOTE_TYPEHASH(), keccak256(bytes(QUOTE_TYPE_STRING)), "the published type hash");
@@ -511,6 +614,7 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
                 quote.assetToken,
                 quote.assetAmount,
                 quote.recipient,
+                quote.taker,
                 quote.quoteId,
                 quote.expiry
             )
@@ -524,7 +628,15 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
         uint256 newSignerPk = 0xABCD;
         address newSigner = vm.addr(newSignerPk);
         MockRFQVenue.Quote memory quote = _quote(
-            BUY, address(currency), QUOTE, address(asset), ASSET_OUT, buyer, BUY_QUOTE_ID, block.timestamp + 5 minutes
+            BUY,
+            address(currency),
+            QUOTE,
+            address(asset),
+            ASSET_OUT,
+            buyer,
+            buyer,
+            BUY_QUOTE_ID,
+            block.timestamp + 5 minutes
         );
         bytes memory oldSignature = _signQuote(quote);
 
