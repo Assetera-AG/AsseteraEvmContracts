@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {DeployMockRFQVenue} from "../script/DeployMockRFQVenue.s.sol";
 import {FaucetToken} from "./mocks/FaucetToken.sol";
 import {MockRFQVenue} from "./mocks/MockRFQVenue.sol";
@@ -19,6 +20,12 @@ contract DeployMockRFQVenueHarness is DeployMockRFQVenue {
 
     function addressFor(address deployer, string calldata label) external pure returns (address) {
         return computeCreate3Address(_salt(deployer, label), deployer);
+    }
+
+    /// The harness is the deployer, and therefore the venue's owner: this is the owner-only call the
+    /// script's CREATE3 deployment must leave reachable.
+    function rotateQuoteSigner(address venue, address newSigner) external {
+        MockRFQVenue(venue).setQuoteSigner(newSigner);
     }
 
     /// No broadcast in a test: the harness itself is the account CreateX sees, so the CREATE3
@@ -89,10 +96,33 @@ contract DeployMockRFQVenueTest is Test {
         assertEq(FaucetToken(aapl).symbol(), "mAAPL", "mAAPL symbol");
         assertEq(FaucetToken(aapl).decimals(), 18, "mAAPL decimals");
         assertEq(MockRFQVenue(venue).quoteSigner(), quoteSigner, "the venue's quote signer");
+        // 🔴 The CREATE3 deployment makes the constructor's `msg.sender` the CREATE3 proxy, so the
+        // owner must be the account the script deployed from. If this ever reads the proxy address
+        // (or zero), `setQuoteSigner` is unreachable and the fixture is dead.
+        assertEq(MockRFQVenue(venue).owner(), address(script), "the owner is not the deployer the script used");
 
         // Everything already in the record is preserved.
         assertEq(vm.parseJsonAddress(json, ".contracts.AsseteraECS"), address(0xAA), "an existing key was disturbed");
         assertEq(vm.parseJsonUint(json, ".chainId"), 31337, "the chain id was disturbed");
+    }
+
+    /// 🔴 The whole point of passing the owner explicitly: after the CREATE3 deployment the account
+    /// the script deployed from can rotate the quote signer, and nobody else can. Without the
+    /// explicit owner the deployment would be owned by the CREATE3 proxy and this call would revert
+    /// for everyone, forever.
+    function test_OnlyTheDeployerCanRotateTheQuoteSigner() public {
+        string memory path = _recordPath("owner");
+        _run(path);
+        address venue = vm.parseJsonAddress(vm.readFile(path), ".contracts.mockRfqVenue");
+
+        address newSigner = makeAddr("newSigner");
+        script.rotateQuoteSigner(venue, newSigner);
+        assertEq(MockRFQVenue(venue).quoteSigner(), newSigner, "the deployer, as owner, could not rotate the signer");
+
+        address stranger = makeAddr("stranger");
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
+        vm.prank(stranger);
+        MockRFQVenue(venue).setQuoteSigner(stranger);
     }
 
     /// A re-run reuses the same two addresses rather than deploying a second set of fixtures.

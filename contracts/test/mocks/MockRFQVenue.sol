@@ -138,8 +138,14 @@ contract MockRFQVenue is EIP712, Ownable2Step {
     /// @dev The asset pull did not move exactly `assetAmount`.
     error AssetPullMismatch(uint256 expected, uint256 received);
 
-    /// @param quoteSigner_ The off-chain test RFQ provider. The deployer becomes the owner.
-    constructor(address quoteSigner_) EIP712("MockRFQVenue", "1") Ownable(msg.sender) {
+    /// @param quoteSigner_  The off-chain test RFQ provider.
+    /// @param initialOwner  The account that may rotate `quoteSigner`.
+    ///
+    /// @dev    `initialOwner` is a parameter, not `msg.sender`. On a testnet the venue is deployed
+    ///         through CreateX CREATE3, where the constructor's `msg.sender` is the CREATE3 proxy,
+    ///         so `Ownable(msg.sender)` would hand ownership to an address nobody holds a key for
+    ///         and `setQuoteSigner` would be permanently unreachable.
+    constructor(address quoteSigner_, address initialOwner) EIP712("MockRFQVenue", "1") Ownable(initialOwner) {
         if (quoteSigner_ == address(0)) revert ZeroAddress();
         quoteSigner = quoteSigner_;
         emit QuoteSignerSet(address(0), quoteSigner_);

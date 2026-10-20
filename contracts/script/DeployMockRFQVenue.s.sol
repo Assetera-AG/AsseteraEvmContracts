@@ -79,8 +79,14 @@ contract DeployMockRFQVenue is DeployBase {
         );
         console2.log(aaplCreated ? "mAAPL deployed:" : "mAAPL reused: ", aapl);
 
-        (address venue, bool venueCreated) =
-            _deploy3(deployer, VENUE_LABEL, abi.encodePacked(type(MockRFQVenue).creationCode, abi.encode(signer)));
+        (address venue, bool venueCreated) = _deploy3(
+            deployer,
+            VENUE_LABEL,
+            // The owner is passed explicitly: through CREATE3 the constructor's `msg.sender` is the
+            // CREATE3 proxy, not the deployer, so `Ownable(msg.sender)` inside the venue would make
+            // `setQuoteSigner` uncallable.
+            abi.encodePacked(type(MockRFQVenue).creationCode, abi.encode(signer, deployer))
+        );
         console2.log(venueCreated ? "MockRFQVenue deployed:" : "MockRFQVenue reused: ", venue);
 
         _stopBroadcast();
@@ -96,7 +102,9 @@ contract DeployMockRFQVenue is DeployBase {
         }
 
         console2.log("  quoteSigner:", signer);
-        console2.log("  owner       :", deployer);
+        // Read from the deployed venue, not from `deployer`: the point of this log is to show the
+        // account that can actually call `setQuoteSigner`.
+        console2.log("  owner       :", MockRFQVenue(venue).owner());
         _record(aapl, venue);
     }
 

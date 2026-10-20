@@ -43,7 +43,7 @@ contract MockRFQVenueTest is VenueRedeemerTestBase {
         super.setUp();
 
         quoteSigner = vm.addr(quoteSignerPk);
-        rfq = new MockRFQVenue(quoteSigner);
+        rfq = new MockRFQVenue(quoteSigner, address(this));
         aapl = new FaucetToken("Mock Apple", "mAAPL", 18);
     }
 
