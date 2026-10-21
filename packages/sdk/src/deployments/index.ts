@@ -8,8 +8,16 @@ export interface Deployment {
   caip2: string;
   /** CAIP-2 namespace, always `eip155` for this (EVM) package. */
   namespace: string;
-  /** Consumer-facing addresses (the exchange is the proxy). */
+  /**
+   * Consumer-facing addresses (the exchange is the proxy).
+   *
+   * Testnet records additionally carry the fixture keys `mAAPL` (the open-mint mock stock) and
+   * `mockRfqVenue` (the issuer-agnostic mock RFQ venue). They are absent on mainnets, so consumers
+   * must treat them as optional; the typed accessors below return `undefined` when a chain has
+   * none.
+   */
   contracts: Record<string, Address>;
+
   /**
    * UUPS implementation addresses, for upgrade diffing.
    *
@@ -102,6 +110,37 @@ export function getEcsAddress(chainId: number): Address | undefined {
  */
 export function getPrimarySalesAddress(chainId: number): Address | undefined {
   return getContractAddress(chainId, "AsseteraPrimarySales");
+}
+
+/**
+ * The testnet-only mock RFQ venue address for a chain.
+ *
+ * 🔴 **Testnet fixture.** This venue fills EIP-712 quotes signed by an off-chain test RFQ provider
+ * and mints through an open-mint `FaucetToken`; it is never deployed on a mainnet. `undefined` on
+ * every chain whose record has no `mockRfqVenue` entry, which includes every production chain.
+ *
+ * @example
+ * ```ts
+ * const venue = getMockRfqVenueAddress(11155111);
+ * ```
+ */
+export function getMockRfqVenueAddress(chainId: number): Address | undefined {
+  return getContractAddress(chainId, "mockRfqVenue");
+}
+
+/**
+ * The testnet-only mock stock `mAAPL` address for a chain.
+ *
+ * 🔴 **Testnet fixture.** `mAAPL` is a `FaucetToken` with a permissionless `mint`, used as the
+ * asset side of mock RFQ quotes. `undefined` on every chain whose record has no `mAAPL` entry.
+ *
+ * @example
+ * ```ts
+ * const aapl = getMockAaplAddress(11155111);
+ * ```
+ */
+export function getMockAaplAddress(chainId: number): Address | undefined {
+  return getContractAddress(chainId, "mAAPL");
 }
 
 /**
