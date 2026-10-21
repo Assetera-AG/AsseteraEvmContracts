@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.4.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v8.3.0...evm-contracts-v8.4.0) (2026-10-21)
+
+
+### Features
+
+* **mocks:** issuer-agnostic mock RFQ venue and mAAPL for testnets ([#106](https://github.com/Assetera-AG/AsseteraEvmContracts/issues/106)) ([55a71bc](https://github.com/Assetera-AG/AsseteraEvmContracts/commit/55a71bc27e7986b6761679167c9599c410c94dcf))
+
 ## [8.3.0](https://github.com/Assetera-AG/AsseteraEvmContracts/compare/evm-contracts-v8.2.1...evm-contracts-v8.3.0) (2026-09-10)
 
 
