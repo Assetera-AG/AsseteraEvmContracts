@@ -264,4 +264,14 @@ fi
 
 echo "→ network=$NETWORK  chain=$CHAIN_ID  account=$ACCOUNT  sender=$SENDER  script=$FORGE_SCRIPT"
 cd "$ROOT/contracts"
+# Extra forge flags, passed through as given (split on spaces), e.g.
+#   FORGE_EXTRA_ARGS="--gas-estimate-multiplier 1000"
+# Some testnets charge far more gas for contract creation than forge's local simulation assumes, so
+# the default gas limit is too low and CREATE3 deployments revert with FailedContractCreation.
+if [[ -n "${FORGE_EXTRA_ARGS:-}" ]]; then
+  read -r -a EXTRA_ARGS <<< "$FORGE_EXTRA_ARGS"
+  ARGS+=("${EXTRA_ARGS[@]}")
+  echo "→ extra forge flags: ${EXTRA_ARGS[*]}"
+fi
+
 exec forge "${ARGS[@]}"
