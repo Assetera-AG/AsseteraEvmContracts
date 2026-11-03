@@ -22,7 +22,7 @@ jobs:
     outputs:
       release_created: ${{ steps.release.outputs['packages/sdk--release_created'] }}
     steps:
-      - uses: googleapis/release-please-action@v5
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release
         with:
           config-file: release-please-config.json
@@ -36,16 +36,16 @@ jobs:
       contents: read
       id-token: write # OIDC token for npm trusted publishing (no NODE_AUTH_TOKEN)
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive # SDK codegen reads the contracts' build output
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
         with:
           version: stable
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24 # ships npm >= 11.5.1 (required for OIDC); we still pin below to be safe
           registry-url: "https://registry.npmjs.org"
