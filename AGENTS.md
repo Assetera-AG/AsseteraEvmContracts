@@ -99,19 +99,19 @@ deltas`, `fix(script): reuse existing forwarder on redeploy`, `feat(sdk): export
 Contract deps are **git submodules** under `contracts/lib/`, pinned in `contracts/foundry.lock`
 (forge-std, OpenZeppelin contracts + contracts-upgradeable). `lib/` is intentionally **not** git-ignored
 so a fresh clone and CI build deterministically. Add/bump with `forge install <org/repo>@<tag>` (run from
-`contracts/`) and commit the updated `.gitmodules` + `foundry.lock` + gitlink. Dependabot proposes
-submodule bumps weekly. TypeScript deps are managed by npm workspaces from the repo root.
+`contracts/`) and commit the updated `.gitmodules` + `foundry.lock` + gitlink. Submodule bumps are manual:
+Dependabot only updates GitHub Actions here (its `gitsubmodule` ecosystem was dropped because it proposed
+non-stable OZ commits). TypeScript deps are managed by npm workspaces from the repo root.
 
 ### Dependency-bump policy (upgradeable contracts)
 
 The exchange is a **UUPS upgradeable proxy**, so a dependency bump is an upgrade-safety question, not just
 a version number. Rules:
 
-- **Never blind-merge a submodule bump.** Dependabot's `gitsubmodule` ecosystem tracks each submodule's
-  default-branch HEAD, so it can propose **non-stable commits (RCs / master)** — check the bump lands on a
-  real, stable release tag; if not, re-pin to the latest stable tag instead of merging the proposed commit.
+- **Bump submodules to a stable release tag only**, never to a default-branch HEAD (RCs / master). That is
+  why Dependabot's `gitsubmodule` ecosystem is off: it tracks HEAD and kept proposing non-stable commits.
 - **OZ moves as a pair.** `openzeppelin-contracts` and `openzeppelin-contracts-upgradeable` must always be
-  the **same version** (Dependabot groups them into one PR; keep it that way).
+  the **same version**; bump both in the same PR.
 - **Freeze deps during an external audit** — auditors sign off on a pinned set.
 - **The safety net:** `contracts/script/storage-layout.sh` (a committed storage-layout snapshot, checked in
   CI) plus `test_Upgrade_PreservesAllStorageAcrossEverySlot` make an OZ bump an *evidenced* decision. OZ v5
