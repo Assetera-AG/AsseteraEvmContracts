@@ -8,22 +8,8 @@ updates:
     commit-message:
       prefix: "ci"
 
-  # Bump the lib/ dependency submodules (forge-std, OpenZeppelin) pinned in foundry.lock.
-  #
-  # NOTE: the gitsubmodule ecosystem tracks each submodule's default-branch HEAD, so Dependabot can
-  # propose non-stable commits (RCs / master). For a contracts repo, treat these PRs as a "something
-  # is newer" signal and re-pin to the latest STABLE tag rather than merging the proposed commit
-  # verbatim, and freeze deps during an audit. The storage-layout guard + the state-preserving
-  # upgrade test are the safety net that turns an OZ bump into an evidenced decision. See AGENTS.md.
-  - package-ecosystem: "gitsubmodule"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    commit-message:
-      prefix: "deps"
-    # openzeppelin-contracts and openzeppelin-contracts-upgradeable are released in lockstep and
-    # must always move together to the same version — group them into one PR so they never bump apart.
-    groups:
-      openzeppelin:
-        patterns:
-          - "*openzeppelin*"
+
+  # No "gitsubmodule" entry on purpose. It tracks each submodule's default-branch HEAD, so it kept proposing
+  # non-stable OpenZeppelin commits that could not be merged as-is (closed 8 times, e.g. #110 needed
+  # solc ^0.8.31 while we pin 0.8.28). Submodules (forge-std, OpenZeppelin) are bumped by hand to a stable
+  # tag; see "Dependency-bump policy" in AGENTS.md. Dependabot alerts stay on for the repo.
